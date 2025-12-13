@@ -31,7 +31,6 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
     const updateNodePosition = useGraphStore((s) => s.updateNodePosition);
     const connections = useGraphStore((s) => s.connections);
     const addConnection = useGraphStore((s) => s.addConnection);
-    const nodes = useGraphStore((s) => s.nodes);
 
     const zoom = useCanvasStore((s) => s.zoom);
     const isConnecting = useCanvasStore((s) => s.isConnecting);

@@ -2,7 +2,7 @@
  * Speaker Node - Audio output to device
  */
 
-import { useCallback, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { GraphNode, SpeakerNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 

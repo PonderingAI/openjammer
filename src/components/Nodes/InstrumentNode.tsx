@@ -7,6 +7,7 @@ import type { GraphNode, InstrumentNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { createInstrument, type Instrument, type InstrumentType } from '../../audio/Instruments';
+import { nodeDefinitions } from '../../engine/registry';
 
 interface InstrumentNodeProps {
     node: GraphNode;
@@ -76,7 +77,7 @@ export function InstrumentNode({ node }: InstrumentNodeProps) {
                 onClick={(e) => { e.stopPropagation(); setShowPopup(true); }}
                 style={{ cursor: 'pointer' }}
             >
-                <span className="schematic-title">{node.name}</span>
+                <span className="schematic-title">{nodeDefinitions[node.type].name}</span>
                 <span className="schematic-header-icon">▼</span>
             </div>
 
@@ -90,18 +91,18 @@ export function InstrumentNode({ node }: InstrumentNodeProps) {
                 <div className="instrument-popup-overlay" onClick={(e) => { e.stopPropagation(); setShowPopup(false); }}>
                     <div className="instrument-popup-content" onClick={e => e.stopPropagation()}>
                         <div className="popup-header">
-                            <h3>{node.name} Settings</h3>
+                            <h3>{nodeDefinitions[node.type].name} Settings</h3>
                             <button onClick={() => setShowPopup(false)}>Close</button>
                         </div>
                         <div className="popup-body">
                             <label>Instrument Type</label>
                             <select
                                 value={node.type}
-                                onChange={(e) => {
-                                    // Logic to change instrument type? 
-                                    // Would need to update Node Type in GraphStore... 
+                                onChange={() => {
+                                    // Logic to change instrument type?
+                                    // Would need to update Node Type in GraphStore...
                                     // GraphStore doesn't support changing type easily without re-creating?
-                                    // Hack: updateNodeData can't change type. 
+                                    // Hack: updateNodeData can't change type.
                                     // Maybe just handle offsets here.
                                     alert("Changing instrument type requires re-creating node for now.");
                                 }}

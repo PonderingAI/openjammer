@@ -7,7 +7,6 @@
  */
 
 import { useEffect } from 'react';
-import type { GraphNode } from '../../engine/types';
 import { useAudioStore } from '../../store/audioStore';
 
 interface KeyboardNodeProps {
@@ -70,7 +69,7 @@ export function KeyboardNode({ node, handlePortClick, hasConnection, handleHeade
                 {/* Actual Port Circles */}
                 <div className="keyboard-row-ports-marker">
                     {/* We expect 3 ports. Map them. */}
-                    {outputPorts.map((port, i) => (
+                    {outputPorts.map((port) => (
                         <div
                             key={port.id}
                             className={`port-circle-marker interactive ${hasConnection?.(port.id) ? 'connected' : ''}`}
