@@ -125,6 +125,41 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         }
     },
 
+    // Category Aliases / Defaults
+    strings: {
+        type: 'cello', // Default string instrument
+        category: 'instruments',
+        name: 'Strings',
+        description: 'String Ensemble',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: { offsets: { 'input-1': -12 } }
+    },
+    keys: {
+        type: 'piano', // Default key instrument
+        category: 'instruments',
+        name: 'Keys',
+        description: 'Keyboards',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: { offsets: { 'input-1': 0 } }
+    },
+    winds: {
+        type: 'saxophone', // Default wind instrument
+        category: 'instruments',
+        name: 'Winds',
+        description: 'Wind Instruments',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: { offsets: { 'input-1': 0 } }
+    },
+
     // Effects & Processing
     looper: {
         type: 'looper',
@@ -221,19 +256,9 @@ export const menuCategories: MenuCategory[] = [
         items: ['keyboard', 'microphone']
     },
     {
-        name: 'Strings',
+        name: 'Instruments',
         icon: '🎻',
-        items: ['cello', 'violin'] // 'violin' needs to be added to nodeDefinitions or mapped
-    },
-    {
-        name: 'Keys',
-        icon: '🎹',
-        items: ['piano']
-    },
-    {
-        name: 'Winds',
-        icon: '🎷',
-        items: ['saxophone']
+        items: ['strings', 'keys', 'winds']
     },
     {
         name: 'Routing',

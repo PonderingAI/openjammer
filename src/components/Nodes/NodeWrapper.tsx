@@ -180,12 +180,18 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
     // Render the appropriate node content based on type
     const renderNodeContent = () => {
+        const props = { node, handlePortClick, hasConnection };
+
         switch (node.type) {
             case 'keyboard':
-                return <KeyboardNode node={node} />;
+                return <KeyboardNode {...props} />;
             case 'piano':
             case 'cello':
+            case 'violin':
             case 'saxophone':
+            case 'strings':
+            case 'keys':
+            case 'winds':
                 return <InstrumentNode node={node} />;
             case 'microphone':
                 return <MicrophoneNode node={node} />;
@@ -207,58 +213,96 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
     const inputPorts = node.ports.filter(p => p.direction === 'input');
     const outputPorts = node.ports.filter(p => p.direction === 'output');
 
+    // Custom nodes that handle their own ports
+    const hasCustomPorts = node.type === 'keyboard';
+
     return (
         <div
             ref={nodeRef}
-            className={`node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`node ${node.type} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
             style={{
                 left: node.position.x,
                 top: node.position.y
             }}
             onClick={(e) => e.stopPropagation()}
         >
-            {/* Header */}
-            <div className="node-header" onMouseDown={handleHeaderMouseDown}>
-                <span className="node-title">{node.type.charAt(0).toUpperCase() + node.type.slice(1)}</span>
-                <span className="node-type">{node.category}</span>
-            </div>
-
-            {/* Ports */}
-            <div className="node-ports">
-                <div className="node-ports-left">
-                    {inputPorts.map((port) => (
-                        <div
-                            key={port.id}
-                            className={`port port-input`}
-                            onClick={(e) => handlePortClick(port.id, e)}
-                        >
-                            <div
-                                className={`port-dot ${port.type === 'audio' ? 'audio-input' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
-                            />
-                            <span className="port-label">{port.name}</span>
-                        </div>
-                    ))}
+            {/* Header - generic header is hidden for schematic nodes usually, or we integrate it?
+                The generic header (Title/Category) is styling from BaseNode.css.
+                Schematic nodes (Keyboard, Speaker) have their own header inside the component.
+                We should probably hide the default header for these types OR update BaseNode.css to hide it for them.
+                Let's hide it if it's a schematic node type.
+            */}
+            {!['keyboard', 'speaker', 'piano', 'cello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type) && (
+                <div className="node-header" onMouseDown={handleHeaderMouseDown}>
+                    <span className="node-title">{node.type.charAt(0).toUpperCase() + node.type.slice(1)}</span>
+                    <span className="node-type">{node.category}</span>
                 </div>
+            )}
 
-                <div className="node-ports-right">
-                    {outputPorts.map((port) => (
-                        <div
-                            key={port.id}
-                            className={`port port-output`}
-                            onClick={(e) => handlePortClick(port.id, e)}
-                        >
-                            <span className="port-label">{port.name}</span>
+            {/* For schematic nodes, we wrap the content in a handler for dragging if the content header handles it?
+                Actually, the schematic components have their own headers. 
+                They need to trigger `handleHeaderMouseDown`.
+                We can pass `handleHeaderMouseDown` to them or wrap them?
+                Passing it is cleaner.
+            */}
+
+            {/* Ports - Only render if not custom */}
+            {!hasCustomPorts && (
+                <div className="node-ports">
+                    <div className="node-ports-left">
+                        {inputPorts.map((port) => (
                             <div
-                                className={`port-dot ${port.type === 'audio' ? 'audio-output' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
-                            />
-                        </div>
-                    ))}
+                                key={port.id}
+                                className={`port port-input`}
+                                onClick={(e) => handlePortClick(port.id, e)}
+                            >
+                                <div
+                                    className={`port-dot ${port.type === 'audio' ? 'audio-input' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
+                                />
+                                <span className="port-label">{port.name}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="node-ports-right">
+                        {outputPorts.map((port) => (
+                            <div
+                                key={port.id}
+                                className={`port port-output`}
+                                onClick={(e) => handlePortClick(port.id, e)}
+                            >
+                                <span className="port-label">{port.name}</span>
+                                <div
+                                    className={`port-dot ${port.type === 'audio' ? 'audio-output' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
+                                />
+                            </div>
+                        ))}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Content */}
             <div className="node-content">
-                {renderNodeContent()}
+                {/* We need to pass handleHeaderMouseDown to children if they want to use it as a drag handle */}
+                {(() => {
+                    const props = { node, handlePortClick, hasConnection, handleHeaderMouseDown };
+                    switch (node.type) {
+                        case 'keyboard':
+                            return <KeyboardNode {...props} />;
+                        case 'piano':
+                        case 'cello':
+                        case 'violin':
+                        case 'saxophone':
+                        case 'strings':
+                        case 'keys':
+                        case 'winds':
+                            return <InstrumentNode node={node} />; // Instrument defaults might be fine without custom ports for now? User didn't complain about Instrument ports.
+                        // ... other cases fallback to standard renderNodeContent logic or we duplicate slightly?
+                        // Let's rely on the switch above but passed updated props.
+                        default:
+                            return renderNodeContent();
+                    }
+                })()}
             </div>
         </div>
     );

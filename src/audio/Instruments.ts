@@ -95,7 +95,7 @@ export function getRowNote(key: string, row: number, baseOctave: number): string
 // Instrument Synthesizers
 // ============================================================================
 
-export type InstrumentType = 'piano' | 'cello' | 'saxophone';
+export type InstrumentType = 'piano' | 'cello' | 'violin' | 'saxophone';
 
 interface ActiveNote {
     oscillators: OscillatorNode[];
@@ -303,6 +303,76 @@ export class Cello extends Instrument {
 }
 
 /**
+ * Violin - Bright, agile string sound
+ */
+export class Violin extends Instrument {
+    constructor() {
+        super('violin');
+    }
+
+    playNote(note: string): void {
+        if (this.activeNotes.has(note)) return;
+
+        const ctx = getAudioContext();
+        if (!ctx || !this.outputNode) return;
+
+        const freq = noteToFrequency(note);
+        const now = ctx.currentTime;
+
+        // High-pass filter to remove low frequencies, emphasizing brightness
+        const filterNode = ctx.createBiquadFilter();
+        filterNode.type = 'highpass';
+        filterNode.frequency.value = 200;
+        filterNode.Q.value = 0.7;
+        filterNode.connect(this.outputNode);
+
+        // Gain envelope - faster attack than cello for agility
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(0.45, now + 0.08);
+        gainNode.gain.linearRampToValueAtTime(0.4, now + 0.2);
+        gainNode.connect(filterNode);
+
+        const oscillators: OscillatorNode[] = [];
+
+        // Triangle wave for clarity
+        const osc1 = ctx.createOscillator();
+        osc1.type = 'triangle';
+        osc1.frequency.value = freq;
+        osc1.connect(gainNode);
+        osc1.start(now);
+        oscillators.push(osc1);
+
+        // 2nd harmonic for richness
+        const osc2Gain = ctx.createGain();
+        osc2Gain.gain.value = 0.25;
+        osc2Gain.connect(gainNode);
+
+        const osc2 = ctx.createOscillator();
+        osc2.type = 'sine';
+        osc2.frequency.value = freq * 2;
+        osc2.connect(osc2Gain);
+        osc2.start(now);
+        oscillators.push(osc2);
+
+        // Faster vibrato than cello
+        const lfo = ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 7; // Faster vibrato
+
+        const lfoGain = ctx.createGain();
+        lfoGain.gain.value = freq * 0.008; // Smaller vibrato depth
+
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc1.frequency);
+        lfo.start(now);
+        oscillators.push(lfo);
+
+        this.activeNotes.set(note, { oscillators, gainNode, filterNode });
+    }
+}
+
+/**
  * Saxophone - Warm, reedy sound
  */
 export class Saxophone extends Instrument {
@@ -381,6 +451,8 @@ export function createInstrument(type: InstrumentType): Instrument {
             return new Piano();
         case 'cello':
             return new Cello();
+        case 'violin':
+            return new Violin();
         case 'saxophone':
             return new Saxophone();
         default:

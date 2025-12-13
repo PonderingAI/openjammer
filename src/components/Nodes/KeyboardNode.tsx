@@ -6,13 +6,15 @@
  * Q-M rows then send input to connected instruments
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 import type { GraphNode } from '../../engine/types';
-import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 
 interface KeyboardNodeProps {
-    node: GraphNode;
+    node: import('../../engine/types').GraphNode;
+    handlePortClick?: (portId: string, e: React.MouseEvent) => void;
+    hasConnection?: (portId: string) => boolean;
+    handleHeaderMouseDown?: (e: React.MouseEvent) => void;
 }
 
 interface KeyboardNodeData {
@@ -21,7 +23,7 @@ interface KeyboardNodeData {
     rowOctaves: number[];
 }
 
-export function KeyboardNode({ node }: KeyboardNodeProps) {
+export function KeyboardNode({ node, handlePortClick, hasConnection, handleHeaderMouseDown }: KeyboardNodeProps) {
     const data = node.data as unknown as KeyboardNodeData;
     const activeKeyboardId = useAudioStore((s) => s.activeKeyboardId);
     const setActiveKeyboard = useAudioStore((s) => s.setActiveKeyboard);
@@ -45,52 +47,39 @@ export function KeyboardNode({ node }: KeyboardNodeProps) {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [assignedKey, isActive, node.id, setActiveKeyboard]);
 
+    // Output ports (should match default ports in registry)
+    const outputPorts = node.ports.filter(p => p.direction === 'output');
+
     return (
         <div className={`keyboard-node schematic-node ${isActive ? 'active' : ''}`}>
-            {/* Header */}
-            <div className="schematic-header">
+            {/* Header - Interactive for dragging */}
+            <div className="schematic-header" onMouseDown={handleHeaderMouseDown} style={{ cursor: 'grab' }}>
                 <span className="schematic-title">Keyboard</span>
                 <span className="keyboard-assigned-key">{assignedKey}</span>
             </div>
 
-            {/* Horizontal Rows Container */}
+            {/* Body */}
             <div className="keyboard-schematic-body">
-                {/* Row Labels (1, 2, 3) */}
-                <div className="keyboard-row-indicators">
-                    <div className="row-indicator">1</div>
-                    <div className="row-indicator">2</div>
-                    <div className="row-indicator">3</div>
+                {/* Visual Guide: 1 2 3 */}
+                <div className="keyboard-row-numbers">
+                    <div className="row-number">1</div>
+                    <div className="row-number">2</div>
+                    <div className="row-number">3</div>
                 </div>
 
-                {/* Output Ports Row */}
-                {/* Note: The ports are rendered by NodeWrapper, but for schematic nodes 
-                    we might want to position them specifically. 
-                    However, NodeWrapper handles port rendering. 
-                    To match the sketch, we need the NodeWrapper to render ports IN HERE 
-                    or render them invisibly and we use custom targets?
-                    
-                    Actually, NodeWrapper renders ports absolute/relative to the node. 
-                    If I change CSS to `display: flex` and hide default ports, 
-                    I can maybe force them into position? 
-                    
-                    Better approach for now: 
-                    The NodeWrapper renders ports in `.node-ports`. 
-                    We need to style `.node-ports` for this specific node type OR 
-                    hide default ports and render custom "handles" that link to the ports?
-                    But standard practice in this codebase seems to be NodeWrapper handles ports.
-                    
-                    Let's look at `SpeakerNode` I just did.
-                    I didn't add ports there. The wrapper adds them.
-                    For Speaker, it has 1 input. Wrapper puts it on left.
-                    For Keyboard, 3 outputs. Wrapper puts them on right.
-                     Sketch has them at BOTTOM or inside body.
-                    
-                    If connection points need to be inside, I might need to refactor NodeWrapper 
-                    or use a portal/teleport mechanism. 
-                    OR I can style `.node-ports` via CSS for `.keyboard-node`.
-                    
-                    Let's assume for now I will style them in CSS to position them below the numbers.
-                */}
+                {/* Actual Port Circles */}
+                <div className="keyboard-row-ports-marker">
+                    {/* We expect 3 ports. Map them. */}
+                    {outputPorts.map((port, i) => (
+                        <div
+                            key={port.id}
+                            className={`port-circle-marker interactive ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            onClick={(e) => handlePortClick?.(port.id, e)}
+                            title={port.name}
+                        />
+                    ))}
+                    {/* Fallback if less than 3 ports? Should not happen if registry is correct */}
+                </div>
             </div>
 
             {/* Visual hint for active state */}

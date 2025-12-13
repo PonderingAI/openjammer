@@ -97,28 +97,52 @@
 
 /* Keyboard Node */
 .keyboard-node .keyboard-schematic-body {
-    padding: 12px;
+    padding: 12px 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 8px;
 }
 
-.keyboard-row-indicators {
+.keyboard-row-numbers {
     display: flex;
-    justify-content: space-around;
+    justify-content: space-between;
     width: 100%;
-    margin-bottom: 20px;
-    /* Space for ports */
+    padding: 0 10px;
+    /* Adjust based on port spacing */
 }
 
-.row-indicator {
-    font-weight: 600;
-    font-size: 1.2em;
-}
-
-.keyboard-assigned-key {
-    font-size: 1.2em;
+.row-number {
     font-weight: 700;
+    font-size: 1.4em;
+    width: 24px;
+    text-align: center;
+}
+
+.keyboard-row-ports-marker {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 10px;
+}
+
+.port-circle-marker {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--text-primary);
+    border-radius: 50%;
+    background: transparent;
+    cursor: crosshair;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.port-circle-marker:hover {
+    background: rgba(0, 0, 0, 0.1);
+    transform: scale(1.1);
+}
+
+.port-circle-marker.connected {
+    background: var(--text-primary);
 }
 
 /* Instrument Node */
