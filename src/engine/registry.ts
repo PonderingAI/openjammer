@@ -95,6 +95,21 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         }
     },
 
+    violin: {
+        type: 'violin',
+        category: 'instruments',
+        name: 'Violin',
+        description: 'Orchestral violin',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: {
+            offsets: { 'input-1': 12 }, // Higher pitch
+            activeInputs: ['input-1']
+        }
+    },
+
     saxophone: {
         type: 'saxophone',
         category: 'instruments',
@@ -189,6 +204,16 @@ export interface MenuCategory {
     items: NodeType[];
 }
 
+// ============================================================================
+// Menu Structure (ComfyUI-style hierarchical)
+// ============================================================================
+
+export interface MenuCategory {
+    name: string;
+    icon: string;
+    items: NodeType[];
+}
+
 export const menuCategories: MenuCategory[] = [
     {
         name: 'Input',
@@ -196,19 +221,29 @@ export const menuCategories: MenuCategory[] = [
         items: ['keyboard', 'microphone']
     },
     {
-        name: 'Instruments',
-        icon: '🎹',
-        items: ['piano', 'cello', 'saxophone']
+        name: 'Strings',
+        icon: '🎻',
+        items: ['cello', 'violin'] // 'violin' needs to be added to nodeDefinitions or mapped
     },
     {
-        name: 'Effects',
-        icon: '✨',
-        items: ['effect', 'amplifier']
+        name: 'Keys',
+        icon: '🎹',
+        items: ['piano']
+    },
+    {
+        name: 'Winds',
+        icon: '🎷',
+        items: ['saxophone']
     },
     {
         name: 'Routing',
         icon: '🔄',
         items: ['looper']
+    },
+    {
+        name: 'Effects',
+        icon: '✨',
+        items: ['effect', 'amplifier']
     },
     {
         name: 'Output',

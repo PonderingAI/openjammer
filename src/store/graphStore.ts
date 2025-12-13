@@ -51,6 +51,7 @@ interface GraphStore {
     removeNode: (nodeId: string) => void;
     updateNodePosition: (nodeId: string, position: Position) => void;
     updateNodeData: <T extends object>(nodeId: string, data: Partial<T>) => void;
+    updateNodePorts: (nodeId: string, ports: import('../engine/types').PortDefinition[]) => void;
 
     // Connection Actions
     addConnection: (
@@ -241,6 +242,17 @@ export const useGraphStore = create<GraphStore>()(
                         ...node,
                         data: { ...node.data, ...data }
                     });
+                    return { nodes: newNodes };
+                });
+            },
+
+            updateNodePorts: (nodeId, ports) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, { ...node, ports });
                     return { nodes: newNodes };
                 });
             },

@@ -1,13 +1,9 @@
-/**
- * Settings Panel - Cyberpunk 2077 inspired settings menu
- */
-
 import { useState } from 'react';
 import { themes, applyTheme, getThemeById, getSavedThemeId, saveThemeId } from '../../styles/themes';
-import './SettingsPanel.css';
+import '../Nodes/SchematicNodes.css';
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
-    const [activeTab, setActiveTab] = useState('graphics'); // 'graphics' (themes) | 'audio' | 'gameplay'
+    const [activeTab, setActiveTab] = useState('graphics');
     const [selectedTheme, setSelectedTheme] = useState(getSavedThemeId());
 
     const handleThemeChange = (themeId: string) => {
@@ -20,69 +16,69 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     };
 
     return (
-        <div className="settings-overlay">
-            <div className="settings-container">
-                <div className="settings-header">
-                    <h2>SETTINGS</h2>
-                    <div className="settings-breadcrumbs">
-                        <span>SETTINGS</span>
-                        <span className="separator">/</span>
-                        <span>{activeTab.toUpperCase()}</span>
-                    </div>
+        <div className="minimal-settings-overlay" onClick={onClose}>
+            <div className="minimal-settings-container" onClick={e => e.stopPropagation()}>
+                <div className="minimal-settings-header">
+                    <h2>Settings</h2>
+                    <button
+                        onClick={onClose}
+                        style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}
+                    >
+                        ✕
+                    </button>
                 </div>
 
-                <div className="settings-content">
+                <div className="minimal-settings-content">
                     {/* Sidebar */}
-                    <div className="settings-sidebar">
-                        {['graphics', 'audio', 'gameplay', 'interface', 'accessibility'].map(tab => (
+                    <div className="minimal-sidebar">
+                        {['graphics', 'audio', 'gameplay', 'interface'].map(tab => (
                             <button
                                 key={tab}
-                                className={`settings-tab-btn ${activeTab === tab ? 'active' : ''}`}
+                                className={`minimal-tab-btn ${activeTab === tab ? 'active' : ''}`}
                                 onClick={() => setActiveTab(tab)}
                             >
-                                {tab.toUpperCase()}
+                                {tab.charAt(0).toUpperCase() + tab.slice(1)}
                             </button>
                         ))}
                     </div>
 
                     {/* Main Content */}
-                    <div className="settings-main">
+                    <div className="minimal-main">
                         {activeTab === 'graphics' && (
                             <div className="settings-section">
-                                <h3>INTERFACE THEME</h3>
-                                <div className="theme-grid">
+                                <h3 style={{ marginTop: 0, marginBottom: '24px' }}>Interface Theme</h3>
+                                <div className="minimal-theme-grid">
                                     {themes.map(theme => (
                                         <div
                                             key={theme.id}
-                                            className={`theme-card ${selectedTheme === theme.id ? 'active' : ''}`}
+                                            className={`minimal-theme-card ${selectedTheme === theme.id ? 'active' : ''}`}
                                             onClick={() => handleThemeChange(theme.id)}
                                         >
                                             <div
-                                                className="theme-preview"
-                                                style={{ background: theme.colors.bgPrimary }}
+                                                style={{
+                                                    height: '60px',
+                                                    background: theme.colors.bgPrimary,
+                                                    borderRadius: '4px',
+                                                    marginBottom: '8px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
                                             >
-                                                <div className="theme-preview-node" style={{ background: theme.colors.bgNode }} />
+                                                <div style={{ width: '30px', height: '20px', background: theme.colors.bgNode, borderRadius: '2px' }} />
                                             </div>
-                                            <div className="theme-name">{theme.name}</div>
+                                            <div style={{ fontSize: '0.9rem', fontWeight: 500 }}>{theme.name}</div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
-
-                        {/* Placeholders for other tabs */}
                         {activeTab !== 'graphics' && (
-                            <div className="settings-placeholder">
-                                SECTION UNDER CONSTRUCTION
+                            <div style={{ color: '#888', fontStyle: 'italic' }}>
+                                {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} settings coming soon.
                             </div>
                         )}
                     </div>
-                </div>
-
-                <div className="settings-footer">
-                    <button className="settings-close-btn" onClick={onClose}>
-                        CLOSE [ESC]
-                    </button>
                 </div>
             </div>
         </div>

@@ -1,0 +1,238 @@
+/* Schematic / Minimal Design System (Light Theme) */
+:root {
+    --bg-canvas: #F5F0E8;
+    /* Cream/Beige */
+    --bg-node: #F5F0E8;
+    --text-primary: #000000;
+    --border-node: #000000;
+    --border-radius-lg: 12px;
+    --font-hand: 'Inter', sans-serif;
+    /* Placeholder, sketch looks handwritten but user said 'clean minimal' */
+}
+
+/* Schematic Node Base */
+.schematic-node {
+    background: var(--bg-node);
+    border: 2px solid var(--border-node);
+    border-radius: var(--border-radius-lg);
+    color: var(--text-primary);
+    min-width: 140px;
+    overflow: hidden;
+    /* Box shadow for depth? Maybe minimal */
+}
+
+.schematic-header {
+    border-bottom: 2px solid var(--border-node);
+    padding: 8px 12px;
+    font-weight: 700;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: transparent;
+}
+
+.schematic-container {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Speaker Node */
+.speaker-node .speaker-symbol {
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.speaker-node .speaker-label {
+    font-size: 0.9em;
+    font-weight: 500;
+}
+
+.device-selector-container {
+    position: relative;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.device-select-trigger {
+    width: 100%;
+    border: 2px solid var(--border-node);
+    border-radius: 20px;
+    /* Capsule shape */
+    background: transparent;
+    padding: 4px 12px;
+    font-size: 0.85em;
+    text-align: center;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.schematic-dropdown {
+    position: absolute;
+    top: 110%;
+    left: 0;
+    width: 100%;
+    background: var(--bg-node);
+    border: 2px solid var(--border-node);
+    border-radius: 8px;
+    z-index: 100;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.device-item {
+    padding: 6px 12px;
+    border-bottom: 1px solid #ccc;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+.device-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Keyboard Node */
+.keyboard-node .keyboard-schematic-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.keyboard-row-indicators {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+    margin-bottom: 20px;
+    /* Space for ports */
+}
+
+.row-indicator {
+    font-weight: 600;
+    font-size: 1.2em;
+}
+
+.keyboard-assigned-key {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+
+/* Instrument Node */
+.instrument-node .schematic-body {
+    padding: 0;
+}
+
+.connection-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
+    border-bottom: 1px solid transparent;
+    /* Separator if needed */
+}
+
+.connection-note {
+    font-weight: 600;
+    font-family: monospace;
+}
+
+.connection-offset {
+    font-size: 0.9em;
+}
+
+/* Settings Panel Minimal */
+.minimal-settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+.minimal-settings-container {
+    background: var(--bg-node);
+    /* Cream */
+    border: 2px solid var(--text-primary);
+    border-radius: 16px;
+    width: 600px;
+    height: 500px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--text-primary);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+}
+
+.minimal-settings-header {
+    padding: 24px;
+    border-bottom: 2px solid var(--text-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.minimal-settings-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+    font-weight: 700;
+}
+
+.minimal-settings-content {
+    flex: 1;
+    display: flex;
+}
+
+.minimal-sidebar {
+    width: 180px;
+    border-right: 1px solid #ddd;
+    /* Softer divider */
+    padding: 20px 0;
+}
+
+.minimal-tab-btn {
+    width: 100%;
+    text-align: left;
+    padding: 10px 24px;
+    background: none;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    color: #666;
+}
+
+.minimal-tab-btn.active {
+    color: #000;
+    background: rgba(0, 0, 0, 0.05);
+    border-right: 3px solid #000;
+}
+
+.minimal-main {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.minimal-theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 16px;
+}
+
+.minimal-theme-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+}
+
+.minimal-theme-card.active {
+    border-color: #000;
+    background: #fff;
+}

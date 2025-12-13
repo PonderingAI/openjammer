@@ -23,7 +23,6 @@ interface KeyboardNodeData {
 
 export function KeyboardNode({ node }: KeyboardNodeProps) {
     const data = node.data as unknown as KeyboardNodeData;
-    const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const activeKeyboardId = useAudioStore((s) => s.activeKeyboardId);
     const setActiveKeyboard = useAudioStore((s) => s.setActiveKeyboard);
 
@@ -46,53 +45,56 @@ export function KeyboardNode({ node }: KeyboardNodeProps) {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [assignedKey, isActive, node.id, setActiveKeyboard]);
 
-    // Handle octave adjustment for each row
-    const handleRowOctaveChange = useCallback((row: number, delta: number) => {
-        const rowOctaves = data.rowOctaves || [4, 4, 4];
-        const newOctaves = [...rowOctaves];
-        newOctaves[row] = Math.max(0, Math.min(8, newOctaves[row] + delta));
-        updateNodeData(node.id, { rowOctaves: newOctaves });
-    }, [data.rowOctaves, node.id, updateNodeData]);
-
-    const rowOctaves = data.rowOctaves || [4, 4, 4];
-
     return (
-        <div className="keyboard-node">
-            {/* Header with assigned key */}
-            <div className="keyboard-node-header">
-                <span className="keyboard-key-badge">{assignedKey}</span>
-                <span className={`keyboard-status ${isActive ? 'active' : ''}`}>
-                    {isActive ? 'ACTIVE' : 'Press ' + assignedKey}
-                </span>
+        <div className={`keyboard-node schematic-node ${isActive ? 'active' : ''}`}>
+            {/* Header */}
+            <div className="schematic-header">
+                <span className="schematic-title">Keyboard</span>
+                <span className="keyboard-assigned-key">{assignedKey}</span>
             </div>
 
-            {/* Three rows with octave controls */}
-            <div className="keyboard-rows">
-                {[0, 1, 2].map((rowIndex) => (
-                    <div key={rowIndex} className="keyboard-row">
-                        <div className="keyboard-row-label">
-                            {rowIndex === 0 ? 'Q-P' : rowIndex === 1 ? 'A-L' : 'Z-/'}
-                        </div>
-                        <div className="keyboard-row-octave">
-                            <button
-                                className="octave-btn"
-                                onClick={() => handleRowOctaveChange(rowIndex, -1)}
-                            >
-                                −
-                            </button>
-                            <span className="octave-value">C{rowOctaves[rowIndex]}</span>
-                            <button
-                                className="octave-btn"
-                                onClick={() => handleRowOctaveChange(rowIndex, 1)}
-                            >
-                                +
-                            </button>
-                        </div>
-                        {/* Output port indicator */}
-                        <div className={`row-output ${isActive ? 'glowing' : ''}`} />
-                    </div>
-                ))}
+            {/* Horizontal Rows Container */}
+            <div className="keyboard-schematic-body">
+                {/* Row Labels (1, 2, 3) */}
+                <div className="keyboard-row-indicators">
+                    <div className="row-indicator">1</div>
+                    <div className="row-indicator">2</div>
+                    <div className="row-indicator">3</div>
+                </div>
+
+                {/* Output Ports Row */}
+                {/* Note: The ports are rendered by NodeWrapper, but for schematic nodes 
+                    we might want to position them specifically. 
+                    However, NodeWrapper handles port rendering. 
+                    To match the sketch, we need the NodeWrapper to render ports IN HERE 
+                    or render them invisibly and we use custom targets?
+                    
+                    Actually, NodeWrapper renders ports absolute/relative to the node. 
+                    If I change CSS to `display: flex` and hide default ports, 
+                    I can maybe force them into position? 
+                    
+                    Better approach for now: 
+                    The NodeWrapper renders ports in `.node-ports`. 
+                    We need to style `.node-ports` for this specific node type OR 
+                    hide default ports and render custom "handles" that link to the ports?
+                    But standard practice in this codebase seems to be NodeWrapper handles ports.
+                    
+                    Let's look at `SpeakerNode` I just did.
+                    I didn't add ports there. The wrapper adds them.
+                    For Speaker, it has 1 input. Wrapper puts it on left.
+                    For Keyboard, 3 outputs. Wrapper puts them on right.
+                     Sketch has them at BOTTOM or inside body.
+                    
+                    If connection points need to be inside, I might need to refactor NodeWrapper 
+                    or use a portal/teleport mechanism. 
+                    OR I can style `.node-ports` via CSS for `.keyboard-node`.
+                    
+                    Let's assume for now I will style them in CSS to position them below the numbers.
+                */}
             </div>
+
+            {/* Visual hint for active state */}
+            {isActive && <div className="active-indicator-glow" />}
         </div>
     );
 }

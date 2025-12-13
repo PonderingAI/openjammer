@@ -37,16 +37,8 @@ export function SpeakerNode({ node }: SpeakerNodeProps) {
         });
     }, []);
 
-    const volume = data.volume ?? 1;
-    // const isMuted = data.isMuted ?? false;
     const currentDeviceId = data.deviceId || 'default';
-    const currentLabel = devices.find(d => d.deviceId === currentDeviceId)?.label || 'Default Output';
-
-    // Update volume
-    const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const newVolume = parseFloat(e.target.value);
-        updateNodeData<SpeakerNodeData>(node.id, { volume: newVolume });
-    }, [node.id, updateNodeData]);
+    const currentLabel = devices.find(d => d.deviceId === currentDeviceId)?.label || 'output device';
 
     // Handle device selection
     const handleDeviceSelect = (deviceId: string) => {
@@ -55,26 +47,39 @@ export function SpeakerNode({ node }: SpeakerNodeProps) {
     };
 
     return (
-        <div className="speaker-node">
-            {/* Main Icon */}
-            <div className="speaker-icon-display">
-                <span style={{ fontSize: '48px' }}>🔊</span>
+        <div className="speaker-node schematic-node">
+            {/* Visual Container */}
+            <div className="schematic-container">
+                {/* Speaker Symbol */}
+                <div className="speaker-symbol">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                    </svg>
+                </div>
+
+                <div className="speaker-label">Speaker symbol</div>
             </div>
 
-            {/* Device Selector */}
-            <div className="device-selector">
+            {/* Output Device Selector */}
+            <div className="device-selector-container">
                 <button
-                    className="device-btn"
-                    onClick={() => setShowDevices(!showDevices)}
+                    className="device-select-trigger"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setShowDevices(!showDevices);
+                    }}
                 >
-                    {currentLabel} ▼
+                    {currentLabel}
                 </button>
 
                 {showDevices && (
-                    <div className="device-dropdown">
+                    <div className="device-dropdown schematic-dropdown">
                         <div
                             className="device-item"
-                            onClick={() => handleDeviceSelect('default')}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeviceSelect('default');
+                            }}
                         >
                             Default Output
                         </div>
@@ -82,26 +87,16 @@ export function SpeakerNode({ node }: SpeakerNodeProps) {
                             <div
                                 key={d.deviceId}
                                 className="device-item"
-                                onClick={() => handleDeviceSelect(d.deviceId)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeviceSelect(d.deviceId);
+                                }}
                             >
                                 {d.label}
                             </div>
                         ))}
                     </div>
                 )}
-            </div>
-
-            {/* Volume Control */}
-            <div className="volume-control">
-                <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={volume}
-                    onChange={handleVolumeChange}
-                    className="volume-slider"
-                />
             </div>
         </div>
     );

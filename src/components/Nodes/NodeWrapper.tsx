@@ -85,74 +85,97 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         e.stopPropagation();
 
         if (isConnecting && connectingFrom) {
-            // connectingFrom is now an array
             const sources = Array.isArray(connectingFrom) ? connectingFrom : [connectingFrom];
-
-            // For each source, try to connect to this node
             const targetPort = node.ports.find(p => p.id === portId);
             if (!targetPort) return;
 
-            // If multiple sources, we need multiple target ports if target is input
-            // But for now, let's just connect the first one to the clicked port, 
-            // and if there are more sources and target is instrument, it should have auto-expanded?
-            // Actually, the user requirement says "when that one is occupied... the second input appears".
-            // So we should try to connect the first source to the clicked port.
-            // And subsequent sources to subsequent ports if available, or just the first one?
-            // "if im holdong more then one like what happens when i press a for all that many new inptuts appear."
+            // Check if we need to auto-expand an instrument node
+            const isInstrument = ['piano', 'cello', 'violin', 'saxophone'].includes(node.type);
+            const updateNodePorts = useGraphStore.getState().updateNodePorts; // Access direct from store to avoid stale closure if needed? Actually hook is fine.
 
-            // Strategy:
-            // 1. Connect first source to clicked port.
-            // 2. If there are more sources, find next available ports or let the node handle it?
-            // Since we can't easily auto-create ports here without node logic, let's just connect what we can.
+            if (isInstrument && targetPort.direction === 'input' && sources.length > 1) {
+                // Determine starting index. 
+                // We want to connect Source[0] -> ClickedPort
+                // Source[1] -> ClickedPort + 1 (create if needed)
+                // ...
+
+                // Get all current input ports
+                const currentInputs = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+                const clickedIndex = currentInputs.findIndex(p => p.id === portId);
+
+                if (clickedIndex === -1) return;
+
+                // We need enough ports for (clickedIndex + sources.length)
+                const neededCount = clickedIndex + sources.length;
+                const availableCount = currentInputs.length;
+
+                if (neededCount > availableCount) {
+                    const newPorts = [...node.ports];
+                    const portsToAdd = neededCount - availableCount;
+
+                    for (let i = 0; i < portsToAdd; i++) {
+                        const nextIndex = availableCount + i + 1;
+                        newPorts.push({
+                            id: `input-${Date.now()}-${i}`, // Unique ID
+                            name: `In ${nextIndex}`,
+                            type: 'technical',
+                            direction: 'input'
+                        });
+                    }
+
+                    // Update ports IMMEDIATELY so addConnection sees them?
+                    // addConnection uses store state. We must update store first.
+                    updateNodePorts(node.id, newPorts);
+
+                    // Re-fetch node from store or use local logic? 
+                    // We can proceed assuming we know the IDs we just created.
+                    // But `addConnection` checks validations against STORE state.
+                    // So `updateNodePorts` must be processed. 
+                    // Zustand upgrades are synchronous usually.
+                }
+
+                // Now iterate and connect
+                // We need to fetch the LATEST node ports to get IDs if we just added them?
+                // Or we can predict them if we used deterministic IDs.
+                // But we used random IDs.
+                // BETTER STRATEGY: Generate IDs locally, update store, use local IDs.
+            }
+
+            // Refined Loop
+            // Re-access current ports from store to be safe if we just updated?
+            const updatedNode = useGraphStore.getState().nodes.get(node.id) || node;
+            const updatedInputs = updatedNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+            // If it's not instrument, `updatedNode` is just `node`.
 
             sources.forEach((source, index) => {
-                const sourceNode = nodes.get(source.nodeId);
-                const sourcePort = sourceNode?.ports.find(p => p.id === source.portId);
-
-                if (!sourcePort) return;
-
-                // If index > 0, we need to find or create a new port on the target node if it's an input
                 let actualTargetPortId = portId;
 
-                if (index > 0 && targetPort.direction === 'input') {
-                    // Look for a subsequent port or assume one will be created?
-                    // The dynamic port logic is in the node component, which reacts to connections.
-                    // But we are adding connection NOW.
-                    // We need to predict the port ID. 
-                    // If the node type is instrument, ports are input-1, input-2...
-
-                    if (['piano', 'cello', 'saxophone'].includes(node.type)) {
-                        // Hack: Assume subsequent ports will be named consecutively
-                        // This relies on the InstrumentNode logic creating them consistently
-                        // But we can't connect to a port that doesn't exist in the store yet...
-                        // Wait, addConnection doesn't validate port existence strictly if we don't enforce it?
-                        // Actually, types.ts defines Connection with portIds.
-                        // If we add a connection to a non-existent port, it might break rendering until the port appears.
-                        // But InstrumentNode adds ports based on CONNECTIONS. So if we add the connection, the port will appear!
-
-                        // Let's parse current port number
-                        const match = portId.match(/input-(\d+)/);
-                        if (match) {
-                            const currentNum = parseInt(match[1]);
-                            actualTargetPortId = `input-${currentNum + index}`;
-                        }
+                if (index > 0 && targetPort.direction === 'input' && isInstrument) {
+                    // Find the port at clickedIndex + index
+                    const clickedIndex = updatedInputs.findIndex(p => p.id === portId);
+                    if (clickedIndex !== -1 && (clickedIndex + index) < updatedInputs.length) {
+                        actualTargetPortId = updatedInputs[clickedIndex + index].id;
+                    } else {
+                        // Fallback: don't connect or connect to same?
+                        // If we logic above worked, it SHOULD exist.
+                        // But if clickedIndex + index >= updatedInputs.length (maybe creation failed or race?), skip
+                        return;
                     }
                 }
 
-                if (sourcePort.direction === 'output' && targetPort.direction === 'input') {
+                if (targetPort.direction === 'input') {
                     addConnection(source.nodeId, source.portId, node.id, actualTargetPortId);
-                } else if (sourcePort.direction === 'input' && targetPort.direction === 'output') {
-                    // This direction (dragging from input to output) is less likely for "A" key logic but valid
+                } else {
+                    // Output -> Input (reverse drag) - not primary case for 'A' key but robust
                     addConnection(node.id, actualTargetPortId, source.nodeId, source.portId);
                 }
             });
 
             stopConnecting();
         } else {
-            // Start connecting (single)
             startConnecting(node.id, portId);
         }
-    }, [isConnecting, connectingFrom, node, addConnection, startConnecting, stopConnecting, nodes]);
+    }, [isConnecting, connectingFrom, node, addConnection, startConnecting, stopConnecting]);
 
 
     // Render the appropriate node content based on type

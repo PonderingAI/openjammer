@@ -39,11 +39,12 @@ export type NodeCategory =
     | 'output';
 
 export type NodeType =
-    | 'keyboard' // Replaces inputManager
-    | 'piano'    // Splits instrument
-    | 'cello'
-    | 'saxophone'
+    | 'keyboard'
     | 'microphone'
+    | 'piano'
+    | 'cello'
+    | 'violin'
+    | 'saxophone'
     | 'looper'
     | 'effect'
     | 'amplifier'
