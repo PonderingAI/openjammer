@@ -1,0 +1,242 @@
+/* Cyberpunk Settings Panel */
+
+.settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Rajdhani', var(--font-sans);
+}
+
+.settings-container {
+    width: 900px;
+    height: 600px;
+    background: #0D0D0F;
+    border: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Decorative corner accents */
+.settings-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 20px;
+    height: 20px;
+    border-left: 2px solid var(--accent-warning);
+    border-top: 2px solid var(--accent-warning);
+}
+
+.settings-container::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    border-right: 2px solid var(--accent-warning);
+    border-bottom: 2px solid var(--accent-warning);
+}
+
+/* Header */
+.settings-header {
+    height: 80px;
+    border-bottom: 1px solid #333;
+    padding: 0 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
+}
+
+.settings-header h2 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: #fff;
+    margin: 0;
+}
+
+.settings-breadcrumbs {
+    color: var(--accent-warning);
+    font-size: 14px;
+    font-family: var(--font-mono);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-breadcrumbs .separator {
+    color: #444;
+}
+
+/* Content Area */
+.settings-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+/* Sidebar */
+.settings-sidebar {
+    width: 240px;
+    background: rgba(255, 255, 255, 0.02);
+    border-right: 1px solid #333;
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-tab-btn {
+    width: 100%;
+    padding: 15px 40px;
+    text-align: left;
+    background: none;
+    border: none;
+    color: #666;
+    font-family: 'Rajdhani', var(--font-sans);
+    font-size: 18px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.settings-tab-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.settings-tab-btn.active {
+    color: var(--accent-warning);
+    background: rgba(234, 189, 7, 0.1);
+    border-left: 4px solid var(--accent-warning);
+}
+
+.settings-tab-btn.active::after {
+    content: '';
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    background: var(--accent-warning);
+    transform: translateY(-50%) rotate(45deg);
+}
+
+/* Main Main */
+.settings-main {
+    flex: 1;
+    padding: 40px;
+    overflow-y: auto;
+}
+
+.settings-section h3 {
+    font-size: 14px;
+    color: #666;
+    margin-top: 0;
+    margin-bottom: 20px;
+    letter-spacing: 2px;
+    font-weight: 600;
+}
+
+/* Theme Grid */
+.theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.theme-card {
+    border: 1px solid #333;
+    background: #111;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.theme-card:hover {
+    transform: translateY(-2px);
+    border-color: #666;
+}
+
+.theme-card.active {
+    border-color: var(--accent-warning);
+    box-shadow: 0 0 20px rgba(234, 189, 7, 0.2);
+}
+
+.theme-preview {
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid #333;
+}
+
+.theme-preview-node {
+    width: 80px;
+    height: 50px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.theme-name {
+    padding: 15px;
+    text-align: center;
+    font-weight: 600;
+    color: #fff;
+    font-size: 14px;
+}
+
+.theme-card.active .theme-name {
+    color: var(--accent-warning);
+}
+
+/* Footer */
+.settings-footer {
+    height: 60px;
+    border-top: 1px solid #333;
+    padding: 0 40px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    background: #0A0A0C;
+}
+
+.settings-close-btn {
+    background: transparent;
+    border: 1px solid #444;
+    color: #fff;
+    padding: 8px 30px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.settings-close-btn:hover {
+    border-color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.settings-placeholder {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #333;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    border: 2px dashed #222;
+}

@@ -1,0 +1,140 @@
+.node-canvas {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.node-canvas-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+        radial-gradient(circle, var(--border-subtle) 1px, transparent 1px);
+    background-size: 20px 20px;
+    pointer-events: none;
+}
+
+.node-canvas-content {
+    position: absolute;
+    transform-origin: 0 0;
+}
+
+.connections-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.connections-layer svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+}
+
+.connection-line {
+    fill: none;
+    stroke-width: 3;
+    stroke-linecap: round;
+    pointer-events: stroke;
+    cursor: pointer;
+    transition: stroke-width var(--transition-fast);
+}
+
+.connection-line:hover {
+    stroke-width: 5;
+}
+
+.connection-line.audio {
+    stroke: var(--audio-output);
+}
+
+.connection-line.technical {
+    stroke: var(--technical);
+}
+
+.connection-line.selected {
+    stroke-width: 4;
+    filter: drop-shadow(0 0 4px currentColor);
+}
+
+.connection-temp {
+    pointer-events: none;
+    stroke-dasharray: 5 5;
+    animation: dash 0.5s linear infinite;
+}
+
+@keyframes dash {
+    to {
+        stroke-dashoffset: -10;
+    }
+}
+
+.nodes-layer {
+    position: absolute;
+    inset: 0;
+}
+
+/* ============================================================================
+   Selection Box - Drag to select multiple nodes
+   ============================================================================ */
+
+.selection-box {
+    position: absolute;
+    border: 2px dashed var(--accent-primary);
+    background: rgba(99, 102, 241, 0.1);
+    pointer-events: none;
+    z-index: 50;
+}
+
+/* ============================================================================
+   Ghost Mode - W key toggle
+   ============================================================================ */
+
+.node-canvas.ghost-mode .node {
+    opacity: 0.1;
+    pointer-events: none;
+}
+
+/* Ports remain visible and glowing in ghost mode */
+.node-canvas.ghost-mode .port-dot {
+    opacity: 1;
+    pointer-events: auto;
+    animation: portGlow 1.5s ease-in-out infinite;
+}
+
+.node-canvas.ghost-mode .connection-line {
+    pointer-events: stroke;
+    stroke-width: 4;
+}
+
+@keyframes portGlow {
+
+    0%,
+    100% {
+        box-shadow: 0 0 8px 2px var(--audio-output);
+    }
+
+    50% {
+        box-shadow: 0 0 16px 4px var(--audio-output);
+    }
+}
+
+/* Ghost mode indicator */
+.node-canvas.ghost-mode::after {
+    content: '👻 Ghost Mode (W)';
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    z-index: 1000;
+    pointer-events: none;
+}
