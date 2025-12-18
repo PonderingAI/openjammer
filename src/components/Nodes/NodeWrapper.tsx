@@ -24,8 +24,10 @@ interface NodeWrapperProps {
 // Schematic nodes render their own container - no wrapper needed
 const SCHEMATIC_TYPES = [
     'keyboard',
-    'piano', 'cello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
-    'speaker'
+    'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
+    'speaker',
+    'looper',
+    'microphone'
 ];
 
 export function NodeWrapper({ node }: NodeWrapperProps) {
@@ -112,8 +114,20 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         window.addEventListener('mouseup', handleMouseUp);
     }, [node.id, node.position, zoom, selectNode, updateNodePosition]);
 
-    // Handle port click for connections
-    const handlePortClick = useCallback((portId: string, e: React.MouseEvent) => {
+    // Handle port mouse down - start connection dragging
+    const handlePortMouseDown = useCallback((portId: string, e: React.MouseEvent) => {
+        if (e.button !== 0) return; // Only left click
+        e.stopPropagation();
+
+        // If not already connecting, start a new connection
+        const currentIsConnecting = useCanvasStore.getState().isConnecting;
+        if (!currentIsConnecting) {
+            startConnecting(node.id, portId);
+        }
+    }, [node.id, startConnecting]);
+
+    // Handle port mouse up - complete connection if dragging to a different port
+    const handlePortMouseUp = useCallback((portId: string, e: React.MouseEvent) => {
         e.stopPropagation();
 
         // Read current connecting state directly from store to avoid stale closure
@@ -122,8 +136,15 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
         if (currentIsConnecting && currentConnectingFrom) {
             const sources = Array.isArray(currentConnectingFrom) ? currentConnectingFrom : [currentConnectingFrom];
+
+            // If releasing on the same port we started from, do nothing (allow click-to-connect)
+            if (sources.length === 1 && sources[0].nodeId === node.id && sources[0].portId === portId) {
+                // Don't stop connecting - user clicked a port to start, they'll click another to finish
+                return;
+            }
+
             const updateNodePorts = useGraphStore.getState().updateNodePorts;
-            const isInstrument = ['piano', 'cello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
+            const isInstrument = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
 
             // Check if clicking on a ghost port (not yet persisted)
             const isGhostPort = portId.startsWith('ghost-input-');
@@ -218,15 +239,30 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             });
 
             stopConnecting();
-        } else {
-            startConnecting(node.id, portId);
         }
-    }, [node, addConnection, startConnecting, stopConnecting]);
+    }, [node, addConnection, stopConnecting]);
+
+    // Handle port hover for connection targeting
+    const handlePortMouseEnter = useCallback((portId: string) => {
+        if (useCanvasStore.getState().isConnecting) {
+            setHoverTarget(node.id, portId);
+        }
+    }, [node.id, setHoverTarget]);
+
+    const handlePortMouseLeave = useCallback(() => {
+        if (useCanvasStore.getState().isConnecting) {
+            // Only clear the port, keep hovering over node
+            setHoverTarget(node.id);
+        }
+    }, [node.id, setHoverTarget]);
 
     // Common props for schematic nodes
     const schematicProps = {
         node,
-        handlePortClick,
+        handlePortMouseDown,
+        handlePortMouseUp,
+        handlePortMouseEnter,
+        handlePortMouseLeave,
         hasConnection,
         handleHeaderMouseDown,
         handleNodeMouseEnter,
@@ -248,6 +284,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <KeyboardNode {...schematicProps} />;
             case 'piano':
             case 'cello':
+            case 'electricCello':
             case 'violin':
             case 'saxophone':
             case 'strings':
@@ -256,6 +293,10 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <InstrumentNode {...schematicProps} />;
             case 'speaker':
                 return <SpeakerNode {...schematicProps} />;
+            case 'looper':
+                return <LooperNode {...schematicProps} />;
+            case 'microphone':
+                return <MicrophoneNode {...schematicProps} />;
         }
     }
 
@@ -265,10 +306,6 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
     const renderNodeContent = () => {
         switch (node.type) {
-            case 'microphone':
-                return <MicrophoneNode node={node} />;
-            case 'looper':
-                return <LooperNode node={node} />;
             case 'effect':
                 return <EffectNode node={node} />;
             case 'amplifier':
@@ -305,7 +342,10 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                         <div
                             key={port.id}
                             className={`port port-input`}
-                            onClick={(e) => handlePortClick(port.id, e)}
+                            onMouseDown={(e) => handlePortMouseDown(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter(port.id)}
+                            onMouseLeave={handlePortMouseLeave}
                         >
                             <div
                                 className={`port-dot ${port.type === 'audio' ? 'audio-input' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
@@ -322,7 +362,10 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                         <div
                             key={port.id}
                             className={`port port-output`}
-                            onClick={(e) => handlePortClick(port.id, e)}
+                            onMouseDown={(e) => handlePortMouseDown(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter(port.id)}
+                            onMouseLeave={handlePortMouseLeave}
                         >
                             <span className="port-label">{port.name}</span>
                             <div

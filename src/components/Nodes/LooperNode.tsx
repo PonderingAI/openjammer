@@ -1,6 +1,8 @@
 /**
- * Looper Node - Record and loop audio
- * Connected to the real Looper audio class via AudioGraphManager
+ * Looper Node - Record and loop audio (Schematic Style)
+ *
+ * Compact horizontal layout with inline ports, waveform visualization,
+ * and a minimal record button.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -12,27 +14,64 @@ import type { Loop } from '../../audio/Looper';
 
 interface LooperNodeProps {
     node: GraphNode;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    hasConnection: (portId: string) => boolean;
+    handleHeaderMouseDown: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter: () => void;
+    handleNodeMouseLeave: () => void;
+    isSelected: boolean;
+    isDragging: boolean;
+    isHoveredWithConnections: boolean;
+    incomingConnectionCount: number;
+    style: React.CSSProperties;
 }
 
 interface LoopState {
     id: string;
-    duration: number;
+    waveformData: number[];  // The recorded waveform shape
     isMuted: boolean;
-    isPlaying: boolean;
 }
 
-export function LooperNode({ node }: LooperNodeProps) {
+export function LooperNode({
+    node,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    style
+}: LooperNodeProps) {
     const data = node.data as LooperNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
     const [loops, setLoops] = useState<LoopState[]>([]);
     const [isRecording, setIsRecording] = useState(false);
-    const [isArmed, setIsArmed] = useState(false); // Waiting for signal
-    const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(data.duration || 10);
-    const animationRef = useRef<number | null>(null);
-    const startTimeRef = useRef<number>(0);
+    const [isEditingDuration, setIsEditingDuration] = useState(false);
+    const [editValue, setEditValue] = useState('');
+
+    // Active recording waveform
+    const [waveformHistory, setWaveformHistory] = useState<number[]>([]);
+    const [playheadPosition, setPlayheadPosition] = useState(0);
+    const [currentLevel, setCurrentLevel] = useState(0); // For infinite mode bouncing line
+
+    // Ref for auto-scrolling loops list
+    const loopsContainerRef = useRef<HTMLDivElement>(null);
+
+    // Get port IDs from node.ports
+    const inputPort = node.ports.find(p => p.direction === 'input' && p.type === 'audio');
+    const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
+    const inputPortId = inputPort?.id || 'audio-in';
+    const outputPortId = outputPort?.id || 'audio-out';
 
     // Get the Looper instance from AudioGraphManager
     const getLooper = useCallback(() => {
@@ -43,252 +82,336 @@ export function LooperNode({ node }: LooperNodeProps) {
     useEffect(() => {
         if (!isAudioContextReady) return;
 
-        const looper = getLooper();
-        if (!looper) return;
+        let looper = getLooper();
+        let pollIntervalId: number | null = null;
+        let isSetup = false;
 
-        // Set up callbacks
-        looper.setOnLoopAdded((audioLoop: Loop) => {
-            const newLoop: LoopState = {
-                id: audioLoop.id,
-                duration: audioLoop.buffer?.duration || duration,
-                isMuted: audioLoop.isMuted,
-                isPlaying: true
-            };
-            setLoops(prev => [...prev, newLoop]);
-            setIsRecording(false);
-            setIsArmed(false);
-        });
+        const setupCallbacks = (l: ReturnType<typeof getLooper>) => {
+            if (!l || isSetup) return;
+            isSetup = true;
 
-        looper.setOnTimeUpdate((time: number) => {
-            setCurrentTime(time);
-        });
+            l.setOnLoopAdded((audioLoop: Loop) => {
+                const newLoop: LoopState = {
+                    id: audioLoop.id,
+                    waveformData: audioLoop.waveformData || [],
+                    isMuted: audioLoop.isMuted
+                };
+                setLoops(prev => [...prev, newLoop]);
+                // Reset active waveform history for next recording
+                setWaveformHistory([]);
+                setPlayheadPosition(0);
+            });
 
-        // Sync duration
-        looper.setDuration(duration);
+            l.setOnWaveformHistoryUpdate((history: number[], playhead: number) => {
+                setWaveformHistory(history);
+                setPlayheadPosition(playhead);
+                // Track current level for infinite mode visualization
+                if (history.length > 0) {
+                    setCurrentLevel(history[history.length - 1]);
+                }
+            });
 
-        // Initial sync of loops from looper
-        const existingLoops = looper.getLoops();
-        if (existingLoops.length > 0) {
-            setLoops(existingLoops.map(l => ({
-                id: l.id,
-                duration: l.buffer?.duration || duration,
-                isMuted: l.isMuted,
-                isPlaying: l.sourceNode !== null
-            })));
+            l.setDuration(duration);
+
+            const existingLoops = l.getLoops();
+            if (existingLoops.length > 0) {
+                setLoops(existingLoops.map(loop => ({
+                    id: loop.id,
+                    waveformData: loop.waveformData || [],
+                    isMuted: loop.isMuted
+                })));
+            }
+        };
+
+        // If looper is available, set up immediately
+        if (looper) {
+            setupCallbacks(looper);
+        } else {
+            // Poll for looper availability (created by AudioGraphManager)
+            pollIntervalId = window.setInterval(() => {
+                looper = getLooper();
+                if (looper) {
+                    setupCallbacks(looper);
+                    if (pollIntervalId !== null) {
+                        clearInterval(pollIntervalId);
+                        pollIntervalId = null;
+                    }
+                }
+            }, 100);
         }
 
         return () => {
-            // Cleanup callbacks
-            looper.setOnLoopAdded(() => {});
-            looper.setOnTimeUpdate(() => {});
+            if (pollIntervalId !== null) {
+                clearInterval(pollIntervalId);
+            }
+            const l = getLooper();
+            if (l) {
+                l.setOnLoopAdded(() => {});
+                l.setOnWaveformHistoryUpdate(() => {});
+            }
         };
     }, [isAudioContextReady, node.id, duration, getLooper]);
 
-    // Progress animation for when recording or playing
+    // Auto-scroll to show newest loops when new loop is added
     useEffect(() => {
-        if (!isRecording && loops.length === 0) {
-            if (animationRef.current) {
-                cancelAnimationFrame(animationRef.current);
-            }
-            return;
+        if (loopsContainerRef.current && loops.length > 0) {
+            // With column-reverse, scroll to top to see newest
+            loopsContainerRef.current.scrollTop = 0;
         }
+    }, [loops.length]);
 
-        const looper = getLooper();
-        if (!looper) {
-            // Fallback to simulated progress if no looper
-            const updateTime = () => {
-                const elapsed = (Date.now() - startTimeRef.current) / 1000;
-                setCurrentTime(elapsed % duration);
-                animationRef.current = requestAnimationFrame(updateTime);
-            };
-
-            if (loops.length > 0 || isRecording) {
-                startTimeRef.current = Date.now();
-                updateTime();
-            }
-        }
-
-        return () => {
-            if (animationRef.current) {
-                cancelAnimationFrame(animationRef.current);
-            }
-        };
-    }, [isRecording, loops.length, duration, getLooper]);
-
-    // Start recording - arms the looper to start on first signal
     const handleRecord = useCallback(async () => {
         const looper = getLooper();
         if (!looper) {
-            // Fallback: simulate if no looper instance
-            setIsRecording(true);
-            setIsArmed(true);
-            startTimeRef.current = Date.now();
-
-            setTimeout(() => {
-                setIsRecording(false);
-                setIsArmed(false);
-                const newLoop: LoopState = {
-                    id: `loop-${Date.now()}`,
-                    duration: duration,
-                    isMuted: false,
-                    isPlaying: true
-                };
-                setLoops(prev => [...prev, newLoop]);
-            }, duration * 1000);
+            console.warn('No looper instance available');
             return;
         }
 
-        setIsArmed(true);
         await looper.startRecording();
         setIsRecording(true);
-    }, [duration, getLooper]);
+    }, [getLooper]);
 
-    // Stop recording
     const handleStopRecord = useCallback(() => {
         const looper = getLooper();
         if (looper) {
             looper.stopRecording();
         }
         setIsRecording(false);
-        setIsArmed(false);
     }, [getLooper]);
 
-    // Toggle loop mute
     const handleToggleMute = useCallback((loopId: string) => {
         const looper = getLooper();
         if (looper) {
             looper.toggleLoopMute(loopId);
         }
-
         setLoops(prev => prev.map(loop =>
             loop.id === loopId ? { ...loop, isMuted: !loop.isMuted } : loop
         ));
     }, [getLooper]);
 
-    // Delete loop
     const handleDeleteLoop = useCallback((loopId: string) => {
         const looper = getLooper();
         if (looper) {
             looper.deleteLoop(loopId);
         }
-
         setLoops(prev => prev.filter(loop => loop.id !== loopId));
     }, [getLooper]);
 
-    // Change duration
-    const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const newDuration = parseFloat(e.target.value) || 10;
-        setDuration(newDuration);
-        updateNodeData<LooperNodeData>(node.id, { duration: newDuration });
+    // Use Infinity (stored as 9999) for unlimited duration
+    const INFINITE_DURATION = 9999;
+    const isInfinite = duration >= INFINITE_DURATION;
 
-        // Update looper duration
+    const handleDurationChange = useCallback((newDuration: number) => {
+        let finalDuration: number;
+        if (newDuration > 60) {
+            finalDuration = INFINITE_DURATION;
+        } else {
+            finalDuration = Math.max(1, newDuration);
+        }
+        setDuration(finalDuration);
+        updateNodeData<LooperNodeData>(node.id, { duration: finalDuration });
+
         const looper = getLooper();
         if (looper) {
-            looper.setDuration(newDuration);
+            looper.setDuration(finalDuration);
         }
     }, [node.id, updateNodeData, getLooper]);
 
-    const progress = (currentTime / duration) * 100;
+    const handleDurationWheel = useCallback((e: React.WheelEvent) => {
+        if (isRecording || isEditingDuration) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const scrollingUp = e.deltaY < 0;
+
+        if (isInfinite && !scrollingUp) {
+            // Scrolling down from infinite goes to 60
+            handleDurationChange(60);
+        } else if (duration === 60 && scrollingUp) {
+            // Scrolling up from 60 goes to infinite
+            handleDurationChange(61); // Will be converted to INFINITE_DURATION
+        } else if (!isInfinite) {
+            const delta = scrollingUp ? 1 : -1;
+            handleDurationChange(duration + delta);
+        }
+    }, [duration, isInfinite, isRecording, isEditingDuration, handleDurationChange]);
+
+    const handleDurationClick = useCallback((e: React.MouseEvent) => {
+        if (isRecording) return;
+        e.stopPropagation();
+        setEditValue(isInfinite ? '' : String(duration));
+        setIsEditingDuration(true);
+    }, [isRecording, duration, isInfinite]);
+
+    const handleDurationBlur = useCallback(() => {
+        const newDuration = parseInt(editValue, 10);
+        if (!isNaN(newDuration) && newDuration > 0) {
+            handleDurationChange(newDuration);
+        } else if (editValue === '' && isInfinite) {
+            // Keep infinite if input was cleared while infinite
+        } else if (editValue === '') {
+            // Empty input defaults to 10
+            handleDurationChange(10);
+        }
+        setIsEditingDuration(false);
+    }, [editValue, isInfinite, handleDurationChange]);
+
+    const handleDurationKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleDurationBlur();
+        } else if (e.key === 'Escape') {
+            setIsEditingDuration(false);
+        }
+    }, [handleDurationBlur]);
 
     return (
-        <div className="looper-node">
-            {/* Duration Setting */}
-            <div className="node-row">
-                <span className="node-label" style={{ marginBottom: 0 }}>Duration</span>
-                <input
-                    type="number"
-                    className="node-input"
-                    value={duration}
-                    onChange={handleDurationChange}
-                    min="1"
-                    max="60"
-                    step="1"
-                    style={{ width: '60px', textAlign: 'center' }}
-                    disabled={isRecording}
-                />
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>sec</span>
+        <div
+            className={`schematic-node looper-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
+        >
+            {/* Header - only "Looper" text */}
+            <div className="schematic-header" onMouseDown={handleHeaderMouseDown}>
+                <span>Looper</span>
             </div>
 
-            {/* Progress Bar */}
-            <div className="node-progress" style={{ marginTop: '8px' }}>
+            {/* Main row: Audio In - Duration - Audio Out */}
+            <div className="looper-main-row">
                 <div
-                    className="node-progress-bar"
-                    style={{
-                        width: `${progress}%`,
-                        background: isRecording
-                            ? 'var(--accent-danger)'
-                            : 'linear-gradient(90deg, var(--accent-primary), var(--accent-secondary))'
-                    }}
+                    className={`looper-input-port ${hasConnection(inputPortId) ? 'connected' : ''}`}
+                    onMouseDown={(e) => handlePortMouseDown?.(inputPortId, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(inputPortId, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(inputPortId)}
+                    onMouseLeave={handlePortMouseLeave}
+                    data-node-id={node.id}
+                    data-port-id={inputPortId}
+                />
+                <div className="looper-duration-container">
+                    {isEditingDuration ? (
+                        <input
+                            className="looper-duration-input"
+                            type="number"
+                            min="1"
+                            max="60"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleDurationBlur}
+                            onKeyDown={handleDurationKeyDown}
+                            autoFocus
+                        />
+                    ) : (
+                        <span
+                            className={`looper-duration editable-value ${isRecording ? 'disabled' : ''}`}
+                            onClick={handleDurationClick}
+                            onWheel={handleDurationWheel}
+                            title="Click to edit, scroll to adjust"
+                        >
+                            {isInfinite ? '∞' : duration}
+                        </span>
+                    )}
+                    {!isInfinite && <span className="looper-duration-unit">s</span>}
+                </div>
+                <div
+                    className={`looper-output-port ${hasConnection(outputPortId) ? 'connected' : ''}`}
+                    onMouseDown={(e) => handlePortMouseDown?.(outputPortId, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(outputPortId, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(outputPortId)}
+                    onMouseLeave={handlePortMouseLeave}
+                    data-node-id={node.id}
+                    data-port-id={outputPortId}
                 />
             </div>
-            <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '10px',
-                color: 'var(--text-muted)',
-                marginTop: '2px'
-            }}>
-                <span>{currentTime.toFixed(1)}s</span>
-                <span>{duration}s</span>
-            </div>
 
-            {/* Status Indicator */}
-            {isArmed && !isRecording && (
-                <div style={{
-                    fontSize: '10px',
-                    color: 'var(--accent-warning)',
-                    textAlign: 'center',
-                    marginTop: '4px'
-                }}>
-                    Waiting for signal...
+            {/* Active recording waveform with playhead */}
+            {isRecording && (
+                <div className="looper-active-waveform">
+                    <svg viewBox="0 0 100 20" preserveAspectRatio="none">
+                        {isInfinite ? (
+                            /* Infinite mode: bouncing horizontal line */
+                            <line
+                                x1="0"
+                                y1={10 - currentLevel * 8}
+                                x2="100"
+                                y2={10 - currentLevel * 8}
+                                className="looper-waveform-path recording"
+                                strokeWidth="2"
+                            />
+                        ) : (
+                            <>
+                                {/* Waveform line building up */}
+                                {waveformHistory.length > 1 && (
+                                    <polyline
+                                        className="looper-waveform-path recording"
+                                        fill="none"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        points={waveformHistory.map((v, i) =>
+                                            `${(i / (waveformHistory.length - 1)) * playheadPosition},${10 - v * 8}`
+                                        ).join(' ')}
+                                    />
+                                )}
+                                {/* Playhead vertical line */}
+                                <line
+                                    x1={playheadPosition}
+                                    y1="0"
+                                    x2={playheadPosition}
+                                    y2="20"
+                                    className="looper-playhead"
+                                />
+                            </>
+                        )}
+                    </svg>
                 </div>
             )}
 
-            {/* Controls */}
-            <div className="node-controls">
-                {!isRecording && !isArmed ? (
-                    <button
-                        className="node-btn node-btn-danger"
-                        onClick={handleRecord}
-                        disabled={!isAudioContextReady}
-                        style={{ flex: 1 }}
-                    >
-                        ⏺ Record
-                    </button>
-                ) : (
-                    <button
-                        className="node-btn node-btn-secondary"
-                        onClick={handleStopRecord}
-                        style={{ flex: 1 }}
-                    >
-                        ⏹ Stop
-                    </button>
-                )}
-            </div>
-
-            {/* Loops List */}
+            {/* Completed loops as line waveforms */}
             {loops.length > 0 && (
-                <div className="loop-list">
-                    {loops.map((loop, index) => (
-                        <div
-                            key={loop.id}
-                            className={`loop-item ${loop.isMuted ? 'muted' : ''}`}
-                        >
-                            <span>Loop {index + 1}</span>
-                            <div className="loop-actions">
+                <div
+                    className="looper-loops"
+                    ref={loopsContainerRef}
+                    onWheel={(e) => e.stopPropagation()}
+                >
+                    {loops.map((loop) => (
+                        <div key={loop.id} className={`looper-loop-item ${loop.isMuted ? 'muted' : ''}`}>
+                            <svg viewBox="0 0 100 20" preserveAspectRatio="none">
+                                {loop.waveformData.length > 1 ? (
+                                    <polyline
+                                        className="looper-waveform-path"
+                                        fill="none"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        points={loop.waveformData.map((v, i) =>
+                                            `${(i / (loop.waveformData.length - 1)) * 100},${10 - v * 8}`
+                                        ).join(' ')}
+                                    />
+                                ) : (
+                                    <line x1="0" y1="10" x2="100" y2="10" className="looper-waveform-path" />
+                                )}
+                            </svg>
+                            <div className="looper-loop-controls">
                                 <button
-                                    className={`node-btn ${loop.isMuted ? 'node-btn-secondary' : 'node-btn-success'}`}
+                                    className={`looper-loop-btn ${loop.isMuted ? 'muted' : ''}`}
                                     onClick={() => handleToggleMute(loop.id)}
-                                    style={{ padding: '2px 6px', fontSize: '10px' }}
+                                    title={loop.isMuted ? 'Unmute' : 'Mute'}
                                 >
-                                    {loop.isMuted ? '🔇' : '🔊'}
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                        {loop.isMuted ? (
+                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+                                        ) : (
+                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                                        )}
+                                    </svg>
                                 </button>
                                 <button
-                                    className="node-btn node-btn-danger"
+                                    className="looper-loop-btn delete"
                                     onClick={() => handleDeleteLoop(loop.id)}
-                                    style={{ padding: '2px 6px', fontSize: '10px' }}
+                                    title="Delete"
                                 >
-                                    ✕
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                                    </svg>
                                 </button>
                             </div>
                         </div>
@@ -296,16 +419,14 @@ export function LooperNode({ node }: LooperNodeProps) {
                 </div>
             )}
 
-            {loops.length === 0 && !isRecording && !isArmed && (
-                <div style={{
-                    fontSize: '11px',
-                    color: 'var(--text-muted)',
-                    textAlign: 'center',
-                    marginTop: '8px'
-                }}>
-                    Press Record to start looping
-                </div>
-            )}
+            {/* Record button - centered red circle with white center */}
+            <div className="looper-record-container">
+                <button
+                    className={`looper-record-btn ${isRecording ? 'recording' : ''}`}
+                    onClick={isRecording ? handleStopRecord : handleRecord}
+                    disabled={!isAudioContextReady}
+                />
+            </div>
         </div>
     );
 }

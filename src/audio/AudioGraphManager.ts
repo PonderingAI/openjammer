@@ -6,12 +6,13 @@
  */
 
 import { getAudioContext } from './AudioEngine';
-import { createInstrument, Instrument } from './Instruments';
+import { createInstrument, Instrument, getNoteName } from './Instruments';
 import type { InstrumentType } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData } from '../engine/types';
+import { useGraphStore } from '../store/graphStore';
 
 // ============================================================================
 // Types
@@ -35,6 +36,7 @@ type NodeChangeCallback = (nodes: Map<string, GraphNode>) => void;
 
 class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
+    private activeAudioConnections: Set<string> = new Set(); // Track "sourceId->targetId" pairs
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
@@ -82,6 +84,7 @@ class AudioGraphManager {
             this.destroyAudioNode(nodeInstance);
         });
         this.audioNodes.clear();
+        this.activeAudioConnections.clear();
 
         if (this.unsubscribeGraph) {
             this.unsubscribeGraph();
@@ -344,13 +347,34 @@ class AudioGraphManager {
         const audioConnections = Array.from(graphConnections.values())
             .filter(conn => conn.type === 'audio');
 
-        // Connect audio connections
+        // Build set of current connection keys
+        const currentConnectionKeys = new Set<string>();
         audioConnections.forEach(connection => {
-            this.connectAudioNodes(
-                connection.sourceNodeId,
-                connection.targetNodeId
-            );
+            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            currentConnectionKeys.add(key);
         });
+
+        // Find and disconnect removed connections
+        this.activeAudioConnections.forEach(key => {
+            if (!currentConnectionKeys.has(key)) {
+                const [sourceNodeId, targetNodeId] = key.split('->');
+                this.disconnectAudioNodes(sourceNodeId, targetNodeId);
+            }
+        });
+
+        // Connect new audio connections
+        audioConnections.forEach(connection => {
+            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            if (!this.activeAudioConnections.has(key)) {
+                this.connectAudioNodes(
+                    connection.sourceNodeId,
+                    connection.targetNodeId
+                );
+            }
+        });
+
+        // Update tracked connections
+        this.activeAudioConnections = currentConnectionKeys;
     }
 
     /**
@@ -547,6 +571,188 @@ class AudioGraphManager {
             const mediaStream = audioNode.instance.mediaStream;
             mediaStream.getTracks().forEach(track => track.stop());
             audioNode.instance = null;
+        }
+    }
+
+    /**
+     * Set the output node for a microphone (called from MicrophoneNode component)
+     * This allows the component to manage its own audio stream while routing through connections
+     */
+    setMicrophoneOutput(nodeId: string, outputNode: GainNode): void {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (audioNode) {
+            // Disconnect old output if exists
+            if (audioNode.outputNode) {
+                audioNode.outputNode.disconnect();
+            }
+            audioNode.outputNode = outputNode;
+
+            // Re-establish any existing connections from this node
+            this.reconnectNodeOutputs(nodeId);
+        }
+    }
+
+    /**
+     * Reconnect all outputs from a node (used when output node changes)
+     */
+    private reconnectNodeOutputs(nodeId: string): void {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (!audioNode?.outputNode) return;
+
+        // Get connections from graphStore
+        const graphConnections = useGraphStore.getState().connections;
+
+        // Find all audio connections from this node and reconnect
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === nodeId && connection.type === 'audio') {
+                const targetAudioNode = this.audioNodes.get(connection.targetNodeId);
+                if (targetAudioNode?.inputNode) {
+                    try {
+                        audioNode.outputNode.connect(targetAudioNode.inputNode);
+                    } catch (e) {
+                        // Connection might already exist
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================================
+    // Keyboard Note Triggering
+    // ============================================================================
+
+    /**
+     * Trigger a note from keyboard input
+     * @param keyboardId - The keyboard node ID
+     * @param row - The active row (1, 2, or 3)
+     * @param keyIndex - The key index within the row (0-9 for row 1/3, 0-8 for row 2)
+     */
+    triggerKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the output port for this row (e.g., "row-1", "row-2", "row-3")
+        const rowPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+        )?.id;
+
+        if (!rowPortId) return;
+
+        // Get keyboard's row octave settings
+        const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
+        const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2]; // Default octaves for rows 1, 2, 3
+        const baseOctave = rowOctaves[row - 1] ?? 4;
+
+        // Find all connections from this port (technical connections to instruments)
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is an instrument
+                const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
+                if (!instrumentTypes.includes(targetNode.type)) continue;
+
+                // Get the instrument's offset for this input port
+                const instrumentData = targetNode.data as {
+                    offsets?: { [portId: string]: number };
+                    octaveOffsets?: { [portId: string]: number };
+                    noteOffsets?: { [portId: string]: number };
+                };
+
+                const targetPortId = connection.targetPortId;
+                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                // Calculate final note
+                // keyIndex is 0-9, maps to chromatic notes
+                // baseOctave is the octave from the keyboard row
+                // Add instrument's offsets
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                // Convert to note name string (e.g., "C4", "D#4")
+                const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                // Get the instrument and play the note
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument) {
+                    instrument.playNote(noteName);
+                }
+            }
+        }
+    }
+
+    /**
+     * Release a note from keyboard input
+     * @param keyboardId - The keyboard node ID
+     * @param row - The active row (1, 2, or 3)
+     * @param keyIndex - The key index within the row
+     */
+    releaseKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the output port for this row
+        const rowPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+        )?.id;
+
+        if (!rowPortId) return;
+
+        // Get keyboard's row octave settings
+        const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
+        const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2];
+        const baseOctave = rowOctaves[row - 1] ?? 4;
+
+        // Find all connections from this port
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is an instrument
+                const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
+                if (!instrumentTypes.includes(targetNode.type)) continue;
+
+                // Get the instrument's offset for this input port
+                const instrumentData = targetNode.data as {
+                    offsets?: { [portId: string]: number };
+                    octaveOffsets?: { [portId: string]: number };
+                    noteOffsets?: { [portId: string]: number };
+                };
+
+                const targetPortId = connection.targetPortId;
+                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                // Calculate final note (same as trigger)
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                // Convert to note name string
+                const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                // Get the instrument and stop the note
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument) {
+                    instrument.stopNote(noteName);
+                }
+            }
         }
     }
 }

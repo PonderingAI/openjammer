@@ -11,17 +11,24 @@ export interface Loop {
     isMuted: boolean;
     gainNode: GainNode | null;
     sourceNode: AudioBufferSourceNode | null;
+    waveformData: number[];  // Amplitude values over time for visualization
 }
 
 /**
  * Looper class for recording and playing back loops
+ *
+ * Works like a traditional loop pedal:
+ * - Recording happens in fixed cycles based on duration
+ * - After each cycle, the recording becomes a loop and starts playing
+ * - Recording continues, layering new audio on top of previous loops
+ * - User manually stops recording when done
  */
 export class Looper {
     private duration: number;
     private loops: Loop[] = [];
     private isRecording: boolean = false;
     private currentTime: number = 0;
-    private startTime: number = 0;
+    private cycleStartTime: number = 0;
     private outputNode: GainNode | null = null;
 
     // Recording
@@ -31,13 +38,21 @@ export class Looper {
     private inputNode: AudioNode | null = null;
     private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
     private analyser: AnalyserNode | null = null;
-    private silenceThreshold: number = 0.01;
-    private silenceStartTime: number = 0;
-    private hasDetectedSound: boolean = false;
+
+    // Cycle timer
+    private cycleTimerId: number | null = null;
+    private animationFrameId: number | null = null;
+
+    // Waveform history (builds during recording)
+    private waveformHistory: number[] = [];
+    private lastWaveformSampleTime: number = 0;
+    private readonly WAVEFORM_SAMPLE_INTERVAL = 50; // ms between samples
 
     // Callbacks
     private onLoopAdded: ((loop: Loop) => void) | null = null;
     private onTimeUpdate: ((time: number) => void) | null = null;
+    private onWaveformUpdate: ((bars: number[]) => void) | null = null;
+    private onWaveformHistoryUpdate: ((history: number[], playheadPosition: number) => void) | null = null;
 
     constructor(duration: number = 10) {
         this.duration = duration;
@@ -82,6 +97,14 @@ export class Looper {
         this.onTimeUpdate = callback;
     }
 
+    setOnWaveformUpdate(callback: (bars: number[]) => void): void {
+        this.onWaveformUpdate = callback;
+    }
+
+    setOnWaveformHistoryUpdate(callback: (history: number[], playheadPosition: number) => void): void {
+        this.onWaveformHistoryUpdate = callback;
+    }
+
     /**
      * Get the input node for connecting upstream audio
      */
@@ -97,8 +120,13 @@ export class Looper {
             // Create MediaStreamDestination for recording from AudioNode
             this.mediaStreamDestination = ctx.createMediaStreamDestination();
 
-            // Connect analyser to destination
+            // Connect analyser to destination for recording
             this.analyser.connect(this.mediaStreamDestination);
+
+            // Also connect to output for passthrough (audio flows through even when not recording)
+            if (this.outputNode) {
+                this.analyser.connect(this.outputNode);
+            }
 
             // Store the stream for MediaRecorder
             this.inputStream = this.mediaStreamDestination.stream;
@@ -119,6 +147,11 @@ export class Looper {
         if (!this.analyser) {
             this.analyser = ctx.createAnalyser();
             this.analyser.fftSize = 256;
+
+            // Connect to output for passthrough
+            if (this.outputNode) {
+                this.analyser.connect(this.outputNode);
+            }
         }
 
         if (source instanceof MediaStream) {
@@ -140,98 +173,88 @@ export class Looper {
     }
 
     /**
-     * Start recording (auto-starts when sound detected)
+     * Start recording - immediately begins recording in cycles
+     * After each cycle (duration), the recording becomes a loop and plays
+     * Recording continues until manually stopped
      */
     async startRecording(): Promise<void> {
         if (this.isRecording) return;
 
         const ctx = getAudioContext();
-        if (!ctx || !this.analyser) return;
+        if (!ctx || !this.inputStream) return;
 
         this.isRecording = true;
-        this.hasDetectedSound = false;
-        this.recordedChunks = [];
+        this.cycleStartTime = ctx.currentTime;
 
-        // Set up MediaRecorder if we have an input stream
-        if (this.inputStream) {
-            this.mediaRecorder = new MediaRecorder(this.inputStream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
+        // Start the first recording cycle
+        this.startRecordingCycle();
 
-            this.mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                    this.recordedChunks.push(e.data);
-                }
-            };
-
-            this.mediaRecorder.onstop = () => this.processRecording();
-        }
-
-        // Start monitoring for sound
-        this.monitorForSound();
+        // Start progress animation
+        this.updateProgress();
     }
 
     /**
-     * Monitor audio level and auto-start/stop recording
+     * Start a single recording cycle
      */
-    private monitorForSound(): void {
-        if (!this.isRecording || !this.analyser) return;
-
-        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-        this.analyser.getByteTimeDomainData(dataArray);
-
-        // Calculate RMS level
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-            const sample = (dataArray[i] - 128) / 128;
-            sum += sample * sample;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
+    private startRecordingCycle(): void {
+        if (!this.isRecording || !this.inputStream) return;
 
         const ctx = getAudioContext();
         if (!ctx) return;
 
-        if (rms > this.silenceThreshold) {
-            if (!this.hasDetectedSound) {
-                // First sound detected - start actual recording
-                this.hasDetectedSound = true;
-                this.startTime = ctx.currentTime;
-                this.mediaRecorder?.start();
-            }
-            this.silenceStartTime = ctx.currentTime;
-        } else if (this.hasDetectedSound) {
-            // Check if we've had a full loop of silence
-            const silenceDuration = ctx.currentTime - this.silenceStartTime;
-            if (silenceDuration >= this.duration) {
-                this.stopRecording();
-                return;
-            }
-        }
+        this.recordedChunks = [];
+        this.waveformHistory = [];  // Reset waveform history for new cycle
+        this.lastWaveformSampleTime = 0;
+        this.cycleStartTime = ctx.currentTime;
 
-        // Update current time
-        if (this.hasDetectedSound) {
-            this.currentTime = (ctx.currentTime - this.startTime) % this.duration;
-            this.onTimeUpdate?.(this.currentTime);
-        }
+        // Create new MediaRecorder for this cycle
+        this.mediaRecorder = new MediaRecorder(this.inputStream, {
+            mimeType: 'audio/webm;codecs=opus'
+        });
 
-        requestAnimationFrame(() => this.monitorForSound());
+        this.mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                this.recordedChunks.push(e.data);
+            }
+        };
+
+        this.mediaRecorder.onstop = () => this.processRecordingCycle();
+
+        // Start recording immediately
+        this.mediaRecorder.start();
+
+        // Schedule end of cycle (for non-infinite duration)
+        const INFINITE_DURATION = 9999;
+        if (this.duration < INFINITE_DURATION) {
+            this.cycleTimerId = window.setTimeout(() => {
+                this.endRecordingCycle();
+            }, this.duration * 1000);
+        }
     }
 
     /**
-     * Stop recording manually
+     * End current recording cycle and start next one
      */
-    stopRecording(): void {
+    private endRecordingCycle(): void {
         if (!this.isRecording) return;
 
-        this.isRecording = false;
-        this.mediaRecorder?.stop();
+        // Stop current MediaRecorder (triggers onstop -> processRecordingCycle)
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.stop();
+        }
     }
 
     /**
-     * Process the recorded audio into a loop
+     * Process the recorded cycle into a loop, then start next cycle
      */
-    private async processRecording(): Promise<void> {
-        if (this.recordedChunks.length === 0) return;
+    private async processRecordingCycle(): Promise<void> {
+        if (this.recordedChunks.length === 0) {
+            // No audio recorded, but continue if still recording
+            if (this.isRecording) {
+                this.startRecordingCycle();
+            }
+            return;
+        }
 
         const ctx = getAudioContext();
         if (!ctx) return;
@@ -248,7 +271,8 @@ export class Looper {
                 startTime: 0,
                 isMuted: false,
                 gainNode: null,
-                sourceNode: null
+                sourceNode: null,
+                waveformData: [...this.waveformHistory]  // Store waveform shape
             };
 
             this.loops.push(loop);
@@ -258,6 +282,101 @@ export class Looper {
             this.playLoop(loop);
         } catch (err) {
             console.error('Failed to decode recorded audio:', err);
+        }
+
+        // Start next cycle if still recording
+        if (this.isRecording) {
+            this.startRecordingCycle();
+        }
+    }
+
+    /**
+     * Update progress bar animation and waveform data
+     */
+    private updateProgress(): void {
+        if (!this.isRecording && this.loops.length === 0) {
+            return;
+        }
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const INFINITE_DURATION = 9999;
+        const now = performance.now();
+
+        if (this.duration < INFINITE_DURATION) {
+            this.currentTime = (ctx.currentTime - this.cycleStartTime) % this.duration;
+        } else {
+            this.currentTime = 0;
+        }
+        this.onTimeUpdate?.(this.currentTime);
+
+        // Sample amplitude for waveform history during recording
+        if (this.isRecording && this.analyser) {
+            // Sample at fixed intervals
+            if (now - this.lastWaveformSampleTime >= this.WAVEFORM_SAMPLE_INTERVAL) {
+                const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                this.analyser.getByteTimeDomainData(dataArray);
+
+                // Calculate peak amplitude
+                let peak = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const amplitude = Math.abs(dataArray[i] - 128) / 128;
+                    if (amplitude > peak) peak = amplitude;
+                }
+                this.waveformHistory.push(peak);
+                this.lastWaveformSampleTime = now;
+            }
+
+            // Calculate playhead position (0-100)
+            const playheadPosition = this.duration < INFINITE_DURATION
+                ? (this.currentTime / this.duration) * 100
+                : 0;
+
+            // Send waveform history update
+            this.onWaveformHistoryUpdate?.(this.waveformHistory, playheadPosition);
+        }
+
+        // Extract real-time waveform data from analyser (for live display)
+        if (this.analyser && this.onWaveformUpdate) {
+            const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            this.analyser.getByteFrequencyData(dataArray);
+
+            const NUM_BARS = 32;
+            const bars: number[] = [];
+            const step = Math.floor(dataArray.length / NUM_BARS);
+            for (let i = 0; i < NUM_BARS; i++) {
+                bars.push(dataArray[i * step] / 255);
+            }
+            this.onWaveformUpdate(bars);
+        }
+
+        this.animationFrameId = requestAnimationFrame(() => this.updateProgress());
+    }
+
+    /**
+     * Stop recording manually
+     */
+    stopRecording(): void {
+        if (!this.isRecording) return;
+
+        this.isRecording = false;
+
+        // Clear cycle timer
+        if (this.cycleTimerId !== null) {
+            clearTimeout(this.cycleTimerId);
+            this.cycleTimerId = null;
+        }
+
+        // Stop animation
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+
+        // Stop current MediaRecorder
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.stop();
         }
     }
 
@@ -348,6 +467,17 @@ export class Looper {
     disconnect(): void {
         this.stopAll();
         this.stopRecording();
+
+        // Clear timers
+        if (this.cycleTimerId !== null) {
+            clearTimeout(this.cycleTimerId);
+            this.cycleTimerId = null;
+        }
+
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
 
         if (this.analyser) {
             this.analyser.disconnect();

@@ -95,7 +95,7 @@ export function getRowNote(key: string, row: number, baseOctave: number): string
 // Instrument Synthesizers
 // ============================================================================
 
-export type InstrumentType = 'piano' | 'cello' | 'violin' | 'saxophone';
+export type InstrumentType = 'piano' | 'cello' | 'electricCello' | 'violin' | 'saxophone';
 
 interface ActiveNote {
     oscillators: OscillatorNode[];
@@ -303,6 +303,149 @@ export class Cello extends Instrument {
 }
 
 /**
+ * Electric Cello - Modern, processed string sound with saturation and chorus
+ *
+ * Sound design:
+ * - Warm sawtooth base with soft saturation (waveshaper)
+ * - Chorus effect via detuned oscillators for stereo width
+ * - Expressive slow attack with sustain
+ * - Rich harmonics with resonant low-pass filter
+ * - Deeper, more expressive vibrato than acoustic
+ */
+export class ElectricCello extends Instrument {
+    private waveShaperCurve: Float32Array | null = null;
+
+    constructor() {
+        super('cello'); // Base type for compatibility
+    }
+
+    private getSaturationCurve(): Float32Array {
+        if (!this.waveShaperCurve) {
+            const samples = 256;
+            const curve = new Float32Array(samples);
+            const amount = 1.5;
+            for (let i = 0; i < samples; i++) {
+                const x = (i * 2) / samples - 1;
+                // Soft clipping curve
+                curve[i] = Math.tanh(x * amount);
+            }
+            this.waveShaperCurve = curve;
+        }
+        return this.waveShaperCurve;
+    }
+
+    playNote(note: string): void {
+        if (this.activeNotes.has(note)) return;
+
+        const ctx = getAudioContext();
+        if (!ctx || !this.outputNode) return;
+
+        const freq = noteToFrequency(note);
+        const now = ctx.currentTime;
+
+        // Resonant low-pass filter for warmth with slight resonance
+        const filterNode = ctx.createBiquadFilter();
+        filterNode.type = 'lowpass';
+        filterNode.frequency.setValueAtTime(800, now);
+        filterNode.frequency.linearRampToValueAtTime(2500, now + 0.3);
+        filterNode.Q.value = 2;
+        filterNode.connect(this.outputNode);
+
+        // Waveshaper for soft saturation
+        const waveshaper = ctx.createWaveShaper();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        waveshaper.curve = this.getSaturationCurve() as any;
+        waveshaper.oversample = '2x';
+        waveshaper.connect(filterNode);
+
+        // Main gain envelope - slow, expressive attack
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(0.45, now + 0.2); // Slower attack
+        gainNode.gain.linearRampToValueAtTime(0.38, now + 0.5); // Sustain
+        gainNode.connect(waveshaper);
+
+        const oscillators: OscillatorNode[] = [];
+
+        // Main oscillator - sawtooth for rich harmonics
+        const osc1 = ctx.createOscillator();
+        osc1.type = 'sawtooth';
+        osc1.frequency.value = freq;
+        osc1.connect(gainNode);
+        osc1.start(now);
+        oscillators.push(osc1);
+
+        // Detuned oscillator +7 cents for chorus width
+        const osc2Gain = ctx.createGain();
+        osc2Gain.gain.value = 0.35;
+        osc2Gain.connect(gainNode);
+
+        const osc2 = ctx.createOscillator();
+        osc2.type = 'sawtooth';
+        osc2.frequency.value = freq * Math.pow(2, 7 / 1200); // +7 cents
+        osc2.connect(osc2Gain);
+        osc2.start(now);
+        oscillators.push(osc2);
+
+        // Detuned oscillator -7 cents for chorus width
+        const osc3Gain = ctx.createGain();
+        osc3Gain.gain.value = 0.35;
+        osc3Gain.connect(gainNode);
+
+        const osc3 = ctx.createOscillator();
+        osc3.type = 'sawtooth';
+        osc3.frequency.value = freq * Math.pow(2, -7 / 1200); // -7 cents
+        osc3.connect(osc3Gain);
+        osc3.start(now);
+        oscillators.push(osc3);
+
+        // Sub oscillator one octave down for depth
+        const subGain = ctx.createGain();
+        subGain.gain.value = 0.2;
+        subGain.connect(gainNode);
+
+        const subOsc = ctx.createOscillator();
+        subOsc.type = 'sine';
+        subOsc.frequency.value = freq / 2;
+        subOsc.connect(subGain);
+        subOsc.start(now);
+        oscillators.push(subOsc);
+
+        // Deep, expressive vibrato
+        const lfo = ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 4.5; // Slower, more expressive
+
+        const lfoGain = ctx.createGain();
+        lfoGain.gain.setValueAtTime(0, now);
+        lfoGain.gain.linearRampToValueAtTime(freq * 0.015, now + 0.4); // Delayed vibrato onset
+
+        lfo.connect(lfoGain);
+        // Apply vibrato to all tuned oscillators
+        lfoGain.connect(osc1.frequency);
+        lfoGain.connect(osc2.frequency);
+        lfoGain.connect(osc3.frequency);
+        lfo.start(now);
+        oscillators.push(lfo);
+
+        // Slight filter modulation for movement
+        const filterLfo = ctx.createOscillator();
+        filterLfo.type = 'sine';
+        filterLfo.frequency.value = 0.5;
+
+        const filterLfoGain = ctx.createGain();
+        filterLfoGain.gain.value = 500;
+
+        filterLfo.connect(filterLfoGain);
+        filterLfoGain.connect(filterNode.frequency);
+        filterLfo.start(now);
+        oscillators.push(filterLfo);
+
+        this.activeNotes.set(note, { oscillators, gainNode, filterNode });
+    }
+}
+
+/**
  * Violin - Bright, agile string sound
  */
 export class Violin extends Instrument {
@@ -451,6 +594,8 @@ export function createInstrument(type: InstrumentType): Instrument {
             return new Piano();
         case 'cello':
             return new Cello();
+        case 'electricCello':
+            return new ElectricCello();
         case 'violin':
             return new Violin();
         case 'saxophone':

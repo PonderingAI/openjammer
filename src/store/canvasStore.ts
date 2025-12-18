@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { Position } from '../engine/types';
+import type { NodeBounds } from './graphStore';
 
 export interface ConnectionSource {
     nodeId: string;
@@ -51,6 +52,9 @@ interface CanvasStore {
     // Coordinate Transforms
     screenToCanvas: (screenPos: Position) => Position;
     canvasToScreen: (canvasPos: Position) => Position;
+
+    // Navigation
+    fitToNodes: (bounds: NodeBounds, viewportWidth: number, viewportHeight: number) => void;
 }
 
 const MIN_ZOOM = 0.25;
@@ -160,5 +164,23 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             x: canvasPos.x * zoom + pan.x,
             y: canvasPos.y * zoom + pan.y
         };
+    },
+
+    // Navigation
+    fitToNodes: (bounds, viewportWidth, viewportHeight) => {
+        const padding = 100; // px padding around nodes
+
+        // Calculate zoom to fit bounds
+        const scaleX = viewportWidth / (bounds.width + padding * 2);
+        const scaleY = viewportHeight / (bounds.height + padding * 2);
+        const newZoom = Math.min(Math.max(Math.min(scaleX, scaleY), MIN_ZOOM), MAX_ZOOM, 1.5);
+
+        // Calculate pan to center bounds
+        const newPan = {
+            x: (viewportWidth / 2) - (bounds.centerX * newZoom),
+            y: (viewportHeight / 2) - (bounds.centerY * newZoom)
+        };
+
+        set({ zoom: newZoom, pan: newPan });
     }
 }));

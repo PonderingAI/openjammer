@@ -14,7 +14,10 @@ import { useGraphStore } from '../../store/graphStore';
 
 interface KeyboardNodeProps {
     node: import('../../engine/types').GraphNode;
-    handlePortClick?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
     hasConnection?: (portId: string) => boolean;
     handleHeaderMouseDown?: (e: React.MouseEvent) => void;
     handleNodeMouseEnter?: () => void;
@@ -34,7 +37,10 @@ interface KeyboardNodeData {
 
 export function KeyboardNode({
     node,
-    handlePortClick,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
     hasConnection,
     handleHeaderMouseDown,
     handleNodeMouseEnter,
@@ -116,7 +122,10 @@ export function KeyboardNode({
                             className={`port-circle-marker ${hasConnection?.(port.id) ? 'connected' : ''}`}
                             data-node-id={node.id}
                             data-port-id={port.id}
-                            onClick={(e) => handlePortClick?.(port.id, e)}
+                            onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                            onMouseLeave={handlePortMouseLeave}
                             title={port.name}
                         />
                     ))}

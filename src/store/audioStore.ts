@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand';
+import { audioGraphManager } from '../audio/AudioGraphManager';
 
 // ============================================================================
 // Store Interface
@@ -35,6 +36,10 @@ interface AudioStore {
     pressKey: (key: string) => void;
     releaseKey: (key: string) => void;
     clearActiveKeys: () => void;
+
+    // Keyboard signal emission (triggers notes on connected instruments)
+    emitKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
+    releaseKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
 
     // Used keyboard numbers tracking (for auto-assignment)
     usedKeyboardNumbers: Set<number>;
@@ -111,6 +116,31 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
     }),
 
     clearActiveKeys: () => set({ activeKeys: new Set() }),
+
+    // Keyboard signal emission
+    emitKeyboardSignal: (keyboardId, row, keyIndex) => {
+        // Track active key for visual feedback
+        const keyId = `${keyboardId}-${row}-${keyIndex}`;
+        set(state => ({
+            activeKeys: new Set(state.activeKeys).add(keyId)
+        }));
+
+        // Trigger note on connected instruments via AudioGraphManager
+        audioGraphManager.triggerKeyboardNote(keyboardId, row, keyIndex);
+    },
+
+    releaseKeyboardSignal: (keyboardId, row, keyIndex) => {
+        // Remove active key
+        const keyId = `${keyboardId}-${row}-${keyIndex}`;
+        set(state => {
+            const newKeys = new Set(state.activeKeys);
+            newKeys.delete(keyId);
+            return { activeKeys: newKeys };
+        });
+
+        // Release note on connected instruments
+        audioGraphManager.releaseKeyboardNote(keyboardId, row, keyIndex);
+    },
 
     // Keyboard Number Management
     usedKeyboardNumbers: new Set(),

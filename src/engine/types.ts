@@ -43,6 +43,7 @@ export type NodeType =
     | 'microphone'
     | 'piano'
     | 'cello'
+    | 'electricCello'
     | 'violin'
     | 'saxophone'
     | 'strings'
@@ -66,7 +67,9 @@ export interface NodeData {
 
 export interface InstrumentNodeData extends NodeData {
     // Instrument type is now implicit from NodeType
-    offsets: { [portId: string]: number }; // Per-input pitch offset
+    offsets: { [portId: string]: number }; // Per-input pitch offset (semitones)
+    octaveOffsets?: { [portId: string]: number }; // Per-input octave adjustment
+    noteOffsets?: { [portId: string]: number }; // Per-input note adjustment (0-6 for C-B)
     activeInputs: string[]; // List of active input port IDs
 }
 
@@ -79,6 +82,7 @@ export interface KeyboardNodeData extends NodeData {
 export interface MicrophoneNodeData extends NodeData {
     isMuted: boolean;
     isActive: boolean;
+    deviceId?: string;
 }
 
 export interface LooperNodeData extends NodeData {
