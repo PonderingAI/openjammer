@@ -1,0 +1,86 @@
+name: Claude Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'src/**/*.ts'
+      - 'src/**/*.tsx'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Claude Security Review
+        uses: anthropics/claude-code-security-review@main
+        with:
+          comment-pr: true
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional: customize the security review focus
+          prompt: |
+            Perform a comprehensive security review of this PR with focus on:
+
+            ## Web Application Security
+            - XSS (Cross-Site Scripting) vulnerabilities
+            - DOM-based vulnerabilities
+            - Unsafe innerHTML/dangerouslySetInnerHTML usage
+            - User input validation and sanitization
+
+            ## Authentication & Authorization
+            - Authentication bypass opportunities
+            - Authorization flaws
+            - Session management issues
+            - Token handling and storage
+
+            ## Data Security
+            - Sensitive data exposure
+            - Insecure data storage (localStorage, sessionStorage)
+            - API key or secret leakage
+            - Privacy concerns
+
+            ## Dependencies
+            - Vulnerable package versions in package.json
+            - Supply chain risks
+            - Malicious dependencies
+
+            ## Audio/Media Specific Risks (for this project)
+            - Audio file parsing vulnerabilities
+            - Buffer overflow in audio processing
+            - Resource exhaustion attacks
+            - Unsafe Web Audio API usage
+
+            ## Code Injection
+            - eval() or Function() constructor misuse
+            - Template injection
+            - Prototype pollution
+
+            ## Client-Side Security
+            - CORS misconfigurations
+            - Insecure third-party integrations
+            - Browser API misuse
+
+            ## Rate this PR's security impact:
+            - 🔴 Critical: Immediate security risk
+            - 🟡 Medium: Potential vulnerability
+            - 🟢 Low: No significant security concerns
+
+            If you find issues, provide:
+            1. Clear description of the vulnerability
+            2. Code location (file and line)
+            3. Severity level
+            4. Exploitation scenario
+            5. Recommended fix

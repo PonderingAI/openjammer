@@ -24,6 +24,21 @@ function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
 import { useGraphStore } from '../store/graphStore';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Valid instrument node types for keyboard triggering */
+const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'] as const;
+
+/** Keyboard row bounds (1-indexed rows) */
+const MIN_KEYBOARD_ROW = 1;
+const MAX_KEYBOARD_ROW = 3;
+
+/** Key index bounds (0-indexed within each row) */
+const MIN_KEY_INDEX = 0;
+const MAX_KEY_INDEX = 11; // 12 keys per row (chromatic octave)
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -630,9 +645,13 @@ class AudioGraphManager {
     setMicrophoneOutput(nodeId: string, outputNode: GainNode): void {
         const audioNode = this.audioNodes.get(nodeId);
         if (audioNode) {
-            // Disconnect old output if exists
+            // Disconnect old output if exists (may throw if already disconnected)
             if (audioNode.outputNode) {
-                audioNode.outputNode.disconnect();
+                try {
+                    audioNode.outputNode.disconnect();
+                } catch {
+                    // Node may already be disconnected - safe to ignore
+                }
             }
             audioNode.outputNode = outputNode;
 
@@ -674,9 +693,13 @@ class AudioGraphManager {
      * Trigger a note from keyboard input
      * @param keyboardId - The keyboard node ID
      * @param row - The active row (1, 2, or 3)
-     * @param keyIndex - The key index within the row (0-9 for row 1/3, 0-8 for row 2)
+     * @param keyIndex - The key index within the row (0-11 for chromatic octave)
      */
     triggerKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        // Validate input bounds to prevent array access errors
+        if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
+        if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
+
         const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
@@ -705,8 +728,7 @@ class AudioGraphManager {
                 if (!targetNode) continue;
 
                 // Check if target is an instrument
-                const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
-                if (!instrumentTypes.includes(targetNode.type)) continue;
+                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
                 // Validate instrument data with type guard
                 if (!isInstrumentNodeData(targetNode.data)) continue;
@@ -718,7 +740,7 @@ class AudioGraphManager {
                 const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
                 // Calculate final note
-                // keyIndex is 0-9, maps to chromatic notes
+                // keyIndex is 0-11, maps to chromatic notes
                 // baseOctave is the octave from the keyboard row
                 // Add instrument's offsets
                 const finalOctave = baseOctave + octaveOffset;
@@ -740,9 +762,13 @@ class AudioGraphManager {
      * Release a note from keyboard input
      * @param keyboardId - The keyboard node ID
      * @param row - The active row (1, 2, or 3)
-     * @param keyIndex - The key index within the row
+     * @param keyIndex - The key index within the row (0-11 for chromatic octave)
      */
     releaseKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        // Validate input bounds to prevent array access errors
+        if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
+        if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
+
         const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
@@ -771,8 +797,7 @@ class AudioGraphManager {
                 if (!targetNode) continue;
 
                 // Check if target is an instrument
-                const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
-                if (!instrumentTypes.includes(targetNode.type)) continue;
+                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
                 // Validate instrument data with type guard
                 if (!isInstrumentNodeData(targetNode.data)) continue;
