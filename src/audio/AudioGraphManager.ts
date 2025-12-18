@@ -15,7 +15,11 @@ import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData
 
 // Type guard for instrument node data
 function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
-    return typeof data === 'object' && data !== null && 'offsets' in data;
+    if (typeof data !== 'object' || data === null) return false;
+    if (!('offsets' in data)) return false;
+
+    const offsets = (data as InstrumentNodeData).offsets;
+    return typeof offsets === 'object' && offsets !== null;
 }
 import { useGraphStore } from '../store/graphStore';
 
@@ -86,6 +90,12 @@ class AudioGraphManager {
      * Cleanup and disconnect all audio nodes
      */
     dispose(): void {
+        // Clear pending disconnect timeouts
+        this.pendingDisconnects.forEach((timeoutId) => {
+            clearTimeout(timeoutId);
+        });
+        this.pendingDisconnects.clear();
+
         this.audioNodes.forEach((nodeInstance) => {
             this.destroyAudioNode(nodeInstance);
         });
@@ -392,6 +402,11 @@ class AudioGraphManager {
 
         const connectionKey = `${sourceNodeId}->${targetNodeId}`;
 
+        // Prevent duplicate connections
+        if (this.activeAudioConnections.has(connectionKey)) {
+            return;
+        }
+
         // Cancel any pending disconnect for this connection (race condition fix)
         const pendingTimeout = this.pendingDisconnects.get(connectionKey);
         if (pendingTimeout !== undefined) {
@@ -406,7 +421,7 @@ class AudioGraphManager {
             return;
         }
 
-        // Check if already connected (Web Audio doesn't track this, so we manage it)
+        // Web Audio allows multiple connections, track to prevent duplicates
         try {
             // Fade in the connection smoothly
             if (sourceAudioNode.gainEnvelope) {

@@ -315,6 +315,22 @@ export class Cello extends Instrument {
 export class ElectricCello extends Instrument {
     private waveShaperCurve: Float32Array | null = null;
 
+    // Sound design constants
+    private static readonly FILTER_RESONANCE = 2;
+    private static readonly FILTER_CUTOFF_START = 800;
+    private static readonly FILTER_CUTOFF_END = 2500;
+    private static readonly VIBRATO_FREQUENCY = 4.5;
+    private static readonly VIBRATO_DEPTH = 0.015; // As fraction of note frequency
+    private static readonly VIBRATO_ONSET_TIME = 0.4;
+    private static readonly ATTACK_TIME = 0.2;
+    private static readonly ATTACK_PEAK = 0.45;
+    private static readonly SUSTAIN_LEVEL = 0.38;
+    private static readonly SUSTAIN_TIME = 0.5;
+    private static readonly CHORUS_DETUNE_CENTS = 7;
+    private static readonly CHORUS_GAIN = 0.35;
+    private static readonly SUB_OSC_GAIN = 0.2;
+    private static readonly SATURATION_AMOUNT = 1.5;
+
     constructor() {
         super('cello'); // Base type for compatibility
     }
@@ -323,11 +339,10 @@ export class ElectricCello extends Instrument {
         if (!this.waveShaperCurve) {
             const samples = 256;
             const curve = new Float32Array(samples);
-            const amount = 1.5;
             for (let i = 0; i < samples; i++) {
                 const x = (i * 2) / samples - 1;
                 // Soft clipping curve
-                curve[i] = Math.tanh(x * amount);
+                curve[i] = Math.tanh(x * ElectricCello.SATURATION_AMOUNT);
             }
             this.waveShaperCurve = curve;
         }
@@ -346,9 +361,9 @@ export class ElectricCello extends Instrument {
         // Resonant low-pass filter for warmth with slight resonance
         const filterNode = ctx.createBiquadFilter();
         filterNode.type = 'lowpass';
-        filterNode.frequency.setValueAtTime(800, now);
-        filterNode.frequency.linearRampToValueAtTime(2500, now + 0.3);
-        filterNode.Q.value = 2;
+        filterNode.frequency.setValueAtTime(ElectricCello.FILTER_CUTOFF_START, now);
+        filterNode.frequency.linearRampToValueAtTime(ElectricCello.FILTER_CUTOFF_END, now + ElectricCello.ATTACK_TIME + 0.1);
+        filterNode.Q.value = ElectricCello.FILTER_RESONANCE;
         filterNode.connect(this.outputNode);
 
         // Waveshaper for soft saturation
@@ -361,8 +376,8 @@ export class ElectricCello extends Instrument {
         // Main gain envelope - slow, expressive attack
         const gainNode = ctx.createGain();
         gainNode.gain.setValueAtTime(0, now);
-        gainNode.gain.linearRampToValueAtTime(0.45, now + 0.2); // Slower attack
-        gainNode.gain.linearRampToValueAtTime(0.38, now + 0.5); // Sustain
+        gainNode.gain.linearRampToValueAtTime(ElectricCello.ATTACK_PEAK, now + ElectricCello.ATTACK_TIME);
+        gainNode.gain.linearRampToValueAtTime(ElectricCello.SUSTAIN_LEVEL, now + ElectricCello.SUSTAIN_TIME);
         gainNode.connect(waveshaper);
 
         const oscillators: OscillatorNode[] = [];
@@ -375,33 +390,33 @@ export class ElectricCello extends Instrument {
         osc1.start(now);
         oscillators.push(osc1);
 
-        // Detuned oscillator +7 cents for chorus width
+        // Detuned oscillator +N cents for chorus width
         const osc2Gain = ctx.createGain();
-        osc2Gain.gain.value = 0.35;
+        osc2Gain.gain.value = ElectricCello.CHORUS_GAIN;
         osc2Gain.connect(gainNode);
 
         const osc2 = ctx.createOscillator();
         osc2.type = 'sawtooth';
-        osc2.frequency.value = freq * Math.pow(2, 7 / 1200); // +7 cents
+        osc2.frequency.value = freq * Math.pow(2, ElectricCello.CHORUS_DETUNE_CENTS / 1200);
         osc2.connect(osc2Gain);
         osc2.start(now);
         oscillators.push(osc2);
 
-        // Detuned oscillator -7 cents for chorus width
+        // Detuned oscillator -N cents for chorus width
         const osc3Gain = ctx.createGain();
-        osc3Gain.gain.value = 0.35;
+        osc3Gain.gain.value = ElectricCello.CHORUS_GAIN;
         osc3Gain.connect(gainNode);
 
         const osc3 = ctx.createOscillator();
         osc3.type = 'sawtooth';
-        osc3.frequency.value = freq * Math.pow(2, -7 / 1200); // -7 cents
+        osc3.frequency.value = freq * Math.pow(2, -ElectricCello.CHORUS_DETUNE_CENTS / 1200);
         osc3.connect(osc3Gain);
         osc3.start(now);
         oscillators.push(osc3);
 
         // Sub oscillator one octave down for depth
         const subGain = ctx.createGain();
-        subGain.gain.value = 0.2;
+        subGain.gain.value = ElectricCello.SUB_OSC_GAIN;
         subGain.connect(gainNode);
 
         const subOsc = ctx.createOscillator();
@@ -414,11 +429,11 @@ export class ElectricCello extends Instrument {
         // Deep, expressive vibrato
         const lfo = ctx.createOscillator();
         lfo.type = 'sine';
-        lfo.frequency.value = 4.5; // Slower, more expressive
+        lfo.frequency.value = ElectricCello.VIBRATO_FREQUENCY;
 
         const lfoGain = ctx.createGain();
         lfoGain.gain.setValueAtTime(0, now);
-        lfoGain.gain.linearRampToValueAtTime(freq * 0.015, now + 0.4); // Delayed vibrato onset
+        lfoGain.gain.linearRampToValueAtTime(freq * ElectricCello.VIBRATO_DEPTH, now + ElectricCello.VIBRATO_ONSET_TIME);
 
         lfo.connect(lfoGain);
         // Apply vibrato to all tuned oscillators
