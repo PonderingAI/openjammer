@@ -5,10 +5,16 @@
 import { getAudioContext, getMasterGain } from './AudioEngine';
 
 /**
- * Sentinel value for infinite duration (9999 used for JSON serialization compatibility,
- * as Number.POSITIVE_INFINITY serializes to null)
+ * Sentinel value for infinite duration.
+ * Using -1 as it's clearly invalid for duration and serializes properly to JSON.
+ * (Number.POSITIVE_INFINITY serializes to null)
  */
-export const INFINITE_DURATION = 9999;
+export const INFINITE_DURATION = -1;
+
+/** Type guard to check if duration represents infinite */
+export function isInfiniteDuration(duration: number): boolean {
+    return duration < 0;
+}
 
 export interface Loop {
     id: string;
@@ -231,7 +237,7 @@ export class Looper {
         this.mediaRecorder.start();
 
         // Schedule end of cycle (for non-infinite duration)
-        if (this.duration < INFINITE_DURATION) {
+        if (!isInfiniteDuration(this.duration)) {
             this.cycleTimerId = window.setTimeout(() => {
                 this.endRecordingCycle();
             }, this.duration * 1000);
@@ -249,8 +255,11 @@ export class Looper {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
             try {
                 this.mediaRecorder.stop();
-            } catch {
+            } catch (err) {
                 // MediaRecorder may have already stopped
+                if (import.meta.env.DEV) {
+                    console.warn('MediaRecorder stop failed in endRecordingCycle:', err);
+                }
             }
         }
     }
@@ -314,7 +323,7 @@ export class Looper {
 
         const now = performance.now();
 
-        if (this.duration < INFINITE_DURATION) {
+        if (!isInfiniteDuration(this.duration)) {
             this.currentTime = (ctx.currentTime - this.cycleStartTime) % this.duration;
         } else {
             this.currentTime = 0;
@@ -345,7 +354,7 @@ export class Looper {
             // Skip UI updates when document is hidden (performance optimization)
             if (!document.hidden) {
                 // Calculate playhead position (0-100)
-                const playheadPosition = this.duration < INFINITE_DURATION
+                const playheadPosition = !isInfiniteDuration(this.duration)
                     ? (this.currentTime / this.duration) * 100
                     : 0;
 
@@ -397,8 +406,11 @@ export class Looper {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
             try {
                 this.mediaRecorder.stop();
-            } catch {
+            } catch (err) {
                 // MediaRecorder may have already stopped
+                if (import.meta.env.DEV) {
+                    console.warn('MediaRecorder stop failed in stopRecording:', err);
+                }
             }
         }
     }

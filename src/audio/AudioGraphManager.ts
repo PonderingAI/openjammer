@@ -11,7 +11,12 @@ import type { InstrumentType } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData } from '../engine/types';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, NodeData } from '../engine/types';
+
+// Type guard for instrument node data
+function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
+    return typeof data === 'object' && data !== null && 'offsets' in data;
+}
 import { useGraphStore } from '../store/graphStore';
 
 // ============================================================================
@@ -444,20 +449,27 @@ class AudioGraphManager {
 
             // Track and disconnect after fade (can be canceled if reconnected)
             const timeoutId = window.setTimeout(() => {
-                this.pendingDisconnects.delete(connectionKey);
-                try {
-                    sourceAudioNode.outputNode?.disconnect(targetAudioNode.inputNode!);
-                } catch {
-                    // May not be connected
+                // Verify key still exists - callback may fire after reconnection canceled it
+                if (this.pendingDisconnects.has(connectionKey)) {
+                    this.pendingDisconnects.delete(connectionKey);
+                    if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
+                        try {
+                            sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
+                        } catch {
+                            // May not be connected
+                        }
+                    }
                 }
             }, this.RAMP_TIME * 1000 + 10);
 
             this.pendingDisconnects.set(connectionKey, timeoutId);
         } else {
-            try {
-                sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
-            } catch {
-                // May not be connected
+            if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
+                try {
+                    sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
+                } catch {
+                    // May not be connected
+                }
             }
         }
     }
@@ -673,15 +685,12 @@ class AudioGraphManager {
                 const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
                 if (!instrumentTypes.includes(targetNode.type)) continue;
 
-                // Get the instrument's offset for this input port
-                const instrumentData = targetNode.data as {
-                    offsets?: { [portId: string]: number };
-                    octaveOffsets?: { [portId: string]: number };
-                    noteOffsets?: { [portId: string]: number };
-                };
+                // Validate instrument data with type guard
+                if (!isInstrumentNodeData(targetNode.data)) continue;
+                const instrumentData = targetNode.data;
 
                 const targetPortId = connection.targetPortId;
-                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
                 const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
                 const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
@@ -742,15 +751,12 @@ class AudioGraphManager {
                 const instrumentTypes = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'];
                 if (!instrumentTypes.includes(targetNode.type)) continue;
 
-                // Get the instrument's offset for this input port
-                const instrumentData = targetNode.data as {
-                    offsets?: { [portId: string]: number };
-                    octaveOffsets?: { [portId: string]: number };
-                    noteOffsets?: { [portId: string]: number };
-                };
+                // Validate instrument data with type guard
+                if (!isInstrumentNodeData(targetNode.data)) continue;
+                const instrumentData = targetNode.data;
 
                 const targetPortId = connection.targetPortId;
-                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
                 const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
                 const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 

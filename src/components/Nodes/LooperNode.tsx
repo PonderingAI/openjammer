@@ -10,7 +10,7 @@ import type { GraphNode, LooperNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
-import { INFINITE_DURATION, type Loop } from '../../audio/Looper';
+import { INFINITE_DURATION, isInfiniteDuration, type Loop } from '../../audio/Looper';
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -130,14 +130,19 @@ export function LooperNode({
             // Poll for looper availability with exponential backoff
             let delay = 50;
             const maxDelay = 1000;
+            const maxAttempts = 10;
+            let attempts = 0;
 
             const poll = () => {
+                attempts++;
                 looper = getLooper();
                 if (looper) {
                     setupCallbacks(looper);
-                } else if (delay < maxDelay) {
+                } else if (attempts < maxAttempts) {
                     delay = Math.min(delay * 2, maxDelay);
                     pollIntervalId = window.setTimeout(poll, delay);
+                } else if (import.meta.env.DEV) {
+                    console.warn(`LooperNode: Failed to get looper after ${maxAttempts} attempts`);
                 }
             };
             pollIntervalId = window.setTimeout(poll, delay);
@@ -200,14 +205,15 @@ export function LooperNode({
         setLoops(prev => prev.filter(loop => loop.id !== loopId));
     }, [getLooper]);
 
-    const isInfinite = duration >= INFINITE_DURATION;
+    const isInfinite = isInfiniteDuration(duration);
 
     const handleDurationChange = useCallback((newDuration: number) => {
         let finalDuration: number;
-        if (newDuration > 60) {
+        if (isInfiniteDuration(newDuration)) {
             finalDuration = INFINITE_DURATION;
         } else {
-            finalDuration = Math.max(1, newDuration);
+            // Clamp to valid range: 1-60 seconds
+            finalDuration = Math.max(1, Math.min(60, newDuration));
         }
         setDuration(finalDuration);
         updateNodeData<LooperNodeData>(node.id, { duration: finalDuration });
@@ -229,7 +235,7 @@ export function LooperNode({
             handleDurationChange(60);
         } else if (duration === 60 && scrollingUp) {
             // Scrolling up from 60 goes to infinite
-            handleDurationChange(61); // Will be converted to INFINITE_DURATION
+            handleDurationChange(INFINITE_DURATION);
         } else if (!isInfinite) {
             const delta = scrollingUp ? 1 : -1;
             handleDurationChange(duration + delta);
