@@ -11,8 +11,11 @@ interface SpeakerNodeProps {
     handlePortClick?: (portId: string, e: React.MouseEvent) => void;
     hasConnection?: (portId: string) => boolean;
     handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
     isSelected?: boolean;
     isDragging?: boolean;
+    isHoveredWithConnections?: boolean;
     style?: React.CSSProperties;
 }
 
@@ -21,7 +24,18 @@ interface AudioDevice {
     label: string;
 }
 
-export function SpeakerNode({ node, handlePortClick, hasConnection, handleHeaderMouseDown, isSelected, isDragging, style }: SpeakerNodeProps) {
+export function SpeakerNode({
+    node,
+    handlePortClick,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    isHoveredWithConnections,
+    style
+}: SpeakerNodeProps) {
     const data = node.data as SpeakerNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
 
@@ -57,8 +71,10 @@ export function SpeakerNode({ node, handlePortClick, hasConnection, handleHeader
 
     return (
         <div
-            className={`speaker-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`speaker-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isHoveredWithConnections ? 'hover-connecting' : ''}`}
             style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
         >
             {/* Header */}
             <div

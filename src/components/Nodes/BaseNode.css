@@ -111,6 +111,7 @@
     border: var(--border-sketch-width) solid var(--sketch-black);
     background: var(--bg-canvas);
     transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+    will-change: transform, box-shadow;
 }
 
 .port-dot:hover {

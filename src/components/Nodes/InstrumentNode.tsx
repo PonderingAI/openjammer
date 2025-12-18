@@ -18,8 +18,12 @@ interface InstrumentNodeProps {
     handlePortClick?: (portId: string, e: React.MouseEvent) => void;
     hasConnection?: (portId: string) => boolean;
     handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
     isSelected?: boolean;
     isDragging?: boolean;
+    isHoveredWithConnections?: boolean;
+    incomingConnectionCount?: number;
     style?: React.CSSProperties;
 }
 
@@ -39,10 +43,21 @@ const INSTRUMENT_LABELS: Record<string, string> = {
     winds: 'Winds'
 };
 
-export function InstrumentNode({ node, handlePortClick, hasConnection, handleHeaderMouseDown, isSelected, isDragging, style }: InstrumentNodeProps) {
+export function InstrumentNode({
+    node,
+    handlePortClick,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    isHoveredWithConnections,
+    incomingConnectionCount = 0,
+    style
+}: InstrumentNodeProps) {
     const data = node.data as unknown as InstrumentNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
-    const updateNodePorts = useGraphStore((s) => s.updateNodePorts);
     const connections = useGraphStore((s) => s.connections);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
@@ -75,29 +90,43 @@ export function InstrumentNode({ node, handlePortClick, hasConnection, handleHea
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [showPopup]);
 
-    // Dynamic Ports Logic - add new input when all are connected
-    useEffect(() => {
-        const inputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
-        const connectedPorts = inputPorts.filter(p =>
-            Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
-        );
-
-        // If all inputs are connected, add a new one
-        if (connectedPorts.length === inputPorts.length && inputPorts.length < MAX_INPUT_PORTS) {
-            const nextIndex = inputPorts.length + 1;
-            const newPort = {
-                id: `input-${Date.now()}`,
-                name: `In ${nextIndex}`,
-                type: 'technical' as const,
-                direction: 'input' as const
-            };
-            updateNodePorts(node.id, [...node.ports, newPort]);
-        }
-    }, [connections, node.id, node.ports, updateNodePorts]);
-
-    // Get input ports for display
-    const inputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+    // Get persisted input ports
+    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
+
+    // Count connected ports
+    const connectedCount = persistedInputPorts.filter(p =>
+        Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
+    ).length;
+
+    // Calculate visible port count:
+    // - Always show at least 1 port
+    // - Show all connected ports + 1 empty one (if room)
+    // - When hovering with connections, show enough for all incoming
+    const baseVisible = Math.max(1, connectedCount + 1);
+    const hoverVisible = isHoveredWithConnections ? connectedCount + incomingConnectionCount : 0;
+    const visiblePortCount = Math.min(MAX_INPUT_PORTS, Math.max(baseVisible, hoverVisible));
+
+    // Generate visible ports array (mix of persisted + ghost ports)
+    const visibleInputPorts = [];
+    for (let i = 0; i < visiblePortCount; i++) {
+        if (i < persistedInputPorts.length) {
+            // Use existing persisted port
+            visibleInputPorts.push({
+                ...persistedInputPorts[i],
+                isGhost: false
+            });
+        } else {
+            // Create a ghost port (temporary, not yet persisted)
+            visibleInputPorts.push({
+                id: `ghost-input-${i}`,
+                name: `In ${i + 1}`,
+                type: 'technical' as const,
+                direction: 'input' as const,
+                isGhost: true
+            });
+        }
+    }
 
     // Get display name
     const displayName = INSTRUMENT_LABELS[node.type] || nodeDefinitions[node.type]?.name || 'Instrument';
@@ -137,8 +166,10 @@ export function InstrumentNode({ node, handlePortClick, hasConnection, handleHea
 
     return (
         <div
-            className={`instrument-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`instrument-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isHoveredWithConnections ? 'hover-connecting' : ''}`}
             style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
         >
             {/* Header - Clickable to open popup */}
             <div
@@ -152,15 +183,16 @@ export function InstrumentNode({ node, handlePortClick, hasConnection, handleHea
             {/* Note Grid */}
             <div className="instrument-schematic-body">
                 <div className="note-grid">
-                    {inputPorts.map((port, index) => {
+                    {visibleInputPorts.map((port, index) => {
                         const offset = data.offsets?.[port.id] ?? 0;
-                        const isConnected = hasConnection?.(port.id) ?? false;
+                        const isConnected = !port.isGhost && (hasConnection?.(port.id) ?? false);
+                        const isGhost = port.isGhost;
 
                         return (
-                            <div key={port.id} className="note-row">
+                            <div key={port.id} className={`note-row ${isGhost ? 'ghost-port' : ''}`}>
                                 {/* Input port circle */}
                                 <div
-                                    className={`note-input-port ${isConnected ? 'connected' : ''}`}
+                                    className={`note-input-port ${isConnected ? 'connected' : ''} ${isGhost ? 'ghost' : ''}`}
                                     data-node-id={node.id}
                                     data-port-id={port.id}
                                     onClick={(e) => handlePortClick?.(port.id, e)}
@@ -203,16 +235,20 @@ export function InstrumentNode({ node, handlePortClick, hasConnection, handleHea
                 <div
                     className="instrument-popup-overlay"
                     onClick={(e) => { e.stopPropagation(); setShowPopup(false); }}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby={`instrument-popup-title-${node.id}`}
                 >
                     <div
                         className="instrument-popup"
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="instrument-popup-header">
-                            <h3>{displayName}</h3>
+                            <h3 id={`instrument-popup-title-${node.id}`}>{displayName}</h3>
                             <button
                                 className="instrument-popup-close"
                                 onClick={() => setShowPopup(false)}
+                                aria-label="Close settings"
                             >
                                 ×
                             </button>
@@ -241,7 +277,7 @@ export function InstrumentNode({ node, handlePortClick, hasConnection, handleHea
                             <div className="popup-section">
                                 <label className="popup-label">Note Offsets</label>
                                 <div className="offset-grid">
-                                    {inputPorts.map((port, index) => (
+                                    {persistedInputPorts.map((port, index) => (
                                         <div key={port.id} className="offset-row">
                                             <span className="offset-note">
                                                 {getNoteName(index)}{getOctave(index)}

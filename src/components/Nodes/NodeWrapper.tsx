@@ -2,10 +2,11 @@
  * Node Wrapper - Handles node positioning, selection, and dragging
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useMemo } from 'react';
 import type { GraphNode, Position } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
+import { generateUniqueId } from '../../utils/idGenerator';
 import { InstrumentNode } from './InstrumentNode';
 import { MicrophoneNode } from './MicrophoneNode';
 import { KeyboardNode } from './KeyboardNode';
@@ -42,9 +43,35 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
     const zoom = useCanvasStore((s) => s.zoom);
     const startConnecting = useCanvasStore((s) => s.startConnecting);
     const stopConnecting = useCanvasStore((s) => s.stopConnecting);
+    const isConnecting = useCanvasStore((s) => s.isConnecting);
+    const connectingFrom = useCanvasStore((s) => s.connectingFrom);
+    const hoverTarget = useCanvasStore((s) => s.hoverTarget);
+    const setHoverTarget = useCanvasStore((s) => s.setHoverTarget);
 
     const isSelected = selectedNodeIds.has(node.id);
     const isSchematic = SCHEMATIC_TYPES.includes(node.type);
+
+    // Check if this node is being hovered while connections are active
+    const isHoveredWithConnections = isConnecting && hoverTarget?.nodeId === node.id;
+
+    // Count incoming connections (for dynamic port display)
+    const incomingConnectionCount = useMemo(() => {
+        if (!isConnecting || !connectingFrom) return 0;
+        return connectingFrom.length;
+    }, [isConnecting, connectingFrom]);
+
+    // Hover handlers for connection drop targeting
+    const handleNodeMouseEnter = useCallback(() => {
+        if (isConnecting) {
+            setHoverTarget(node.id);
+        }
+    }, [isConnecting, setHoverTarget, node.id]);
+
+    const handleNodeMouseLeave = useCallback(() => {
+        if (isConnecting) {
+            setHoverTarget(null);
+        }
+    }, [isConnecting, setHoverTarget]);
 
     // Check if a port has connections
     const hasConnection = useCallback((portId: string) => {
@@ -95,16 +122,54 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
         if (currentIsConnecting && currentConnectingFrom) {
             const sources = Array.isArray(currentConnectingFrom) ? currentConnectingFrom : [currentConnectingFrom];
-            const targetPort = node.ports.find(p => p.id === portId);
+            const updateNodePorts = useGraphStore.getState().updateNodePorts;
+            const isInstrument = ['piano', 'cello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
+
+            // Check if clicking on a ghost port (not yet persisted)
+            const isGhostPort = portId.startsWith('ghost-input-');
+            let actualFirstPortId = portId;
+
+            if (isGhostPort && isInstrument) {
+                // Extract the ghost port index
+                const ghostIndex = parseInt(portId.replace('ghost-input-', ''), 10);
+                const currentInputs = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+
+                // Create all needed ports up to and including the ghost port index
+                const newPorts = [...node.ports];
+                const portsToAdd = (ghostIndex + 1) - currentInputs.length;
+
+                const newPortIds: string[] = [];
+                for (let i = 0; i < portsToAdd; i++) {
+                    const nextIndex = currentInputs.length + i + 1;
+                    const newPortId = generateUniqueId('input-');
+                    newPortIds.push(newPortId);
+                    newPorts.push({
+                        id: newPortId,
+                        name: `In ${nextIndex}`,
+                        type: 'technical',
+                        direction: 'input'
+                    });
+                }
+
+                // Persist the new ports
+                updateNodePorts(node.id, newPorts);
+
+                // The clicked ghost port is now the last one we added
+                actualFirstPortId = newPortIds[newPortIds.length - 1];
+            }
+
+            // Get target port (now that ghost ports are persisted if needed)
+            const updatedNode = useGraphStore.getState().nodes.get(node.id) || node;
+            const targetPort = isGhostPort
+                ? updatedNode.ports.find(p => p.id === actualFirstPortId)
+                : updatedNode.ports.find(p => p.id === portId);
+
             if (!targetPort) return;
 
-            // Check if we need to auto-expand an instrument node
-            const isInstrument = ['piano', 'cello', 'violin', 'saxophone'].includes(node.type);
-            const updateNodePorts = useGraphStore.getState().updateNodePorts;
-
+            // Check if we need to auto-expand for multiple connections
             if (isInstrument && targetPort.direction === 'input' && sources.length > 1) {
-                const currentInputs = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
-                const clickedIndex = currentInputs.findIndex(p => p.id === portId);
+                const currentInputs = updatedNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+                const clickedIndex = currentInputs.findIndex(p => p.id === actualFirstPortId);
 
                 if (clickedIndex === -1) return;
 
@@ -112,13 +177,13 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 const availableCount = currentInputs.length;
 
                 if (neededCount > availableCount) {
-                    const newPorts = [...node.ports];
+                    const newPorts = [...updatedNode.ports];
                     const portsToAdd = neededCount - availableCount;
 
                     for (let i = 0; i < portsToAdd; i++) {
                         const nextIndex = availableCount + i + 1;
                         newPorts.push({
-                            id: `input-${Date.now()}-${i}`,
+                            id: generateUniqueId('input-'),
                             name: `In ${nextIndex}`,
                             type: 'technical',
                             direction: 'input'
@@ -129,16 +194,17 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 }
             }
 
-            const updatedNode = useGraphStore.getState().nodes.get(node.id) || node;
-            const updatedInputs = updatedNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+            // Get final updated node and inputs after all port additions
+            const finalNode = useGraphStore.getState().nodes.get(node.id) || updatedNode;
+            const finalInputs = finalNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
 
             sources.forEach((source, index) => {
-                let actualTargetPortId = portId;
+                let actualTargetPortId = actualFirstPortId;
 
                 if (index > 0 && targetPort.direction === 'input' && isInstrument) {
-                    const clickedIndex = updatedInputs.findIndex(p => p.id === portId);
-                    if (clickedIndex !== -1 && (clickedIndex + index) < updatedInputs.length) {
-                        actualTargetPortId = updatedInputs[clickedIndex + index].id;
+                    const clickedIndex = finalInputs.findIndex(p => p.id === actualFirstPortId);
+                    if (clickedIndex !== -1 && (clickedIndex + index) < finalInputs.length) {
+                        actualTargetPortId = finalInputs[clickedIndex + index].id;
                     } else {
                         return;
                     }
@@ -163,8 +229,12 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         handlePortClick,
         hasConnection,
         handleHeaderMouseDown,
+        handleNodeMouseEnter,
+        handleNodeMouseLeave,
         isSelected,
         isDragging,
+        isHoveredWithConnections,
+        incomingConnectionCount,
         style: {
             left: node.position.x,
             top: node.position.y
@@ -219,6 +289,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 top: node.position.y
             }}
             onClick={(e) => e.stopPropagation()}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
         >
             {/* Header */}
             <div className="node-header" onMouseDown={handleHeaderMouseDown}>

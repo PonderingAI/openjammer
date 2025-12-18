@@ -5,9 +5,14 @@
 import { create } from 'zustand';
 import type { Position } from '../engine/types';
 
-interface ConnectionSource {
+export interface ConnectionSource {
     nodeId: string;
     portId: string;
+}
+
+interface HoverTarget {
+    nodeId: string;
+    portId?: string;
 }
 
 interface CanvasStore {
@@ -21,6 +26,8 @@ interface CanvasStore {
     isConnecting: boolean;
     // Normalized to array for multi-connect support
     connectingFrom: ConnectionSource[] | null;
+    // Track which node is being hovered while connecting
+    hoverTarget: HoverTarget | null;
 
     // Ghost Mode - reduces node opacity, disables buttons, only connections editable
     ghostMode: boolean;
@@ -35,8 +42,10 @@ interface CanvasStore {
     // Interaction Actions
     setDragging: (isDragging: boolean) => void;
     setPanning: (isPanning: boolean) => void;
-    startConnecting: (nodeId: string, portId: string | string[]) => void;
+    // Accept either (nodeId, portIds) or pre-built sources array
+    startConnecting: (nodeIdOrSources: string | ConnectionSource[], portIds?: string | string[]) => void;
     stopConnecting: () => void;
+    setHoverTarget: (nodeId: string | null, portId?: string) => void;
     toggleGhostMode: () => void;
 
     // Coordinate Transforms
@@ -56,6 +65,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     isPanning: false,
     isConnecting: false,
     connectingFrom: null,
+    hoverTarget: null,
     ghostMode: false,
 
     // Transform Actions
@@ -95,10 +105,23 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     setDragging: (isDragging) => set({ isDragging }),
     setPanning: (isPanning) => set({ isPanning }),
 
-    startConnecting: (nodeId, portIdOrIds) => {
-        const sources = Array.isArray(portIdOrIds)
-            ? portIdOrIds.map(pid => ({ nodeId, portId: pid }))
-            : [{ nodeId, portId: portIdOrIds }];
+    startConnecting: (nodeIdOrSources, portIds) => {
+        let sources: ConnectionSource[];
+
+        // Check if first arg is already an array of sources
+        if (Array.isArray(nodeIdOrSources)) {
+            sources = nodeIdOrSources;
+        } else {
+            // Old format: (nodeId, portId | portIds[])
+            const nodeId = nodeIdOrSources;
+            if (Array.isArray(portIds)) {
+                sources = portIds.map(pid => ({ nodeId, portId: pid }));
+            } else if (portIds) {
+                sources = [{ nodeId, portId: portIds }];
+            } else {
+                sources = [];
+            }
+        }
 
         set({
             isConnecting: true,
@@ -108,8 +131,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     stopConnecting: () => set({
         isConnecting: false,
-        connectingFrom: null
+        connectingFrom: null,
+        hoverTarget: null
     }),
+
+    setHoverTarget: (nodeId, portId) => {
+        if (nodeId === null) {
+            set({ hoverTarget: null });
+        } else {
+            set({ hoverTarget: { nodeId, portId } });
+        }
+    },
 
     toggleGhostMode: () => set((state) => ({ ghostMode: !state.ghostMode })),
 

@@ -489,37 +489,80 @@ export const useGraphStore = create<GraphStore>()(
             // Custom serialization for Map and Set
             storage: {
                 getItem: (name) => {
-                    const str = localStorage.getItem(name);
-                    if (!str) return null;
+                    try {
+                        const str = localStorage.getItem(name);
+                        if (!str) return null;
 
-                    const parsed = JSON.parse(str);
-                    return {
-                        state: {
-                            ...parsed.state,
-                            nodes: new Map(parsed.state.nodes || []),
-                            connections: new Map(parsed.state.connections || []),
-                            selectedNodeIds: new Set(parsed.state.selectedNodeIds || []),
-                            selectedConnectionIds: new Set(parsed.state.selectedConnectionIds || []),
-                            history: parsed.state.history || [],
-                            historyIndex: parsed.state.historyIndex ?? -1
+                        const parsed = JSON.parse(str);
+
+                        // Validate data structure exists
+                        if (!parsed?.state) {
+                            console.warn('Invalid graph store data structure, resetting');
+                            return null;
                         }
-                    };
+
+                        return {
+                            state: {
+                                ...parsed.state,
+                                nodes: new Map(Array.isArray(parsed.state.nodes) ? parsed.state.nodes : []),
+                                connections: new Map(Array.isArray(parsed.state.connections) ? parsed.state.connections : []),
+                                selectedNodeIds: new Set(Array.isArray(parsed.state.selectedNodeIds) ? parsed.state.selectedNodeIds : []),
+                                selectedConnectionIds: new Set(Array.isArray(parsed.state.selectedConnectionIds) ? parsed.state.selectedConnectionIds : []),
+                                history: Array.isArray(parsed.state.history) ? parsed.state.history : [],
+                                historyIndex: typeof parsed.state.historyIndex === 'number' ? parsed.state.historyIndex : -1
+                            }
+                        };
+                    } catch (error) {
+                        console.error('Failed to load graph store from localStorage:', error);
+                        return null; // Graceful reset on any error
+                    }
                 },
                 setItem: (name, value) => {
-                    const serialized = {
-                        state: {
-                            ...value.state,
-                            nodes: Array.from(value.state.nodes.entries()),
-                            connections: Array.from(value.state.connections.entries()),
-                            selectedNodeIds: Array.from(value.state.selectedNodeIds),
-                            selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
-                            history: value.state.history,
-                            historyIndex: value.state.historyIndex
+                    try {
+                        const serialized = {
+                            state: {
+                                ...value.state,
+                                nodes: Array.from(value.state.nodes.entries()),
+                                connections: Array.from(value.state.connections.entries()),
+                                selectedNodeIds: Array.from(value.state.selectedNodeIds),
+                                selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
+                                history: value.state.history,
+                                historyIndex: value.state.historyIndex
+                            }
+                        };
+                        localStorage.setItem(name, JSON.stringify(serialized));
+                    } catch (error) {
+                        // Handle QuotaExceededError by clearing history and retrying
+                        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+                            console.warn('localStorage quota exceeded, clearing history');
+                            try {
+                                const serializedWithoutHistory = {
+                                    state: {
+                                        ...value.state,
+                                        nodes: Array.from(value.state.nodes.entries()),
+                                        connections: Array.from(value.state.connections.entries()),
+                                        selectedNodeIds: Array.from(value.state.selectedNodeIds),
+                                        selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
+                                        history: [],
+                                        historyIndex: -1
+                                    }
+                                };
+                                localStorage.setItem(name, JSON.stringify(serializedWithoutHistory));
+                            } catch (retryError) {
+                                console.error('Failed to save graph store even after clearing history:', retryError);
+                            }
+                        } else {
+                            console.error('Failed to save graph store to localStorage:', error);
                         }
-                    };
-                    localStorage.setItem(name, JSON.stringify(serialized));
+                    }
                 },
-                removeItem: (name) => localStorage.removeItem(name)
+                removeItem: (name) => {
+                    try {
+                        localStorage.removeItem(name);
+                    } catch (error) {
+                        console.error('Failed to remove graph store from localStorage:', error);
+                    }
+                }
             }
         }
     )

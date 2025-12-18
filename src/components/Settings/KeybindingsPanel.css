@@ -132,6 +132,7 @@
     color: white;
     cursor: default;
     animation: pulse 1s ease-in-out infinite;
+    will-change: opacity;
 }
 
 @keyframes pulse {
@@ -160,4 +161,103 @@
     border-color: var(--accent-warning);
     color: var(--accent-warning);
     background: rgba(212, 160, 80, 0.1);
+}
+
+/* Conflict Dialog */
+.keybindings-conflict-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.keybindings-conflict-dialog {
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--shadow-menu);
+}
+
+.keybindings-conflict-title {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    color: var(--accent-warning);
+}
+
+.keybindings-conflict-message {
+    margin: 0 0 var(--space-sm) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+}
+
+.keybindings-conflict-message strong {
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    padding: 2px var(--space-xs);
+    border-radius: var(--radius-sm);
+}
+
+.keybindings-conflict-list {
+    margin: 0 0 var(--space-md) 0;
+    padding-left: var(--space-lg);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.keybindings-conflict-list li {
+    margin-bottom: var(--space-xs);
+}
+
+.keybindings-conflict-question {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.keybindings-conflict-buttons {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+}
+
+.keybindings-conflict-cancel,
+.keybindings-conflict-confirm {
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-conflict-cancel {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.keybindings-conflict-cancel:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.keybindings-conflict-confirm {
+    background: var(--accent-primary);
+    border: 1px solid var(--accent-primary);
+    color: white;
+}
+
+.keybindings-conflict-confirm:hover {
+    background: var(--accent-secondary);
+    border-color: var(--accent-secondary);
 }

@@ -193,9 +193,28 @@ export function getThemeById(id: string): Theme | undefined {
 }
 
 export function getSavedThemeId(): string {
-    return localStorage.getItem('openjammer-theme') || 'cream';
+    try {
+        const savedId = localStorage.getItem('openjammer-theme');
+        // Validate the saved theme ID exists
+        if (savedId && themes.some(t => t.id === savedId)) {
+            return savedId;
+        }
+        return 'cream';
+    } catch (error) {
+        console.error('Failed to read theme from localStorage:', error);
+        return 'cream';
+    }
 }
 
 export function saveThemeId(id: string): void {
-    localStorage.setItem('openjammer-theme', id);
+    try {
+        // Validate the theme ID exists before saving
+        if (!themes.some(t => t.id === id)) {
+            console.warn(`Invalid theme ID: ${id}, not saving`);
+            return;
+        }
+        localStorage.setItem('openjammer-theme', id);
+    } catch (error) {
+        console.error('Failed to save theme to localStorage:', error);
+    }
 }

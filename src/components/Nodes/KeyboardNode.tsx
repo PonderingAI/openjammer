@@ -17,8 +17,12 @@ interface KeyboardNodeProps {
     handlePortClick?: (portId: string, e: React.MouseEvent) => void;
     hasConnection?: (portId: string) => boolean;
     handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
     isSelected?: boolean;
     isDragging?: boolean;
+    isHoveredWithConnections?: boolean;
+    incomingConnectionCount?: number;
     style?: React.CSSProperties;
 }
 
@@ -28,7 +32,17 @@ interface KeyboardNodeData {
     rowOctaves: number[];
 }
 
-export function KeyboardNode({ node, handlePortClick, hasConnection, handleHeaderMouseDown, isSelected, isDragging, style }: KeyboardNodeProps) {
+export function KeyboardNode({
+    node,
+    handlePortClick,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    style
+}: KeyboardNodeProps) {
     const data = node.data as unknown as KeyboardNodeData;
     const activeKeyboardId = useAudioStore((s) => s.activeKeyboardId);
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
@@ -66,6 +80,8 @@ export function KeyboardNode({ node, handlePortClick, hasConnection, handleHeade
         <div
             className={`keyboard-node schematic-node ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
             style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
         >
             {/* Header */}
             <div

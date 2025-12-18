@@ -64,6 +64,7 @@
     z-index: 1000;
     animation: dropdownFadeIn 0.1s ease;
     overflow: hidden;
+    will-change: opacity, transform;
 }
 
 @keyframes dropdownFadeIn {

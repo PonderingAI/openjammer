@@ -57,6 +57,19 @@ export function NodeCanvas() {
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
+    // Port position cache with TTL
+    const portPositionCache = useRef<Map<string, { position: Position; timestamp: number }>>(new Map());
+    const CACHE_TTL_MS = 100; // Cache valid for 100ms
+    const lastPanZoom = useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
+
+    // Clear cache when pan/zoom changes significantly
+    if (Math.abs(pan.x - lastPanZoom.current.pan.x) > 5 ||
+        Math.abs(pan.y - lastPanZoom.current.pan.y) > 5 ||
+        Math.abs(zoom - lastPanZoom.current.zoom) > 0.05) {
+        portPositionCache.current.clear();
+        lastPanZoom.current = { pan: { x: pan.x, y: pan.y }, zoom };
+    }
+
     // Handle right-click context menu
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
@@ -194,22 +207,39 @@ export function NodeCanvas() {
             }
 
             if (matchesAction(e, 'canvas.multiConnect')) {
-                // Get selected node
+                // Get all selected nodes
                 const selectedIds = useGraphStore.getState().selectedNodeIds;
-                if (selectedIds.size === 1) {
+                const graphNodes = useGraphStore.getState().nodes;
+                const graphConnections = useGraphStore.getState().connections;
+
+                if (selectedIds.size >= 1) {
                     e.preventDefault();
-                    const nodeId = Array.from(selectedIds)[0];
-                    const node = useGraphStore.getState().nodes.get(nodeId);
 
-                    if (node) {
-                        // Get all output ports
-                        const outputPorts = node.ports
-                            .filter(p => p.direction === 'output' && p.type === 'technical')
-                            .map(p => p.id);
+                    // Build array of all empty output ports from all selected nodes
+                    const allSources: { nodeId: string; portId: string }[] = [];
 
-                        if (outputPorts.length > 0) {
-                            startConnecting(nodeId, outputPorts);
+                    for (const nodeId of selectedIds) {
+                        const node = graphNodes.get(nodeId);
+                        if (!node) continue;
+
+                        // Get all output ports (both audio and technical)
+                        const outputPorts = node.ports.filter(p => p.direction === 'output');
+
+                        // Filter to only empty (unconnected) ports
+                        const emptyOutputs = outputPorts.filter(port => {
+                            const hasConnection = Array.from(graphConnections.values()).some(
+                                conn => conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
+                            );
+                            return !hasConnection;
+                        });
+
+                        for (const port of emptyOutputs) {
+                            allSources.push({ nodeId, portId: port.id });
                         }
+                    }
+
+                    if (allSources.length > 0) {
+                        startConnecting(allSources);
                     }
                 }
                 return;
@@ -230,12 +260,33 @@ export function NodeCanvas() {
 
     // Get port position for connection rendering using DOM measurement
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
+        const cacheKey = `${nodeId}:${portId}`;
+        const now = Date.now();
+
+        // Check cache first
+        const cached = portPositionCache.current.get(cacheKey);
+        if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+            return cached.position;
+        }
+
         // Query port element by data attributes
         const portElement = document.querySelector(
             `[data-node-id="${nodeId}"][data-port-id="${portId}"]`
         );
 
-        if (!portElement) return null;
+        // Fallback: If DOM element not found, calculate approximate position from node position
+        if (!portElement) {
+            const node = nodes.get(nodeId);
+            if (node) {
+                // Approximate position: node center + small offset for ports
+                const fallbackPos = {
+                    x: node.position.x + 80, // Approximate half-width
+                    y: node.position.y + 40  // Approximate half-height
+                };
+                return fallbackPos;
+            }
+            return null;
+        }
 
         const canvasElement = canvasRef.current;
         if (!canvasElement) return null;
@@ -252,7 +303,12 @@ export function NodeCanvas() {
         const canvasX = (centerX - pan.x) / zoom;
         const canvasY = (centerY - pan.y) / zoom;
 
-        return { x: canvasX, y: canvasY };
+        const position = { x: canvasX, y: canvasY };
+
+        // Cache the result
+        portPositionCache.current.set(cacheKey, { position, timestamp: now });
+
+        return position;
     }, [pan, zoom, nodes]);
 
     // Render connection path

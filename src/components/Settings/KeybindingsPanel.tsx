@@ -8,6 +8,7 @@ import {
     keybindingActions,
     keyComboToString,
     type KeyCombo,
+    type KeybindingAction,
 } from '../../store/keybindingsStore';
 import './KeybindingsPanel.css';
 
@@ -16,9 +17,16 @@ interface EditingState {
     pressedKeys: KeyCombo | null;
 }
 
+interface ConflictState {
+    actionId: string;
+    combo: KeyCombo;
+    conflicts: KeybindingAction[];
+}
+
 export function KeybindingsPanel() {
-    const { getBinding, setBinding, resetBinding, resetAllBindings, customBindings } = useKeybindingsStore();
+    const { getBinding, setBinding, resetBinding, resetAllBindings, customBindings, getConflictingActions, clearConflictingBindings } = useKeybindingsStore();
     const [editing, setEditing] = useState<EditingState | null>(null);
+    const [conflict, setConflict] = useState<ConflictState | null>(null);
 
     // Group actions by category
     const categorizedActions = keybindingActions.reduce((acc, action) => {
@@ -66,10 +74,23 @@ export function KeybindingsPanel() {
         }
 
         function handleKeyUp() {
-            // When user releases keys with a valid combo, save it
+            // When user releases keys with a valid combo, check for conflicts
             if (editing?.pressedKeys) {
-                setBinding(editing.actionId, editing.pressedKeys);
-                setEditing(null);
+                const conflicts = getConflictingActions(editing.actionId, editing.pressedKeys);
+
+                if (conflicts.length > 0) {
+                    // Show conflict dialog
+                    setConflict({
+                        actionId: editing.actionId,
+                        combo: editing.pressedKeys,
+                        conflicts,
+                    });
+                    setEditing(null);
+                } else {
+                    // No conflicts, save directly
+                    setBinding(editing.actionId, editing.pressedKeys);
+                    setEditing(null);
+                }
             }
         }
 
@@ -80,7 +101,21 @@ export function KeybindingsPanel() {
             window.removeEventListener('keydown', handleKeyDown, true);
             window.removeEventListener('keyup', handleKeyUp, true);
         };
-    }, [editing, setBinding]);
+    }, [editing, setBinding, getConflictingActions]);
+
+    // Handle conflict resolution
+    const handleConfirmConflict = useCallback(() => {
+        if (!conflict) return;
+
+        // Clear conflicting bindings and set the new one
+        clearConflictingBindings(conflict.actionId, conflict.combo);
+        setBinding(conflict.actionId, conflict.combo);
+        setConflict(null);
+    }, [conflict, clearConflictingBindings, setBinding]);
+
+    const handleCancelConflict = useCallback(() => {
+        setConflict(null);
+    }, []);
 
     const startEditing = useCallback((actionId: string) => {
         setEditing({ actionId, pressedKeys: null });
@@ -160,6 +195,40 @@ export function KeybindingsPanel() {
                     </div>
                 </div>
             ))}
+
+            {/* Conflict Resolution Dialog */}
+            {conflict && (
+                <div className="keybindings-conflict-overlay">
+                    <div className="keybindings-conflict-dialog">
+                        <h4 className="keybindings-conflict-title">Shortcut Conflict</h4>
+                        <p className="keybindings-conflict-message">
+                            <strong>{keyComboToString(conflict.combo)}</strong> is already assigned to:
+                        </p>
+                        <ul className="keybindings-conflict-list">
+                            {conflict.conflicts.map((action) => (
+                                <li key={action.id}>{action.label}</li>
+                            ))}
+                        </ul>
+                        <p className="keybindings-conflict-question">
+                            Remove the existing binding{conflict.conflicts.length > 1 ? 's' : ''} and assign to this action?
+                        </p>
+                        <div className="keybindings-conflict-buttons">
+                            <button
+                                className="keybindings-conflict-cancel"
+                                onClick={handleCancelConflict}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="keybindings-conflict-confirm"
+                                onClick={handleConfirmConflict}
+                            >
+                                Replace
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

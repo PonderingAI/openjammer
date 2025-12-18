@@ -65,6 +65,7 @@
     pointer-events: none;
     stroke-dasharray: 5 5;
     animation: dash 0.5s linear infinite;
+    will-change: stroke-dashoffset;
 }
 
 @keyframes dash {
@@ -104,6 +105,7 @@
     opacity: 1;
     pointer-events: auto;
     animation: portGlow 1.5s ease-in-out infinite;
+    will-change: box-shadow;
 }
 
 .node-canvas.ghost-mode .connection-line {
