@@ -54,6 +54,14 @@ class AudioGraphManager {
     private readonly RAMP_TIME = 0.01;
 
     /**
+     * Safety buffer (ms) added to ramp time delays.
+     * Ensures the gain ramp completes before disconnecting nodes.
+     * Without this buffer, race conditions can cause audio clicks
+     * if setTimeout fires slightly before the ramp finishes.
+     */
+    private readonly RAMP_SAFETY_BUFFER_MS = 10;
+
+    /**
      * Initialize the manager and subscribe to graph changes
      */
     initialize(
@@ -303,10 +311,10 @@ class AudioGraphManager {
             );
             audioNode.gainEnvelope.gain.linearRampToValueAtTime(0, now + this.RAMP_TIME);
 
-            // Disconnect after fade
+            // Disconnect after fade (with safety buffer to ensure ramp completes)
             setTimeout(() => {
                 audioNode.gainEnvelope?.disconnect();
-            }, this.RAMP_TIME * 1000 + 10);
+            }, this.RAMP_TIME * 1000 + this.RAMP_SAFETY_BUFFER_MS);
         }
 
         // Cleanup specific instance types
@@ -475,7 +483,7 @@ class AudioGraphManager {
                         }
                     }
                 }
-            }, this.RAMP_TIME * 1000 + 10);
+            }, this.RAMP_TIME * 1000 + this.RAMP_SAFETY_BUFFER_MS);
 
             this.pendingDisconnects.set(connectionKey, timeoutId);
         } else {

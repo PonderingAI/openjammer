@@ -119,9 +119,11 @@ export class Looper {
     }
 
     /**
-     * Get the input node for connecting upstream audio
+     * Get the input node for connecting upstream audio.
+     * Returns an AnalyserNode which passes audio through while allowing
+     * waveform analysis. Compatible with AudioNode interface for connections.
      */
-    getInputNode(): GainNode | null {
+    getInputNode(): AudioNode | null {
         const ctx = getAudioContext();
         if (!ctx) return null;
 
@@ -146,7 +148,7 @@ export class Looper {
         }
 
         // Return analyser as input (it passes audio through)
-        return this.analyser as unknown as GainNode;
+        return this.analyser;
     }
 
     /**

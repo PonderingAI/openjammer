@@ -32,6 +32,8 @@ interface AudioDevice {
 }
 
 const NUM_WAVEFORM_BARS = 16;
+const TARGET_FPS = 30;
+const FRAME_INTERVAL = 1000 / TARGET_FPS;
 
 export function MicrophoneNode({
     node,
@@ -199,25 +201,33 @@ export function MicrophoneNode({
         };
     }, []);
 
-    // Update waveform
+    // Update waveform with FPS throttling for performance
     useEffect(() => {
         if (!analyserNode) return;
 
         const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+        let lastFrameTime = 0;
 
         const updateWaveform = () => {
-            // Skip updates when document is hidden (performance optimization)
-            if (!document.hidden) {
-                analyserNode.getByteFrequencyData(dataArray);
+            const now = performance.now();
 
-                // Sample bars from frequency data
-                const bars: number[] = [];
-                const step = Math.floor(dataArray.length / NUM_WAVEFORM_BARS);
-                for (let i = 0; i < NUM_WAVEFORM_BARS; i++) {
-                    const value = dataArray[i * step] / 255;
-                    bars.push(value);
+            // Throttle to TARGET_FPS for performance with multiple nodes
+            if (now - lastFrameTime >= FRAME_INTERVAL) {
+                lastFrameTime = now;
+
+                // Skip updates when document is hidden (performance optimization)
+                if (!document.hidden) {
+                    analyserNode.getByteFrequencyData(dataArray);
+
+                    // Sample bars from frequency data
+                    const bars: number[] = [];
+                    const step = Math.floor(dataArray.length / NUM_WAVEFORM_BARS);
+                    for (let i = 0; i < NUM_WAVEFORM_BARS; i++) {
+                        const value = dataArray[i * step] / 255;
+                        bars.push(value);
+                    }
+                    setWaveformBars(bars);
                 }
-                setWaveformBars(bars);
             }
 
             animationRef.current = requestAnimationFrame(updateWaveform);

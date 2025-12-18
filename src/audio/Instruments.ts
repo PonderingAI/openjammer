@@ -313,7 +313,7 @@ export class Cello extends Instrument {
  * - Deeper, more expressive vibrato than acoustic
  */
 export class ElectricCello extends Instrument {
-    private waveShaperCurve: Float32Array | null = null;
+    private waveShaperCurve: Float32Array<ArrayBuffer> | null = null;
 
     // Sound design constants
     private static readonly FILTER_RESONANCE = 2;
@@ -335,13 +335,19 @@ export class ElectricCello extends Instrument {
         super('cello'); // Base type for compatibility
     }
 
-    private getSaturationCurve(): Float32Array {
+    /**
+     * Generate soft clipping curve for saturation effect.
+     * Returns Float32Array compatible with WaveShaperNode.curve
+     */
+    private getSaturationCurve(): Float32Array<ArrayBuffer> {
         if (!this.waveShaperCurve) {
             const samples = 256;
-            const curve = new Float32Array(samples);
+            // Explicitly create ArrayBuffer for WaveShaperNode compatibility
+            const buffer = new ArrayBuffer(samples * Float32Array.BYTES_PER_ELEMENT);
+            const curve = new Float32Array(buffer);
             for (let i = 0; i < samples; i++) {
                 const x = (i * 2) / samples - 1;
-                // Soft clipping curve
+                // Soft clipping curve using tanh for smooth saturation
                 curve[i] = Math.tanh(x * ElectricCello.SATURATION_AMOUNT);
             }
             this.waveShaperCurve = curve;
@@ -368,8 +374,7 @@ export class ElectricCello extends Instrument {
 
         // Waveshaper for soft saturation
         const waveshaper = ctx.createWaveShaper();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        waveshaper.curve = this.getSaturationCurve() as any;
+        waveshaper.curve = this.getSaturationCurve();
         waveshaper.oversample = '2x';
         waveshaper.connect(filterNode);
 
