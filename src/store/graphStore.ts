@@ -85,6 +85,10 @@ interface GraphStore {
     // Getters
     getNode: (nodeId: string) => GraphNode | undefined;
     getNodesByType: (type: NodeType) => GraphNode[];
+
+    // Subscription helpers for AudioGraphManager
+    getNodes: () => Map<string, GraphNode>;
+    getConnections: () => Map<string, Connection>;
 }
 
 // ============================================================================
@@ -474,7 +478,11 @@ export const useGraphStore = create<GraphStore>()(
 
             getNodesByType: (type) => {
                 return Array.from(get().nodes.values()).filter(node => node.type === type);
-            }
+            },
+
+            // Subscription helpers for AudioGraphManager
+            getNodes: () => get().nodes,
+            getConnections: () => get().connections
         }),
         {
             name: 'openjammer-graph',

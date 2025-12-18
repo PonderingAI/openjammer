@@ -1,127 +1,135 @@
-# 🎹 OpenJammer
+# Openjammer
 
-**Node-based music generation tool for live performances**
+A browser-based, node-driven live music generation tool for performing with other musicians. Built entirely client-side with offline capability after first visit.
 
-OpenJammer is a free, open-source, client-side music workstation that runs entirely in your browser. Create loops, record sounds, and jam with virtual instruments—all offline after your first visit.
-
-![OpenJammer Screenshot](https://via.placeholder.com/800x450/0a0a0f/6366f1?text=OpenJammer)
-
-## ✨ Features
-
-- **Node-Based Workflow** - Connect instruments, effects, and loopers visually
-- **Virtual Instruments** - Piano, Cello, Saxophone with keyboard control
-- **Live Looping** - Auto-record loops with configurable duration
-- **Audio Effects** - Distortion, Reverb, Delay, Pitch Shift
-- **Microphone Input** - Record live audio
-- **Offline Support** - Works without internet after first load
-- **Export/Import** - Save and share your workflows as JSON
-- **Zero Cost** - No backend, no subscriptions, 100% client-side
-
-## 🚀 Quick Start
-
-### Use Online
-Visit [openjammer.vercel.app](https://openjammer.vercel.app) and start jamming!
-
-### Run Locally
+## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/openjammer.git
-cd openjammer
-
-# Install dependencies
 bun install
-
-# Start development server
-bun run dev
-
-# Build for production
-bun run build
+bun dev
 ```
 
-## 🎵 How to Use
+## Vision
 
-1. **Add Nodes** - Right-click on the canvas to open the node menu
-2. **Connect Nodes** - Click on a port and drag to another compatible port
-3. **Play Instruments** - Select an instrument and press "Play" to use keyboard
-4. **Record Loops** - Connect an instrument to a Looper and press Record
-5. **Add Effects** - Insert Effect nodes between instruments and output
-6. **Export Workflow** - Click "Export" to save your setup as JSON
+Openjammer is a visual node-based audio workstation inspired by ComfyUI's interface paradigm. Right-click on empty canvas space to open the context menu with all node categories. The tool prioritizes screen real estate (laptop-first design) and live editability—all parameters remain editable while audio plays without dropouts. Every transformation is lossless.
 
-### Keyboard Layout (When Instrument Active)
+## Design Aesthetic
 
-| Row | Keys | Notes |
-|-----|------|-------|
-| High | 1-0 | Higher octave |
-| Mid | Q-P | Middle octave |
-| Low | A-L | Lower octave |
-| Lower | Z-/ | Lowest octave |
+**Scribble/hand-drawn style** with cream/beige backgrounds, black hand-drawn outlines, and rounded organic shapes (see design mockups). Theming is user-customizable via a settings panel inspired by Cyberpunk 2077's in-game menu.
 
-## 🏗️ Architecture
+## Node System
 
-```
-src/
-├── audio/           # Web Audio API layer
-│   ├── AudioEngine.ts      # Context management
-│   ├── Instruments.ts      # Piano, Cello, Saxophone
-│   ├── Looper.ts           # Loop recording/playback
-│   └── Effects.ts          # Audio effects
-├── components/      # React UI components
-│   ├── Canvas/             # Node graph canvas
-│   ├── Nodes/              # Individual node types
-│   └── Toolbar/            # Top toolbar
-├── engine/          # Node graph logic
-│   ├── types.ts            # TypeScript definitions
-│   ├── registry.ts         # Node definitions
-│   └── serialization.ts    # Import/export
-└── store/           # Zustand state management
-```
+### Connections
+- **Blue (Audio)**: Light blue = input, dark blue = output. Directional only.
+- **Grey (Data)**: Bidirectional, for passing numbers/parameters.
 
-## 🛠️ Tech Stack
+Ports are color-coded on each node. Same-color connections are interchangeable respecting directionality.
 
-- **React 19** - UI framework
-- **TypeScript** - Type safety
-- **Vite 7** - Build tool with PWA support
-- **Zustand** - State management
-- **Web Audio API** - Audio processing
+### Multi-Select & Undo
+- Drag to select multiple nodes → Backspace/Delete removes them
+- Ctrl+Z = Undo, Ctrl+Y = Redo
 
-## 🤝 Contributing
-
-We welcome contributions! Here's how to get started:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests: `npm test`
-5. Commit: `git commit -m 'Add amazing feature'`
-6. Push: `git push origin feature/amazing-feature`
-7. Open a Pull Request
-
-### Development Guidelines
-
-- Follow existing code style
-- Add types for all new code
-- Test audio features in multiple browsers
-- Keep bundle size minimal
-
-## 📋 Roadmap
-
-- [ ] MIDI input support
-- [ ] Custom node plugins
-- [ ] More instrument types
-- [ ] Sample-based instruments
-- [ ] Multi-track recording export
-- [ ] Collaborative jamming (WebRTC)
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🙏 Acknowledgments
-
-- Inspired by [ComfyUI](https://github.com/comfyanonymous/ComfyUI) for the node interface
-- Built with [Vite](https://vitejs.dev/) and [React](https://react.dev/)
+### Batch Connecting
+Select a node and press **A** to grab all free output ports at once. They follow your cursor as a bundle and can be connected to a target node, which dynamically expands its inputs to receive them all.
 
 ---
 
-Made with ❤️ for musicians everywhere
+## Node Categories
+
+### 1. Keyboard Node
+Routes physical keyboard input to instruments.
+
+- **3 outputs** (one per keyboard row: upper Q-P, middle A-L, lower Z-M)
+- **Number row (1-9)** switches the active bank:
+  - Bank **1** = reserved for global shortcuts/building mode
+  - Banks **2-9** = assignable to Keyboard nodes
+- When spawned, auto-claims the next free bank number (displayed in node header)
+- When a bank is active, the three keyboard rows trigger notes on connected instruments
+
+### 2. Instruments
+Sound generators. Access via right-click menu categories: *Strings*, *Keyboard*, *Drums*, etc. Click the node header to open a popup with specific instrument options (Classic Piano, Cello, Saxophone, etc.).
+
+**Structure:**
+- Dynamic inputs: starts with 1, grows as connections arrive (if holding multiple connections, that many inputs appear)
+- Each input row displays: Note letter (SPN) + Offset value
+- Use +/- buttons or type directly to adjust pitch
+- 1 audio output
+
+**Special: Microphone**
+- Active by default with Mute button
+- Under Instruments category
+
+### 3. Looper
+The live performance core. Stacks layers rather than overdubbing.
+
+- **Default duration**: 10 seconds (customizable)
+- **Auto-start**: Recording begins when input signal exceeds threshold
+- **Auto-stop**: Stops if no input detected for one full loop cycle; empty loops are discarded
+- **Progress bar**: Shows current position in loop
+- **Stacking**: Each cycle creates a new row/layer
+  - Rows can be individually muted, deleted, have effects applied
+  - Rows can be dragged to other Loopers
+- **Global sync**: Loopers at same BPM/duration align perfectly regardless of start time
+- **Beat correction**: Snaps loop end to nearest beat to prevent drift
+
+### 4. Effects
+Modify audio signals. Place between Instruments→Looper or apply to specific Looper rows.
+
+Types: Distortion, Pitch Shift, Reverb, etc.
+
+Hot-swappable during playback without audio engine interruption.
+
+### 5. Amplifier
+Linear volume control.
+- 1.0 = original, 2.0 = double, 0.5 = half, 0.0 = mute
+
+### 6. Speaker
+Final output node.
+- Click "output device" label to open dropdown for selecting system audio devices
+- Speaker symbol in node body
+
+### 7. Recorder
+Captures session for post-production.
+- Records final mix or individual stems
+- Exports as .wav
+- Allows separate export of loops/instruments for DAW editing
+
+---
+
+## Ghost Mode (W key)
+Toggle for live performance view:
+- All nodes fade to 10% opacity
+- Node interactions disabled (buttons/sliders)
+- Connections remain fully visible and editable
+- Input ports "glow" for easy rerouting during play
+
+---
+
+## Technical
+
+- **Runtime**: Bun 
+- **Audio**: Web Audio API
+- **Storage**: Local browser storage + JSON import/export
+- **Hosting**: Vercel (cost-minimized, fully static)
+- **Offline**: Full functionality after first visit (PWA/Service Worker)
+
+## Architecture Goals
+
+- Clean, well-documented codebase
+- Easy community contributions
+- Scalable for future MIDI and custom node integration
+- Theming system for user-created themes
+
+## Export/Import
+
+Workflows saved as JSON files for sharing and backup.
+
+---
+
+## Contributing
+
+See [AGENTS.md](./AGENTS.md) for development guidelines.
+
+## License
+
+Open source—details TBD.

@@ -8,7 +8,9 @@ import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
 import { initAudioContext, isAudioReady } from './audio/AudioEngine';
+import { audioGraphManager } from './audio/AudioGraphManager';
 import { useAudioStore } from './store/audioStore';
+import { useGraphStore } from './store/graphStore';
 import { applyTheme, getSavedThemeId, getThemeById } from './styles/themes';
 import './styles/global.css';
 
@@ -38,6 +40,48 @@ function App() {
     window.addEventListener('openjammer:toggle-settings', handleToggleSettings);
     return () => window.removeEventListener('openjammer:toggle-settings', handleToggleSettings);
   }, []);
+
+  // Initialize AudioGraphManager when audio context is ready
+  const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+  useEffect(() => {
+    if (!isAudioContextReady) return;
+
+    // Create subscription wrappers for graph store
+    // Zustand's subscribe returns an unsubscribe function
+    const subscribeToNodes = (callback: (nodes: Map<string, any>) => void) => {
+      let prevNodes = useGraphStore.getState().nodes;
+      return useGraphStore.subscribe((state) => {
+        if (state.nodes !== prevNodes) {
+          prevNodes = state.nodes;
+          callback(state.nodes);
+        }
+      });
+    };
+
+    const subscribeToConnections = (callback: (connections: Map<string, any>) => void) => {
+      let prevConnections = useGraphStore.getState().connections;
+      return useGraphStore.subscribe((state) => {
+        if (state.connections !== prevConnections) {
+          prevConnections = state.connections;
+          callback(state.connections);
+        }
+      });
+    };
+
+    const getNodes = useGraphStore.getState().getNodes;
+    const getConnections = useGraphStore.getState().getConnections;
+
+    audioGraphManager.initialize(
+      subscribeToConnections,
+      subscribeToNodes,
+      getNodes,
+      getConnections
+    );
+
+    return () => {
+      audioGraphManager.dispose();
+    };
+  }, [isAudioContextReady]);
 
   // Initialize audio context on user gesture
   const handleActivate = useCallback(async () => {

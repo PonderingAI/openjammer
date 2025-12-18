@@ -2,9 +2,12 @@
  * Toolbar - Top toolbar with workflow actions
  */
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
+import { useAudioStore } from '../../store/audioStore';
+import { beatClock } from '../../audio/BeatClock';
+import type { BeatClockState } from '../../audio/BeatClock';
 import { exportWorkflow, downloadWorkflow, loadWorkflowFromFile, importWorkflow } from '../../engine/serialization';
 import './Toolbar.css';
 
@@ -20,6 +23,46 @@ export function Toolbar() {
     const zoom = useCanvasStore((s) => s.zoom);
     const resetView = useCanvasStore((s) => s.resetView);
     const zoomTo = useCanvasStore((s) => s.zoomTo);
+
+    const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+
+    // Beat clock state
+    const [clockState, setClockState] = useState<BeatClockState>(beatClock.getState());
+    const [bpmInput, setBpmInput] = useState(String(clockState.bpm));
+
+    // Subscribe to beat clock state changes
+    useEffect(() => {
+        const unsubscribe = beatClock.onStateChange((state) => {
+            setClockState(state);
+            setBpmInput(String(state.bpm));
+        });
+        return unsubscribe;
+    }, []);
+
+    // Handle BPM change
+    const handleBpmChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        setBpmInput(e.target.value);
+    }, []);
+
+    const handleBpmBlur = useCallback(() => {
+        const bpm = parseInt(bpmInput, 10);
+        if (!isNaN(bpm) && bpm >= 20 && bpm <= 300) {
+            beatClock.setBPM(bpm);
+        } else {
+            setBpmInput(String(clockState.bpm));
+        }
+    }, [bpmInput, clockState.bpm]);
+
+    const handleBpmKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleBpmBlur();
+        }
+    }, [handleBpmBlur]);
+
+    // Transport controls
+    const handlePlayStop = useCallback(() => {
+        beatClock.toggle();
+    }, []);
 
     // Export workflow
     const handleExport = useCallback(() => {
@@ -108,6 +151,37 @@ export function Toolbar() {
             <button className="toolbar-btn" onClick={handleResetView} title="Reset View">
                 ⌂
             </button>
+
+            <div className="toolbar-separator" />
+
+            {/* Transport & BPM Controls */}
+            <button
+                className={`toolbar-btn ${clockState.isPlaying ? 'toolbar-btn-active' : ''}`}
+                onClick={handlePlayStop}
+                disabled={!isAudioContextReady}
+                title={clockState.isPlaying ? 'Stop Clock' : 'Start Clock'}
+            >
+                {clockState.isPlaying ? '⏹' : '▶'}
+            </button>
+            <div className="toolbar-bpm">
+                <input
+                    type="number"
+                    value={bpmInput}
+                    onChange={handleBpmChange}
+                    onBlur={handleBpmBlur}
+                    onKeyDown={handleBpmKeyDown}
+                    min="20"
+                    max="300"
+                    className="toolbar-bpm-input"
+                    title="BPM (20-300)"
+                />
+                <span className="toolbar-bpm-label">BPM</span>
+            </div>
+            {clockState.isPlaying && (
+                <div className="toolbar-beat-indicator">
+                    Beat {(clockState.currentBeat % clockState.beatsPerBar) + 1}
+                </div>
+            )}
 
             <div className="toolbar-separator" />
 

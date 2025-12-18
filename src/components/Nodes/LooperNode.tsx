@@ -1,11 +1,14 @@
 /**
  * Looper Node - Record and loop audio
+ * Connected to the real Looper audio class via AudioGraphManager
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { GraphNode, LooperNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
+import { audioGraphManager } from '../../audio/AudioGraphManager';
+import type { Loop } from '../../audio/Looper';
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -25,24 +28,84 @@ export function LooperNode({ node }: LooperNodeProps) {
 
     const [loops, setLoops] = useState<LoopState[]>([]);
     const [isRecording, setIsRecording] = useState(false);
+    const [isArmed, setIsArmed] = useState(false); // Waiting for signal
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(data.duration || 10);
     const animationRef = useRef<number | null>(null);
     const startTimeRef = useRef<number>(0);
 
-    // Simulate loop progress
+    // Get the Looper instance from AudioGraphManager
+    const getLooper = useCallback(() => {
+        return audioGraphManager.getLooper(node.id);
+    }, [node.id]);
+
+    // Set up Looper callbacks when component mounts or audio context becomes ready
     useEffect(() => {
-        if (!isRecording && loops.length === 0) return;
+        if (!isAudioContextReady) return;
 
-        const updateTime = () => {
-            const elapsed = (Date.now() - startTimeRef.current) / 1000;
-            setCurrentTime(elapsed % duration);
-            animationRef.current = requestAnimationFrame(updateTime);
+        const looper = getLooper();
+        if (!looper) return;
+
+        // Set up callbacks
+        looper.setOnLoopAdded((audioLoop: Loop) => {
+            const newLoop: LoopState = {
+                id: audioLoop.id,
+                duration: audioLoop.buffer?.duration || duration,
+                isMuted: audioLoop.isMuted,
+                isPlaying: true
+            };
+            setLoops(prev => [...prev, newLoop]);
+            setIsRecording(false);
+            setIsArmed(false);
+        });
+
+        looper.setOnTimeUpdate((time: number) => {
+            setCurrentTime(time);
+        });
+
+        // Sync duration
+        looper.setDuration(duration);
+
+        // Initial sync of loops from looper
+        const existingLoops = looper.getLoops();
+        if (existingLoops.length > 0) {
+            setLoops(existingLoops.map(l => ({
+                id: l.id,
+                duration: l.buffer?.duration || duration,
+                isMuted: l.isMuted,
+                isPlaying: l.sourceNode !== null
+            })));
+        }
+
+        return () => {
+            // Cleanup callbacks
+            looper.setOnLoopAdded(() => {});
+            looper.setOnTimeUpdate(() => {});
         };
+    }, [isAudioContextReady, node.id, duration, getLooper]);
 
-        if (loops.length > 0 || isRecording) {
-            startTimeRef.current = Date.now();
-            updateTime();
+    // Progress animation for when recording or playing
+    useEffect(() => {
+        if (!isRecording && loops.length === 0) {
+            if (animationRef.current) {
+                cancelAnimationFrame(animationRef.current);
+            }
+            return;
+        }
+
+        const looper = getLooper();
+        if (!looper) {
+            // Fallback to simulated progress if no looper
+            const updateTime = () => {
+                const elapsed = (Date.now() - startTimeRef.current) / 1000;
+                setCurrentTime(elapsed % duration);
+                animationRef.current = requestAnimationFrame(updateTime);
+            };
+
+            if (loops.length > 0 || isRecording) {
+                startTimeRef.current = Date.now();
+                updateTime();
+            }
         }
 
         return () => {
@@ -50,52 +113,80 @@ export function LooperNode({ node }: LooperNodeProps) {
                 cancelAnimationFrame(animationRef.current);
             }
         };
-    }, [isRecording, loops.length, duration]);
+    }, [isRecording, loops.length, duration, getLooper]);
 
-    // Start recording
-    const handleRecord = useCallback(() => {
+    // Start recording - arms the looper to start on first signal
+    const handleRecord = useCallback(async () => {
+        const looper = getLooper();
+        if (!looper) {
+            // Fallback: simulate if no looper instance
+            setIsRecording(true);
+            setIsArmed(true);
+            startTimeRef.current = Date.now();
+
+            setTimeout(() => {
+                setIsRecording(false);
+                setIsArmed(false);
+                const newLoop: LoopState = {
+                    id: `loop-${Date.now()}`,
+                    duration: duration,
+                    isMuted: false,
+                    isPlaying: true
+                };
+                setLoops(prev => [...prev, newLoop]);
+            }, duration * 1000);
+            return;
+        }
+
+        setIsArmed(true);
+        await looper.startRecording();
         setIsRecording(true);
-        startTimeRef.current = Date.now();
-
-        // Auto-stop after duration
-        setTimeout(() => {
-            setIsRecording(false);
-
-            // Add new loop
-            const newLoop: LoopState = {
-                id: `loop-${Date.now()}`,
-                duration: duration,
-                isMuted: false,
-                isPlaying: true
-            };
-
-            setLoops(prev => [...prev, newLoop]);
-        }, duration * 1000);
-    }, [duration]);
+    }, [duration, getLooper]);
 
     // Stop recording
     const handleStopRecord = useCallback(() => {
+        const looper = getLooper();
+        if (looper) {
+            looper.stopRecording();
+        }
         setIsRecording(false);
-    }, []);
+        setIsArmed(false);
+    }, [getLooper]);
 
     // Toggle loop mute
     const handleToggleMute = useCallback((loopId: string) => {
+        const looper = getLooper();
+        if (looper) {
+            looper.toggleLoopMute(loopId);
+        }
+
         setLoops(prev => prev.map(loop =>
             loop.id === loopId ? { ...loop, isMuted: !loop.isMuted } : loop
         ));
-    }, []);
+    }, [getLooper]);
 
     // Delete loop
     const handleDeleteLoop = useCallback((loopId: string) => {
+        const looper = getLooper();
+        if (looper) {
+            looper.deleteLoop(loopId);
+        }
+
         setLoops(prev => prev.filter(loop => loop.id !== loopId));
-    }, []);
+    }, [getLooper]);
 
     // Change duration
     const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const newDuration = parseFloat(e.target.value) || 10;
         setDuration(newDuration);
         updateNodeData<LooperNodeData>(node.id, { duration: newDuration });
-    }, [node.id, updateNodeData]);
+
+        // Update looper duration
+        const looper = getLooper();
+        if (looper) {
+            looper.setDuration(newDuration);
+        }
+    }, [node.id, updateNodeData, getLooper]);
 
     const progress = (currentTime / duration) * 100;
 
@@ -113,6 +204,7 @@ export function LooperNode({ node }: LooperNodeProps) {
                     max="60"
                     step="1"
                     style={{ width: '60px', textAlign: 'center' }}
+                    disabled={isRecording}
                 />
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>sec</span>
             </div>
@@ -140,9 +232,21 @@ export function LooperNode({ node }: LooperNodeProps) {
                 <span>{duration}s</span>
             </div>
 
+            {/* Status Indicator */}
+            {isArmed && !isRecording && (
+                <div style={{
+                    fontSize: '10px',
+                    color: 'var(--accent-warning)',
+                    textAlign: 'center',
+                    marginTop: '4px'
+                }}>
+                    Waiting for signal...
+                </div>
+            )}
+
             {/* Controls */}
             <div className="node-controls">
-                {!isRecording ? (
+                {!isRecording && !isArmed ? (
                     <button
                         className="node-btn node-btn-danger"
                         onClick={handleRecord}
@@ -192,7 +296,7 @@ export function LooperNode({ node }: LooperNodeProps) {
                 </div>
             )}
 
-            {loops.length === 0 && !isRecording && (
+            {loops.length === 0 && !isRecording && !isArmed && (
                 <div style={{
                     fontSize: '11px',
                     color: 'var(--text-muted)',

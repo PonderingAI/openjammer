@@ -1,80 +1,113 @@
 /**
  * Recorder Node - Record audio to WAV
+ * Connected to the real Recorder audio class via AudioGraphManager
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { GraphNode } from '../../engine/types';
 import { useAudioStore } from '../../store/audioStore';
+import { audioGraphManager } from '../../audio/AudioGraphManager';
+import type { Recording as AudioRecording } from '../../audio/Recorder';
 
 interface RecorderNodeProps {
     node: GraphNode;
 }
 
-interface Recording {
+interface RecordingState {
     id: string;
-    blob: Blob;
+    name: string;
     duration: number;
-    timestamp: Date;
+    timestamp: number;
 }
 
-export function RecorderNode({ node: _node }: RecorderNodeProps) {
+export function RecorderNode({ node }: RecorderNodeProps) {
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
     const [isRecording, setIsRecording] = useState(false);
-    const [recordings, setRecordings] = useState<Recording[]>([]);
+    const [recordings, setRecordings] = useState<RecordingState[]>([]);
     const [recordingTime, setRecordingTime] = useState(0);
-    const startTimeRef = useRef<number>(0);
-    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Get the Recorder instance from AudioGraphManager
+    const getRecorder = useCallback(() => {
+        return audioGraphManager.getRecorder(node.id);
+    }, [node.id]);
+
+    // Set up Recorder callbacks when component mounts or audio context becomes ready
+    useEffect(() => {
+        if (!isAudioContextReady) return;
+
+        const recorder = getRecorder();
+        if (!recorder) return;
+
+        // Set up callbacks
+        recorder.setOnRecordingComplete((recording: AudioRecording) => {
+            const newRecording: RecordingState = {
+                id: recording.id,
+                name: recording.name,
+                duration: recording.duration,
+                timestamp: recording.timestamp
+            };
+            setRecordings(prev => [...prev, newRecording]);
+            setIsRecording(false);
+            setRecordingTime(0);
+        });
+
+        recorder.setOnTimeUpdate((time: number) => {
+            setRecordingTime(time);
+        });
+
+        // Initial sync of recordings from recorder
+        const existingRecordings = recorder.getRecordings();
+        if (existingRecordings.length > 0) {
+            setRecordings(existingRecordings.map(r => ({
+                id: r.id,
+                name: r.name,
+                duration: r.duration,
+                timestamp: r.timestamp
+            })));
+        }
+
+        return () => {
+            // Cleanup callbacks
+            recorder.setOnRecordingComplete(() => {});
+            recorder.setOnTimeUpdate(() => {});
+        };
+    }, [isAudioContextReady, node.id, getRecorder]);
 
     // Start recording
     const handleStartRecording = useCallback(() => {
-        setIsRecording(true);
-        startTimeRef.current = Date.now();
-
-        // Update recording time
-        intervalRef.current = setInterval(() => {
-            setRecordingTime((Date.now() - startTimeRef.current) / 1000);
-        }, 100);
-    }, []);
+        const recorder = getRecorder();
+        if (recorder) {
+            recorder.startRecording();
+            setIsRecording(true);
+        }
+    }, [getRecorder]);
 
     // Stop recording
     const handleStopRecording = useCallback(() => {
-        setIsRecording(false);
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
+        const recorder = getRecorder();
+        if (recorder) {
+            recorder.stopRecording();
         }
-
-        const duration = recordingTime;
-
-        // Create dummy recording (in real implementation, this would use MediaRecorder)
-        const newRecording: Recording = {
-            id: `rec-${Date.now()}`,
-            blob: new Blob([], { type: 'audio/wav' }),
-            duration,
-            timestamp: new Date()
-        };
-
-        setRecordings(prev => [...prev, newRecording]);
-        setRecordingTime(0);
-    }, [recordingTime]);
+        // isRecording will be set to false by the callback
+    }, [getRecorder]);
 
     // Download recording
-    const handleDownload = useCallback((recording: Recording) => {
-        // In real implementation, would download actual audio
-        const url = URL.createObjectURL(recording.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `recording-${recording.timestamp.toISOString().slice(0, 19)}.wav`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }, []);
+    const handleDownload = useCallback((recordingId: string) => {
+        const recorder = getRecorder();
+        if (recorder) {
+            recorder.downloadRecording(recordingId);
+        }
+    }, [getRecorder]);
 
     // Delete recording
     const handleDelete = useCallback((recordingId: string) => {
+        const recorder = getRecorder();
+        if (recorder) {
+            recorder.deleteRecording(recordingId);
+        }
         setRecordings(prev => prev.filter(r => r.id !== recordingId));
-    }, []);
+    }, [getRecorder]);
 
     // Format time
     const formatTime = (seconds: number) => {
@@ -143,8 +176,9 @@ export function RecorderNode({ node: _node }: RecorderNodeProps) {
                             <div className="loop-actions">
                                 <button
                                     className="node-btn node-btn-primary"
-                                    onClick={() => handleDownload(recording)}
+                                    onClick={() => handleDownload(recording.id)}
                                     style={{ padding: '2px 6px', fontSize: '10px' }}
+                                    title="Download WAV"
                                 >
                                     💾
                                 </button>
@@ -152,6 +186,7 @@ export function RecorderNode({ node: _node }: RecorderNodeProps) {
                                     className="node-btn node-btn-danger"
                                     onClick={() => handleDelete(recording.id)}
                                     style={{ padding: '2px 6px', fontSize: '10px' }}
+                                    title="Delete"
                                 >
                                     ✕
                                 </button>
@@ -168,7 +203,7 @@ export function RecorderNode({ node: _node }: RecorderNodeProps) {
                     textAlign: 'center',
                     marginTop: '8px'
                 }}>
-                    Recordings will appear here
+                    Connect audio input and click Record
                 </div>
             )}
 

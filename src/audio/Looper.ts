@@ -28,6 +28,8 @@ export class Looper {
     private mediaRecorder: MediaRecorder | null = null;
     private recordedChunks: Blob[] = [];
     private inputStream: MediaStream | null = null;
+    private inputNode: AudioNode | null = null;
+    private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
     private analyser: AnalyserNode | null = null;
     private silenceThreshold: number = 0.01;
     private silenceStartTime: number = 0;
@@ -81,6 +83,32 @@ export class Looper {
     }
 
     /**
+     * Get the input node for connecting upstream audio
+     */
+    getInputNode(): GainNode | null {
+        const ctx = getAudioContext();
+        if (!ctx) return null;
+
+        if (!this.analyser) {
+            // Create analyser for silence detection
+            this.analyser = ctx.createAnalyser();
+            this.analyser.fftSize = 256;
+
+            // Create MediaStreamDestination for recording from AudioNode
+            this.mediaStreamDestination = ctx.createMediaStreamDestination();
+
+            // Connect analyser to destination
+            this.analyser.connect(this.mediaStreamDestination);
+
+            // Store the stream for MediaRecorder
+            this.inputStream = this.mediaStreamDestination.stream;
+        }
+
+        // Return analyser as input (it passes audio through)
+        return this.analyser as unknown as GainNode;
+    }
+
+    /**
      * Connect an audio source to the looper input
      */
     async connectInput(source: AudioNode | MediaStream): Promise<void> {
@@ -88,15 +116,26 @@ export class Looper {
         if (!ctx) return;
 
         // Create analyser for silence detection
-        this.analyser = ctx.createAnalyser();
-        this.analyser.fftSize = 256;
+        if (!this.analyser) {
+            this.analyser = ctx.createAnalyser();
+            this.analyser.fftSize = 256;
+        }
 
         if (source instanceof MediaStream) {
             this.inputStream = source;
             const sourceNode = ctx.createMediaStreamSource(source);
             sourceNode.connect(this.analyser);
         } else {
+            // For AudioNode input, create MediaStreamDestination for recording
+            this.inputNode = source;
             source.connect(this.analyser);
+
+            // Create MediaStreamDestination for recording
+            if (!this.mediaStreamDestination) {
+                this.mediaStreamDestination = ctx.createMediaStreamDestination();
+                this.analyser.connect(this.mediaStreamDestination);
+                this.inputStream = this.mediaStreamDestination.stream;
+            }
         }
     }
 
@@ -309,6 +348,26 @@ export class Looper {
     disconnect(): void {
         this.stopAll();
         this.stopRecording();
+
+        if (this.analyser) {
+            this.analyser.disconnect();
+            this.analyser = null;
+        }
+
+        if (this.mediaStreamDestination) {
+            this.mediaStreamDestination.disconnect();
+            this.mediaStreamDestination = null;
+        }
+
+        if (this.inputNode) {
+            this.inputNode = null;
+        }
+
+        if (this.inputStream) {
+            // Stop all tracks in the stream
+            this.inputStream.getTracks().forEach(track => track.stop());
+            this.inputStream = null;
+        }
 
         if (this.outputNode) {
             this.outputNode.disconnect();

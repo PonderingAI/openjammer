@@ -1,45 +1,82 @@
----
-description: General development guidelines for OpenJammer
----
+# AGENTS.md – Development Guidelines
 
-# OpenJammer Development Guidelines
+## Package Manager: Bun Only
 
-## Package Manager
-
-**Always use `bun`** instead of `npm` or `yarn` for all package management operations:
+**Always use `bun` instead of npm/yarn/pnpm.**
 
 ```bash
 # Install dependencies
 bun install
 
-# Add a package
-bun add <package-name>
+# Run dev server
+bun dev
 
-# Add a dev dependency
-bun add -d <package-name>
-
-# Run scripts
-bun run dev
+# Build for production
 bun run build
-bun run lint
 
-# Run tests
-bun test
+# Add a package
+bun add <package>
+
+# Add dev dependency
+bun add -d <package>
 ```
 
-## Why Bun?
+Do not use `npm`, `npx`, `yarn`, or `pnpm` commands anywhere in the codebase or documentation.
 
-- Faster installation and execution
-- Built-in TypeScript support
-- Compatible with npm packages
-- Lower memory usage
+---
 
-## Quick Reference
+## Code Standards
 
-| Operation | Command |
-|-----------|---------|
-| Install deps | `bun install` |
-| Dev server | `bun run dev` |
-| Build | `bun run build` |
-| Lint | `bun run lint` |
-| Add package | `bun add <pkg>` |
+### File Structure
+- Components in `/src/components/`
+- Nodes in `/src/nodes/` with one file per node type
+- Audio engine in `/src/audio/`
+- State management in `/src/state/`
+- Theming in `/src/themes/`
+
+### Naming
+- Components: PascalCase (`KeyboardNode.tsx`)
+- Utilities: camelCase (`audioUtils.ts`)
+- Constants: SCREAMING_SNAKE_CASE
+
+### Commits
+- Use conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `test:`
+- Keep commits atomic and focused
+
+---
+
+## Architecture Notes
+
+### Future Integrations (Design With These in Mind)
+- **MIDI support**: Node inputs should be abstracted to accept MIDI events
+- **Custom nodes**: Plugin architecture for community-contributed nodes
+- **Themes**: CSS variables for all colors, stored in theme JSON files
+
+### Performance
+- Web Audio API nodes should be created/destroyed carefully to prevent memory leaks
+- Use `requestAnimationFrame` for visual updates, not audio timing
+- Audio timing must use `AudioContext.currentTime`
+
+### Offline Support
+- Service Worker for caching all assets
+- No external API calls required for core functionality
+
+---
+
+## Testing Locally
+
+```bash
+bun dev
+```
+
+Opens at `http://localhost:5173` (or similar). Test audio features with headphones to avoid feedback loops when testing microphone input.
+
+---
+
+## Contributing Checklist
+
+- [ ] Used `bun` for all package operations
+- [ ] Followed existing code style
+- [ ] Tested with audio actually playing
+- [ ] Updated README if adding new node types
+- [ ] No console errors or warnings
