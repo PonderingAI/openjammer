@@ -37,6 +37,7 @@ class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
+    private pendingDisconnects: Map<string, number> = new Map(); // Track pending disconnect timeouts
 
     // Ramp time for smooth transitions (10ms)
     private readonly RAMP_TIME = 0.01;
@@ -78,6 +79,12 @@ class AudioGraphManager {
      * Cleanup and disconnect all audio nodes
      */
     dispose(): void {
+        // Clear all pending disconnect timeouts
+        this.pendingDisconnects.forEach((timeoutId) => {
+            clearTimeout(timeoutId);
+        });
+        this.pendingDisconnects.clear();
+
         this.audioNodes.forEach((nodeInstance) => {
             this.destroyAudioNode(nodeInstance);
         });
@@ -367,6 +374,14 @@ class AudioGraphManager {
             return;
         }
 
+        // Cancel any pending disconnect for this connection
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+        const pendingTimeout = this.pendingDisconnects.get(connectionKey);
+        if (pendingTimeout !== undefined) {
+            clearTimeout(pendingTimeout);
+            this.pendingDisconnects.delete(connectionKey);
+        }
+
         // Check if already connected (Web Audio doesn't track this, so we manage it)
         try {
             // Fade in the connection smoothly
@@ -398,6 +413,8 @@ class AudioGraphManager {
             return;
         }
 
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+
         // Fade out before disconnecting
         if (sourceAudioNode.gainEnvelope) {
             const now = ctx.currentTime;
@@ -407,14 +424,17 @@ class AudioGraphManager {
             );
             sourceAudioNode.gainEnvelope.gain.linearRampToValueAtTime(0, now + this.RAMP_TIME);
 
-            // Disconnect after fade
-            setTimeout(() => {
+            // Disconnect after fade and track the timeout
+            const timeoutId = setTimeout(() => {
                 try {
                     sourceAudioNode.outputNode?.disconnect(targetAudioNode.inputNode!);
                 } catch {
                     // May not be connected
                 }
-            }, this.RAMP_TIME * 1000 + 10);
+                this.pendingDisconnects.delete(connectionKey);
+            }, this.RAMP_TIME * 1000 + 10) as unknown as number;
+
+            this.pendingDisconnects.set(connectionKey, timeoutId);
         } else {
             try {
                 sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);

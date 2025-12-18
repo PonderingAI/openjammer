@@ -177,14 +177,18 @@ export function LooperNode({ node }: LooperNodeProps) {
 
     // Change duration
     const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const newDuration = parseFloat(e.target.value) || 10;
-        setDuration(newDuration);
-        updateNodeData<LooperNodeData>(node.id, { duration: newDuration });
+        const value = parseFloat(e.target.value);
+        // Validate: must be a number and within reasonable range (1-60 seconds)
+        if (isNaN(value)) return;
+        const clampedDuration = Math.max(1, Math.min(60, value));
+
+        setDuration(clampedDuration);
+        updateNodeData<LooperNodeData>(node.id, { duration: clampedDuration });
 
         // Update looper duration
         const looper = getLooper();
         if (looper) {
-            looper.setDuration(newDuration);
+            looper.setDuration(clampedDuration);
         }
     }, [node.id, updateNodeData, getLooper]);
 

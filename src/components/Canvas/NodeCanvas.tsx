@@ -32,6 +32,7 @@ export function NodeCanvas() {
     // Graph store
     const nodes = useGraphStore((s) => s.nodes);
     const connections = useGraphStore((s) => s.connections);
+    const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
     const addNode = useGraphStore((s) => s.addNode);
     const selectedConnectionIds = useGraphStore((s) => s.selectedConnectionIds);
     const selectConnection = useGraphStore((s) => s.selectConnection);
@@ -258,19 +259,14 @@ export function NodeCanvas() {
             }
 
             if (matchesAction(e, 'canvas.multiConnect')) {
-                // Get all selected nodes
-                const selectedIds = useGraphStore.getState().selectedNodeIds;
-                const graphNodes = useGraphStore.getState().nodes;
-                const graphConnections = useGraphStore.getState().connections;
-
-                if (selectedIds.size >= 1) {
+                if (selectedNodeIds.size >= 1) {
                     e.preventDefault();
 
                     // Build array of all empty output ports from all selected nodes
                     const allSources: { nodeId: string; portId: string }[] = [];
 
-                    for (const nodeId of selectedIds) {
-                        const node = graphNodes.get(nodeId);
+                    for (const nodeId of selectedNodeIds) {
+                        const node = nodes.get(nodeId);
                         if (!node) continue;
 
                         // Get all output ports (both audio and technical)
@@ -278,7 +274,7 @@ export function NodeCanvas() {
 
                         // Filter to only empty (unconnected) ports
                         const emptyOutputs = outputPorts.filter(port => {
-                            const hasConnection = Array.from(graphConnections.values()).some(
+                            const hasConnection = Array.from(connections.values()).some(
                                 conn => conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
                             );
                             return !hasConnection;

@@ -55,9 +55,20 @@ export function EffectNode({ node }: EffectNodeProps) {
 
     // Update param value
     const handleParamChange = useCallback((param: string, value: number) => {
-        updateNodeData<EffectNodeData>(node.id, {
-            params: { ...params, [param]: value }
-        });
+        // Validate: must be a number and within configured range
+        if (isNaN(value)) return;
+
+        const config = PARAM_CONFIG[param];
+        if (config) {
+            const clampedValue = Math.max(config.min, Math.min(config.max, value));
+            updateNodeData<EffectNodeData>(node.id, {
+                params: { ...params, [param]: clampedValue }
+            });
+        } else {
+            updateNodeData<EffectNodeData>(node.id, {
+                params: { ...params, [param]: value }
+            });
+        }
     }, [node.id, params, updateNodeData]);
 
     return (

@@ -5,7 +5,7 @@
  * Shows note grid with scientific notation and offset values
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { GraphNode, InstrumentNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
@@ -102,43 +102,57 @@ export function InstrumentNode({
         return () => window.removeEventListener('mouseup', handleMouseUp);
     }, [dragStartPos]);
 
-    // Get persisted input ports
-    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
-    const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
+    // Get persisted input ports - memoized to avoid recalculating
+    const persistedInputPorts = useMemo(
+        () => node.ports.filter(p => p.direction === 'input' && p.type === 'technical'),
+        [node.ports]
+    );
 
-    // Count connected ports
-    const connectedCount = persistedInputPorts.filter(p =>
-        Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
-    ).length;
+    const outputPort = useMemo(
+        () => node.ports.find(p => p.direction === 'output' && p.type === 'audio'),
+        [node.ports]
+    );
 
-    // Calculate visible port count:
-    // - Always show at least 1 port
-    // - Show all connected ports + 1 empty one (if room)
-    // - When hovering with connections, show enough for all incoming
-    const baseVisible = Math.max(1, connectedCount + 1);
-    const hoverVisible = isHoveredWithConnections ? connectedCount + incomingConnectionCount : 0;
-    const visiblePortCount = Math.min(MAX_INPUT_PORTS, Math.max(baseVisible, hoverVisible));
+    // Count connected ports - memoized since connections map can be large
+    const connectedCount = useMemo(
+        () => persistedInputPorts.filter(p =>
+            Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
+        ).length,
+        [persistedInputPorts, connections, node.id]
+    );
 
-    // Generate visible ports array (mix of persisted + ghost ports)
-    const visibleInputPorts = [];
-    for (let i = 0; i < visiblePortCount; i++) {
-        if (i < persistedInputPorts.length) {
-            // Use existing persisted port
-            visibleInputPorts.push({
-                ...persistedInputPorts[i],
-                isGhost: false
-            });
-        } else {
-            // Create a ghost port (temporary, not yet persisted)
-            visibleInputPorts.push({
-                id: `ghost-input-${i}`,
-                name: `In ${i + 1}`,
-                type: 'technical' as const,
-                direction: 'input' as const,
-                isGhost: true
-            });
+    // Calculate visible port count - memoized to avoid recalculation
+    const visibleInputPorts = useMemo(() => {
+        // Calculate visible port count:
+        // - Always show at least 1 port
+        // - Show all connected ports + 1 empty one (if room)
+        // - When hovering with connections, show enough for all incoming
+        const baseVisible = Math.max(1, connectedCount + 1);
+        const hoverVisible = isHoveredWithConnections ? connectedCount + incomingConnectionCount : 0;
+        const visiblePortCount = Math.min(MAX_INPUT_PORTS, Math.max(baseVisible, hoverVisible));
+
+        // Generate visible ports array (mix of persisted + ghost ports)
+        const ports = [];
+        for (let i = 0; i < visiblePortCount; i++) {
+            if (i < persistedInputPorts.length) {
+                // Use existing persisted port
+                ports.push({
+                    ...persistedInputPorts[i],
+                    isGhost: false
+                });
+            } else {
+                // Create a ghost port (temporary, not yet persisted)
+                ports.push({
+                    id: `ghost-input-${i}`,
+                    name: `In ${i + 1}`,
+                    type: 'technical' as const,
+                    direction: 'input' as const,
+                    isGhost: true
+                });
+            }
         }
-    }
+        return ports;
+    }, [persistedInputPorts, connectedCount, isHoveredWithConnections, incomingConnectionCount]);
 
     // Get display name
     const displayName = INSTRUMENT_LABELS[node.type] || nodeDefinitions[node.type]?.name || 'Instrument';
@@ -297,12 +311,18 @@ export function InstrumentNode({
                                             <input
                                                 type="number"
                                                 step="0.5"
+                                                min="-24"
+                                                max="24"
                                                 className="offset-input"
                                                 value={data.offsets?.[port.id] ?? 0}
                                                 onChange={(e) => {
+                                                    const value = parseFloat(e.target.value);
+                                                    // Validate: must be a number and within reasonable range
+                                                    if (isNaN(value)) return;
+                                                    const clampedValue = Math.max(-24, Math.min(24, value));
                                                     const newOffsets = {
                                                         ...(data.offsets || {}),
-                                                        [port.id]: parseFloat(e.target.value) || 0
+                                                        [port.id]: clampedValue
                                                     };
                                                     updateNodeData(node.id, { offsets: newOffsets });
                                                 }}

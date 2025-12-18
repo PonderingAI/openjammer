@@ -224,7 +224,18 @@ export class Looper {
         if (!this.isRecording) return;
 
         this.isRecording = false;
-        this.mediaRecorder?.stop();
+
+        // Safely stop MediaRecorder - state could change between check and stop
+        if (this.mediaRecorder) {
+            try {
+                // Only stop if in recording or paused state
+                if (this.mediaRecorder.state === 'recording' || this.mediaRecorder.state === 'paused') {
+                    this.mediaRecorder.stop();
+                }
+            } catch (err) {
+                console.debug('MediaRecorder.stop() failed:', err);
+            }
+        }
     }
 
     /**

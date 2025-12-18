@@ -37,6 +37,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
     const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
     const selectNode = useGraphStore((s) => s.selectNode);
     const updateNodePosition = useGraphStore((s) => s.updateNodePosition);
+    const updateNodePorts = useGraphStore((s) => s.updateNodePorts);
+    const nodes = useGraphStore((s) => s.nodes);
     const connections = useGraphStore((s) => s.connections);
     const addConnection = useGraphStore((s) => s.addConnection);
 
@@ -116,13 +118,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
     const handlePortClick = useCallback((portId: string, e: React.MouseEvent) => {
         e.stopPropagation();
 
-        // Read current connecting state directly from store to avoid stale closure
-        const currentIsConnecting = useCanvasStore.getState().isConnecting;
-        const currentConnectingFrom = useCanvasStore.getState().connectingFrom;
-
-        if (currentIsConnecting && currentConnectingFrom) {
-            const sources = Array.isArray(currentConnectingFrom) ? currentConnectingFrom : [currentConnectingFrom];
-            const updateNodePorts = useGraphStore.getState().updateNodePorts;
+        if (isConnecting && connectingFrom) {
+            const sources = Array.isArray(connectingFrom) ? connectingFrom : [connectingFrom];
             const isInstrument = ['piano', 'cello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
 
             // Check if clicking on a ghost port (not yet persisted)
@@ -159,7 +156,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             }
 
             // Get target port (now that ghost ports are persisted if needed)
-            const updatedNode = useGraphStore.getState().nodes.get(node.id) || node;
+            const updatedNode = nodes.get(node.id) || node;
             const targetPort = isGhostPort
                 ? updatedNode.ports.find(p => p.id === actualFirstPortId)
                 : updatedNode.ports.find(p => p.id === portId);
@@ -195,7 +192,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             }
 
             // Get final updated node and inputs after all port additions
-            const finalNode = useGraphStore.getState().nodes.get(node.id) || updatedNode;
+            const finalNode = nodes.get(node.id) || updatedNode;
             const finalInputs = finalNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
 
             sources.forEach((source, index) => {
@@ -221,7 +218,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         } else {
             startConnecting(node.id, portId);
         }
-    }, [node, addConnection, startConnecting, stopConnecting]);
+    }, [node, addConnection, startConnecting, stopConnecting, isConnecting, connectingFrom, updateNodePorts, nodes]);
 
     // Common props for schematic nodes
     const schematicProps = {
