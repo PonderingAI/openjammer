@@ -1,10 +1,27 @@
 /**
  * DropdownMenu - Photoshop-style dropdown menus for toolbar
+ *
+ * @security XSS Considerations:
+ * - The `label` prop on MenuItem is rendered directly as text content
+ * - The `label` prop on DropdownMenuProps is used for aria-label and button text
+ * - The `shortcut` prop is rendered directly as text content
+ *
+ * If labels or shortcuts are sourced from user input or external APIs,
+ * they MUST be sanitized before being passed to this component.
+ * Currently, all labels are hardcoded in the codebase and are safe.
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import './DropdownMenu.css';
 
+/**
+ * Menu item configuration
+ * @property id - Unique identifier for the menu item
+ * @property label - Display text (must be sanitized if from external source)
+ * @property shortcut - Optional keyboard shortcut display (must be sanitized if from external source)
+ * @property onClick - Callback when item is selected
+ * @property disabled - Whether the item is disabled
+ */
 export interface MenuItem {
     id: string;
     label: string;
@@ -39,9 +56,13 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
     // Get only actionable items (not separators) for keyboard navigation
     const actionableItems = items.filter((item): item is MenuItem => !isSeparator(item));
 
-    const close = useCallback(() => {
+    const close = useCallback((restoreFocus = false) => {
         setIsOpen(false);
         setFocusedIndex(-1);
+        if (restoreFocus) {
+            // Restore focus to trigger button when closing via Escape or Enter/Space
+            triggerRef.current?.focus();
+        }
     }, []);
 
     const open = useCallback(() => {
@@ -88,8 +109,7 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
             switch (e.key) {
                 case 'Escape':
                     e.preventDefault();
-                    close();
-                    triggerRef.current?.focus();
+                    close(true); // Restore focus to trigger
                     break;
 
                 case 'ArrowDown':
@@ -115,13 +135,13 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
                         const item = actionableItems[focusedIndex];
                         if (!item.disabled) {
                             item.onClick();
-                            close();
+                            close(true); // Restore focus after action
                         }
                     }
                     break;
 
                 case 'Tab':
-                    close();
+                    close(false); // Don't restore focus, allow natural tab flow
                     break;
             }
         }

@@ -261,3 +261,47 @@
     background: var(--accent-secondary);
     border-color: var(--accent-secondary);
 }
+
+/* Error State */
+.keybindings-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xl);
+    text-align: center;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--accent-danger);
+}
+
+.keybindings-error h4 {
+    margin: 0 0 var(--space-sm) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    color: var(--accent-danger);
+}
+
+.keybindings-error p {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    max-width: 300px;
+}
+
+.keybindings-error button {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: white;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.keybindings-error button:hover {
+    background: var(--accent-secondary);
+}

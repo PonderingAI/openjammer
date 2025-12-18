@@ -10,6 +10,7 @@ import {
     type KeyCombo,
     type KeybindingAction,
 } from '../../store/keybindingsStore';
+import { KeybindingsErrorBoundary } from './KeybindingsErrorBoundary';
 import './KeybindingsPanel.css';
 
 interface EditingState {
@@ -24,7 +25,15 @@ interface ConflictState {
 }
 
 export function KeybindingsPanel() {
-    const { getBinding, setBinding, resetBinding, resetAllBindings, customBindings, getConflictingActions, clearConflictingBindings } = useKeybindingsStore();
+    // Use individual selectors to prevent unnecessary re-renders
+    const getBinding = useKeybindingsStore((s) => s.getBinding);
+    const setBinding = useKeybindingsStore((s) => s.setBinding);
+    const resetBinding = useKeybindingsStore((s) => s.resetBinding);
+    const resetAllBindings = useKeybindingsStore((s) => s.resetAllBindings);
+    const customBindings = useKeybindingsStore((s) => s.customBindings);
+    const getConflictingActions = useKeybindingsStore((s) => s.getConflictingActions);
+    const clearConflictingBindings = useKeybindingsStore((s) => s.clearConflictingBindings);
+
     const [editing, setEditing] = useState<EditingState | null>(null);
     const [conflict, setConflict] = useState<ConflictState | null>(null);
 
@@ -230,5 +239,18 @@ export function KeybindingsPanel() {
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * KeybindingsPanel wrapped with error boundary for safe rendering.
+ * Use this version when rendering in production to catch any errors
+ * during keybinding capture.
+ */
+export function KeybindingsPanelSafe() {
+    return (
+        <KeybindingsErrorBoundary>
+            <KeybindingsPanel />
+        </KeybindingsErrorBoundary>
     );
 }

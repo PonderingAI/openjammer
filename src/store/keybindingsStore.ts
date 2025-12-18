@@ -217,11 +217,16 @@ const validatedStorage = {
                     parsed.state.customBindings = {};
                 } else {
                     // Validate each binding has required 'key' property
+                    // Collect invalid keys first, then delete in separate pass to avoid mutation during iteration
+                    const invalidKeys: string[] = [];
                     for (const [actionId, combo] of Object.entries(bindings)) {
                         if (!combo || typeof combo !== 'object' || typeof (combo as KeyCombo).key !== 'string') {
-                            delete bindings[actionId];
+                            invalidKeys.push(actionId);
                         }
                         // Note: UNBOUND_KEY sentinel is valid and passes validation
+                    }
+                    for (const key of invalidKeys) {
+                        delete bindings[key];
                     }
                 }
             }
@@ -258,11 +263,20 @@ export const useKeybindingsStore = create<KeybindingsStore>()(
 
                 // Check for custom binding first
                 if (customBindings[actionId]) {
+                    const binding = customBindings[actionId];
+
                     // Return undefined for explicitly unbound keys
-                    if (customBindings[actionId].key === UNBOUND_KEY) {
+                    if (binding.key === UNBOUND_KEY) {
                         return undefined;
                     }
-                    return customBindings[actionId];
+
+                    // Runtime validation: ensure binding has valid key
+                    if (typeof binding.key !== 'string' || binding.key === '') {
+                        console.error(`Invalid keybinding for action "${actionId}": missing or empty key`);
+                        return undefined;
+                    }
+
+                    return binding;
                 }
 
                 // Fall back to default
