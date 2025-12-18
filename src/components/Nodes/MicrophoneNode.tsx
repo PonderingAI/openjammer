@@ -52,7 +52,7 @@ export function MicrophoneNode({
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
     const [stream, setStream] = useState<MediaStream | null>(null);
-    const [sourceNode, setSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
+    const [, setSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
     const [gainNode, setGainNode] = useState<GainNode | null>(null);
     const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
     const [waveformBars, setWaveformBars] = useState<number[]>(Array(NUM_WAVEFORM_BARS).fill(0));
@@ -61,6 +61,12 @@ export function MicrophoneNode({
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>(data.deviceId || 'default');
 
     const animationRef = useRef<number | null>(null);
+
+    // Use refs for cleanup to avoid stale closures
+    const streamRef = useRef<MediaStream | null>(null);
+    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const gainNodeRef = useRef<GainNode | null>(null);
+    const analyserNodeRef = useRef<AnalyserNode | null>(null);
 
     // Get output port
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
@@ -105,18 +111,18 @@ export function MicrophoneNode({
     const initMicrophone = useCallback(async (deviceId?: string) => {
         if (!isAudioContextReady) return;
 
-        // Clean up existing stream
-        if (stream) {
-            stream.getTracks().forEach(track => track.stop());
+        // Clean up existing resources using refs (avoids stale closures)
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
         }
-        if (sourceNode) {
-            sourceNode.disconnect();
+        if (sourceNodeRef.current) {
+            sourceNodeRef.current.disconnect();
         }
-        if (gainNode) {
-            gainNode.disconnect();
+        if (gainNodeRef.current) {
+            gainNodeRef.current.disconnect();
         }
-        if (analyserNode) {
-            analyserNode.disconnect();
+        if (analyserNodeRef.current) {
+            analyserNodeRef.current.disconnect();
         }
 
         try {
@@ -149,6 +155,13 @@ export function MicrophoneNode({
             // This way the waveform reflects what's actually being sent out
             audioGraphManager.setMicrophoneOutput(node.id, analyser as unknown as GainNode);
 
+            // Update refs for cleanup
+            streamRef.current = mediaStream;
+            sourceNodeRef.current = source;
+            gainNodeRef.current = gain;
+            analyserNodeRef.current = analyser;
+
+            // Update state for rendering
             setStream(mediaStream);
             setSourceNode(source);
             setGainNode(gain);
@@ -156,21 +169,35 @@ export function MicrophoneNode({
         } catch (err) {
             console.error('Failed to access microphone:', err);
         }
-    }, [isAudioContextReady, stream, sourceNode, gainNode, analyserNode, data.isMuted]);
+    }, [isAudioContextReady, node.id, data.isMuted]);
 
     // Initialize on mount
     useEffect(() => {
-        if (isAudioContextReady && !stream) {
+        if (isAudioContextReady && !streamRef.current) {
             initMicrophone(selectedDeviceId);
         }
+    }, [isAudioContextReady, initMicrophone, selectedDeviceId]);
 
+    // Cleanup on unmount (separate effect with refs to avoid stale closures)
+    useEffect(() => {
         return () => {
             if (animationRef.current) {
                 cancelAnimationFrame(animationRef.current);
             }
-            stream?.getTracks().forEach(track => track.stop());
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+            }
+            if (sourceNodeRef.current) {
+                sourceNodeRef.current.disconnect();
+            }
+            if (gainNodeRef.current) {
+                gainNodeRef.current.disconnect();
+            }
+            if (analyserNodeRef.current) {
+                analyserNodeRef.current.disconnect();
+            }
         };
-    }, [isAudioContextReady]);
+    }, []);
 
     // Update waveform
     useEffect(() => {
@@ -179,16 +206,19 @@ export function MicrophoneNode({
         const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
 
         const updateWaveform = () => {
-            analyserNode.getByteFrequencyData(dataArray);
+            // Skip updates when document is hidden (performance optimization)
+            if (!document.hidden) {
+                analyserNode.getByteFrequencyData(dataArray);
 
-            // Sample bars from frequency data
-            const bars: number[] = [];
-            const step = Math.floor(dataArray.length / NUM_WAVEFORM_BARS);
-            for (let i = 0; i < NUM_WAVEFORM_BARS; i++) {
-                const value = dataArray[i * step] / 255;
-                bars.push(value);
+                // Sample bars from frequency data
+                const bars: number[] = [];
+                const step = Math.floor(dataArray.length / NUM_WAVEFORM_BARS);
+                for (let i = 0; i < NUM_WAVEFORM_BARS; i++) {
+                    const value = dataArray[i * step] / 255;
+                    bars.push(value);
+                }
+                setWaveformBars(bars);
             }
-            setWaveformBars(bars);
 
             animationRef.current = requestAnimationFrame(updateWaveform);
         };

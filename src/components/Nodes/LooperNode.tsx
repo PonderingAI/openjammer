@@ -10,7 +10,7 @@ import type { GraphNode, LooperNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
-import type { Loop } from '../../audio/Looper';
+import { INFINITE_DURATION, type Loop } from '../../audio/Looper';
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -127,22 +127,25 @@ export function LooperNode({
         if (looper) {
             setupCallbacks(looper);
         } else {
-            // Poll for looper availability (created by AudioGraphManager)
-            pollIntervalId = window.setInterval(() => {
+            // Poll for looper availability with exponential backoff
+            let delay = 50;
+            const maxDelay = 1000;
+
+            const poll = () => {
                 looper = getLooper();
                 if (looper) {
                     setupCallbacks(looper);
-                    if (pollIntervalId !== null) {
-                        clearInterval(pollIntervalId);
-                        pollIntervalId = null;
-                    }
+                } else if (delay < maxDelay) {
+                    delay = Math.min(delay * 2, maxDelay);
+                    pollIntervalId = window.setTimeout(poll, delay);
                 }
-            }, 100);
+            };
+            pollIntervalId = window.setTimeout(poll, delay);
         }
 
         return () => {
             if (pollIntervalId !== null) {
-                clearInterval(pollIntervalId);
+                clearTimeout(pollIntervalId);
             }
             const l = getLooper();
             if (l) {
@@ -197,8 +200,6 @@ export function LooperNode({
         setLoops(prev => prev.filter(loop => loop.id !== loopId));
     }, [getLooper]);
 
-    // Use Infinity (stored as 9999) for unlimited duration
-    const INFINITE_DURATION = 9999;
     const isInfinite = duration >= INFINITE_DURATION;
 
     const handleDurationChange = useCallback((newDuration: number) => {

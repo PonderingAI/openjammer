@@ -4,6 +4,12 @@
 
 import { getAudioContext, getMasterGain } from './AudioEngine';
 
+/**
+ * Sentinel value for infinite duration (9999 used for JSON serialization compatibility,
+ * as Number.POSITIVE_INFINITY serializes to null)
+ */
+export const INFINITE_DURATION = 9999;
+
 export interface Loop {
     id: string;
     buffer: AudioBuffer;
@@ -47,6 +53,7 @@ export class Looper {
     private waveformHistory: number[] = [];
     private lastWaveformSampleTime: number = 0;
     private readonly WAVEFORM_SAMPLE_INTERVAL = 50; // ms between samples
+    private readonly MAX_WAVEFORM_SAMPLES = 2000; // Cap waveform data to prevent memory issues
 
     // Callbacks
     private onLoopAdded: ((loop: Loop) => void) | null = null;
@@ -224,7 +231,6 @@ export class Looper {
         this.mediaRecorder.start();
 
         // Schedule end of cycle (for non-infinite duration)
-        const INFINITE_DURATION = 9999;
         if (this.duration < INFINITE_DURATION) {
             this.cycleTimerId = window.setTimeout(() => {
                 this.endRecordingCycle();
@@ -239,8 +245,13 @@ export class Looper {
         if (!this.isRecording) return;
 
         // Stop current MediaRecorder (triggers onstop -> processRecordingCycle)
+        // Wrap in try-catch: state could change between check and stop (race condition)
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-            this.mediaRecorder.stop();
+            try {
+                this.mediaRecorder.stop();
+            } catch {
+                // MediaRecorder may have already stopped
+            }
         }
     }
 
@@ -301,7 +312,6 @@ export class Looper {
         const ctx = getAudioContext();
         if (!ctx) return;
 
-        const INFINITE_DURATION = 9999;
         const now = performance.now();
 
         if (this.duration < INFINITE_DURATION) {
@@ -324,21 +334,29 @@ export class Looper {
                     const amplitude = Math.abs(dataArray[i] - 128) / 128;
                     if (amplitude > peak) peak = amplitude;
                 }
+                // Use circular buffer to prevent unbounded memory growth
+                if (this.waveformHistory.length >= this.MAX_WAVEFORM_SAMPLES) {
+                    this.waveformHistory.shift();
+                }
                 this.waveformHistory.push(peak);
                 this.lastWaveformSampleTime = now;
             }
 
-            // Calculate playhead position (0-100)
-            const playheadPosition = this.duration < INFINITE_DURATION
-                ? (this.currentTime / this.duration) * 100
-                : 0;
+            // Skip UI updates when document is hidden (performance optimization)
+            if (!document.hidden) {
+                // Calculate playhead position (0-100)
+                const playheadPosition = this.duration < INFINITE_DURATION
+                    ? (this.currentTime / this.duration) * 100
+                    : 0;
 
-            // Send waveform history update
-            this.onWaveformHistoryUpdate?.(this.waveformHistory, playheadPosition);
+                // Send waveform history update
+                this.onWaveformHistoryUpdate?.(this.waveformHistory, playheadPosition);
+            }
         }
 
         // Extract real-time waveform data from analyser (for live display)
-        if (this.analyser && this.onWaveformUpdate) {
+        // Skip when document is hidden (performance optimization)
+        if (this.analyser && this.onWaveformUpdate && !document.hidden) {
             const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
             this.analyser.getByteFrequencyData(dataArray);
 
@@ -375,8 +393,13 @@ export class Looper {
         }
 
         // Stop current MediaRecorder
+        // Wrap in try-catch: state could change between check and stop (race condition)
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-            this.mediaRecorder.stop();
+            try {
+                this.mediaRecorder.stop();
+            } catch {
+                // MediaRecorder may have already stopped
+            }
         }
     }
 

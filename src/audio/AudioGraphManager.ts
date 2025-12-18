@@ -37,6 +37,7 @@ type NodeChangeCallback = (nodes: Map<string, GraphNode>) => void;
 class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
     private activeAudioConnections: Set<string> = new Set(); // Track "sourceId->targetId" pairs
+    private pendingDisconnects: Map<string, number> = new Map(); // Track pending disconnect timeouts
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
@@ -384,6 +385,15 @@ class AudioGraphManager {
         const ctx = getAudioContext();
         if (!ctx) return;
 
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+
+        // Cancel any pending disconnect for this connection (race condition fix)
+        const pendingTimeout = this.pendingDisconnects.get(connectionKey);
+        if (pendingTimeout !== undefined) {
+            clearTimeout(pendingTimeout);
+            this.pendingDisconnects.delete(connectionKey);
+        }
+
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
@@ -415,6 +425,7 @@ class AudioGraphManager {
         const ctx = getAudioContext();
         if (!ctx) return;
 
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
@@ -431,14 +442,17 @@ class AudioGraphManager {
             );
             sourceAudioNode.gainEnvelope.gain.linearRampToValueAtTime(0, now + this.RAMP_TIME);
 
-            // Disconnect after fade
-            setTimeout(() => {
+            // Track and disconnect after fade (can be canceled if reconnected)
+            const timeoutId = window.setTimeout(() => {
+                this.pendingDisconnects.delete(connectionKey);
                 try {
                     sourceAudioNode.outputNode?.disconnect(targetAudioNode.inputNode!);
                 } catch {
                     // May not be connected
                 }
             }, this.RAMP_TIME * 1000 + 10);
+
+            this.pendingDisconnects.set(connectionKey, timeoutId);
         } else {
             try {
                 sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
