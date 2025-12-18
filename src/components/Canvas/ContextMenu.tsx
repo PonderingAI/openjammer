@@ -59,32 +59,49 @@ export function ContextMenu({ position, onClose, onAddNode }: ContextMenuProps) 
         onClose();
     };
 
+    const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            action();
+        }
+    };
+
     return (
         <div
             ref={menuRef}
             className="context-menu"
             style={{ left: position.x, top: position.y }}
+            role="menu"
+            aria-label="Add node menu"
         >
-            <div className="context-menu-header">Add Node</div>
+            <div className="context-menu-header" id="context-menu-title">Add Node</div>
 
             {menuCategories.map((category) => (
-                <div key={category.name} className="context-menu-category">
+                <div
+                    key={category.name}
+                    className="context-menu-category"
+                    role="group"
+                    aria-label={category.name}
+                >
                     <div className="context-menu-category-header">
                         <span>
-                            <span className="context-menu-category-icon">{category.icon}</span>
+                            <span className="context-menu-category-icon" aria-hidden="true">{category.icon}</span>
                             {category.name}
                         </span>
-                        <span className="context-menu-category-arrow">▶</span>
+                        <span className="context-menu-category-arrow" aria-hidden="true">▶</span>
                     </div>
 
-                    <div className="context-menu-submenu">
+                    <div className="context-menu-submenu" role="group">
                         {category.items.map((nodeType) => {
                             const definition = nodeDefinitions[nodeType];
                             return (
                                 <div
                                     key={nodeType}
                                     className="context-menu-item"
+                                    role="menuitem"
+                                    tabIndex={0}
                                     onClick={() => handleAddNode(nodeType)}
+                                    onKeyDown={(e) => handleKeyDown(e, () => handleAddNode(nodeType))}
                                 >
                                     {definition.name}
                                 </div>
@@ -94,11 +111,14 @@ export function ContextMenu({ position, onClose, onAddNode }: ContextMenuProps) 
                 </div>
             ))}
 
-            <div className="context-menu-separator" />
+            <div className="context-menu-separator" role="separator" />
 
             <div
                 className="context-menu-item"
+                role="menuitem"
+                tabIndex={0}
                 onClick={onClose}
+                onKeyDown={(e) => handleKeyDown(e, onClose)}
             >
                 Cancel
             </div>

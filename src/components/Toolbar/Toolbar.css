@@ -1,43 +1,65 @@
+/**
+ * Toolbar.css - Compact Photoshop-style toolbar with sketch theme
+ */
+
 .toolbar {
     position: fixed;
     top: var(--space-md);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: var(--space-sm);
-    padding: var(--space-sm);
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     background: var(--bg-node);
-    border: 1px solid var(--border-subtle);
+    border: none;
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-menu);
     z-index: 100;
 }
 
+/* Menu Bar Section */
+.toolbar-menus {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+/* Icon-only buttons (Undo, Redo, Play, Settings) */
 .toolbar-btn {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: var(--space-xs);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
     font-weight: 500;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     background: transparent;
+    cursor: pointer;
     transition: all var(--transition-fast);
 }
 
 .toolbar-btn:hover {
     background: var(--bg-tertiary);
-    color: var(--text-primary);
 }
 
 .toolbar-btn:active {
-    transform: scale(0.98);
+    background: var(--bg-tertiary);
 }
 
 .toolbar-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.toolbar-btn-icon {
+    min-width: 32px;
+    padding: var(--space-xs);
+    font-size: var(--text-lg);
 }
 
 .toolbar-btn-active {
@@ -47,94 +69,53 @@
 
 .toolbar-btn-active:hover {
     background: var(--accent-secondary);
-    color: white;
 }
 
+/* Separator */
 .toolbar-separator {
     width: 1px;
-    background: var(--border-subtle);
+    height: 24px;
+    background: var(--sketch-light);
     margin: 0 var(--space-xs);
 }
 
-.toolbar-zoom {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    padding: 0 var(--space-sm);
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    font-family: var(--font-mono);
+/* File Input Hidden */
+.file-input-hidden {
+    display: none;
 }
 
-/* BPM Controls */
-.toolbar-bpm {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-}
+/* ============================================
+ * Mode Focus Styles
+ * ============================================ */
 
-.toolbar-bpm-input {
-    width: 50px;
-    padding: 4px 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    text-align: center;
-}
-
-.toolbar-bpm-input:focus {
-    outline: none;
+.toolbar.toolbar-focused {
+    border-width: 3px;
     border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px rgba(91, 127, 214, 0.4), var(--shadow-menu);
 }
 
-.toolbar-bpm-input::-webkit-inner-spin-button,
-.toolbar-bpm-input::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
+/* ============================================
+ * Help Panel (moved from original toolbar)
+ * ============================================ */
 
-.toolbar-bpm-label {
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    font-weight: 500;
-}
-
-.toolbar-beat-indicator {
-    padding: 4px 8px;
-    background: var(--accent-primary);
-    color: white;
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    animation: beat-pulse 0.5s ease-in-out infinite;
-}
-
-@keyframes beat-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-}
-
-/* Help Panel */
 .help-panel {
     position: fixed;
     bottom: var(--space-md);
     left: var(--space-md);
     padding: var(--space-md);
     background: var(--bg-node);
-    border: 1px solid var(--border-subtle);
+    border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-menu);
     max-width: 300px;
+    font-family: var(--font-sketch);
     font-size: var(--text-sm);
     z-index: 100;
 }
 
 .help-panel h3 {
     margin-bottom: var(--space-sm);
-    font-size: var(--text-md);
+    font-size: var(--text-lg);
     color: var(--text-primary);
 }
 
@@ -149,36 +130,80 @@
 
 .help-panel kbd {
     display: inline-block;
-    padding: 2px 6px;
+    padding: 2px var(--space-sm);
     background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--sketch-light);
     border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
 }
 
-/* Logo */
-.logo {
-    position: fixed;
-    bottom: var(--space-md);
-    right: var(--space-md);
+
+/* ============================================
+ * Help Panel Mode Indicator
+ * ============================================ */
+
+.help-mode-indicator {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    background: var(--bg-node);
+    padding: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
+}
+
+.help-mode-label {
     font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.help-mode-value {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.help-mode-value kbd {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+.help-mode-value.mode-config kbd {
+    background: var(--accent-primary);
+}
+
+.help-mode-value.mode-keyboard kbd {
+    background: var(--accent-success);
+    border-color: var(--accent-success);
+}
+
+/* Warning state when no keyboard assigned */
+.help-panel.help-panel-warning {
+    border-color: var(--accent-warning);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 8px rgba(212, 160, 80, 0.3), var(--shadow-menu);
+}
+
+.help-mode-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    background: rgba(212, 160, 80, 0.15);
+    border: 1px solid var(--accent-warning);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
     color: var(--text-primary);
-    z-index: 100;
 }
 
-.logo-icon {
-    font-size: 20px;
+.help-mode-warning .warning-icon {
+    flex-shrink: 0;
 }
 
-/* File Input Hidden */
-.file-input-hidden {
-    display: none;
+.help-btn-minimized.warning {
+    border-color: var(--accent-warning);
+    background: rgba(212, 160, 80, 0.15);
 }

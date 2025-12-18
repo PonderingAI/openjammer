@@ -1,65 +1,104 @@
 :root {
-  /* Connection Colors */
-  --audio-input: #87CEEB;
-  --audio-output: #1E3A5F;
-  --technical: #808080;
-  
-  /* UI Colors - Dark Theme */
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a25;
-  --bg-node: #1e1e2a;
-  --bg-node-header: #252535;
-  
-  --text-primary: #f0f0f5;
-  --text-secondary: #a0a0b0;
-  --text-muted: #606070;
-  
-  --accent-primary: #6366f1;
-  --accent-secondary: #8b5cf6;
-  --accent-success: #22c55e;
-  --accent-warning: #f59e0b;
-  --accent-danger: #ef4444;
-  
-  --border-subtle: #2a2a3a;
-  --border-active: #4a4a6a;
-  
-  /* Shadows */
-  --shadow-node: 0 4px 20px rgba(0, 0, 0, 0.4);
-  --shadow-menu: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.3);
-  
-  /* Spacing */
+  /* ============================================
+   * Hand-Drawn / Sketch Theme
+   * ============================================ */
+
+  /* Primary Colors - Warm Paper Aesthetic */
+  --bg-canvas: #F5F0E8;           /* Cream/beige paper */
+  --bg-canvas-alt: #EDE8E0;       /* Slightly darker cream */
+  --bg-node: #F5F0E8;             /* Node background - same as canvas */
+  --bg-node-header: #EDE8E0;      /* Subtle header distinction */
+  --bg-tertiary: #E5E0D8;         /* Input fields, controls */
+
+  /* Text Colors */
+  --text-primary: #1a1a1a;        /* Near black */
+  --text-secondary: #4a4a4a;      /* Dark gray */
+  --text-muted: #7a7a7a;          /* Medium gray */
+
+  /* Sketch Colors */
+  --sketch-black: #1a1a1a;        /* Primary sketch color */
+  --sketch-gray: #4a4a4a;         /* Secondary lines */
+  --sketch-light: #8a8a8a;        /* Subtle lines */
+
+  /* Connection Colors - Audio (Blue, Directional) */
+  --audio-input: #7EB3D8;         /* Light blue - audio input ports */
+  --audio-output: #2C5F88;        /* Dark blue - audio output ports */
+  --audio-connection: #4A90C2;    /* Medium blue - audio connection lines */
+  --audio-connected: #5B9FD4;     /* Bright blue - connected audio ports */
+
+  /* Connection Colors - Technical (Grey, Bidirectional) */
+  --technical-input: #606060;     /* Dark grey - technical input ports */
+  --technical-output: #A0A0A0;    /* Light grey - technical output ports */
+  --technical-connection: #808080; /* Medium grey - technical connection lines */
+  --technical-connected: #909090; /* Grey - connected technical ports */
+
+  /* Accent Colors - Warmer tones */
+  --accent-primary: #5B7FD6;      /* Soft indigo */
+  --accent-secondary: #7B6BC6;    /* Soft purple */
+  --accent-success: #5FAD65;      /* Soft green */
+  --accent-warning: #D4A050;      /* Warm amber */
+  --accent-danger: #D65B5B;       /* Soft red */
+
+  /* Border Colors */
+  --border-sketch: #1a1a1a;       /* Main sketch border */
+  --border-subtle: #c0b8a8;       /* Subtle dividers */
+  --border-active: #5B7FD6;       /* Active/focused state */
+
+  /* Shadows - Softer, more natural */
+  --shadow-node: 2px 3px 0 rgba(0, 0, 0, 0.1);
+  --shadow-menu: 3px 4px 0 rgba(0, 0, 0, 0.15);
+  --shadow-sketch: 2px 2px 0 #1a1a1a;   /* Hard sketch shadow */
+
+  /* ============================================
+   * Spacing
+   * ============================================ */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
   --space-xl: 32px;
-  
-  /* Border Radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ============================================
+   * Border Radius - More rounded for hand-drawn feel
+   * ============================================ */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 50px;            /* Pill-shaped buttons */
+
+  /* ============================================
+   * Typography
+   * ============================================ */
+  --font-sketch: 'Caveat', 'Comic Sans MS', cursive;               /* Hand-drawn font */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-  
-  --text-xs: 11px;
-  --text-sm: 13px;
-  --text-md: 15px;
-  --text-lg: 18px;
-  --text-xl: 24px;
-  
-  /* Node Dimensions */
-  --node-min-width: 200px;
-  --node-header-height: 36px;
-  --port-size: 14px;
-  --port-spacing: 24px;
-  
-  /* Animation */
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.2s ease;
-  --transition-slow: 0.3s ease;
+
+  /* Font Sizes - Slightly larger for Caveat readability */
+  --text-xs: 14px;      /* Was 11px - Caveat needs larger */
+  --text-sm: 16px;      /* Was 13px */
+  --text-md: 18px;      /* Was 15px */
+  --text-lg: 22px;      /* Was 18px */
+  --text-xl: 28px;      /* Was 24px */
+  --text-2xl: 36px;
+
+  /* ============================================
+   * Node Dimensions
+   * ============================================ */
+  --node-min-width: 180px;
+  --node-header-height: 40px;
+  --port-size: 16px;              /* Slightly larger ports */
+  --port-spacing: 28px;
+
+  /* ============================================
+   * Animation - Slightly slower for organic feel
+   * ============================================ */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+  --transition-slow: 0.4s ease;
+
+  /* ============================================
+   * Sketch Border Width
+   * ============================================ */
+  --border-sketch-width: 2px;
 }

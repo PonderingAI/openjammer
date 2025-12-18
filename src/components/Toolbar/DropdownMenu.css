@@ -1,0 +1,133 @@
+/**
+ * DropdownMenu.css - Photoshop-style dropdown menus with sketch theme
+ */
+
+.dropdown-menu {
+    position: relative;
+    display: inline-flex;
+}
+
+.dropdown-trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    font-weight: 500;
+    color: var(--text-primary);
+    background: transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.dropdown-trigger:hover {
+    background: var(--bg-tertiary);
+}
+
+.dropdown-trigger:active {
+    background: var(--bg-tertiary);
+}
+
+.dropdown-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.dropdown-trigger-open {
+    background: var(--bg-tertiary);
+}
+
+.dropdown-chevron {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
+}
+
+.dropdown-trigger-open .dropdown-chevron {
+    transform: rotate(180deg);
+}
+
+/* Dropdown Content */
+.dropdown-content {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: var(--space-xs);
+    min-width: 180px;
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-menu);
+    z-index: 1000;
+    animation: dropdownFadeIn 0.1s ease;
+    overflow: hidden;
+    will-change: opacity, transform;
+}
+
+@keyframes dropdownFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Menu Items */
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    outline: none;
+}
+
+.dropdown-item:hover,
+.dropdown-item-focused {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.dropdown-item:hover .dropdown-item-shortcut,
+.dropdown-item-focused .dropdown-item-shortcut {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.dropdown-item-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.dropdown-item-disabled:hover,
+.dropdown-item-disabled.dropdown-item-focused {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.dropdown-item-label {
+    flex: 1;
+}
+
+.dropdown-item-shortcut {
+    margin-left: var(--space-lg);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+/* Separator */
+.dropdown-separator {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: var(--space-xs) 0;
+}

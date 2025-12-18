@@ -1,0 +1,307 @@
+/**
+ * KeybindingsPanel.css - Keyboard shortcuts configuration UI
+ */
+
+.keybindings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.keybindings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.keybindings-description {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.keybindings-reset-all {
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-reset-all:hover:not(:disabled) {
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+}
+
+.keybindings-reset-all:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Category */
+.keybindings-category {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.keybindings-category-title {
+    margin: 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* List */
+.keybindings-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+/* Row */
+.keybindings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast);
+}
+
+.keybindings-row:hover {
+    background: var(--bg-canvas-alt);
+}
+
+.keybindings-row-editing {
+    background: rgba(91, 127, 214, 0.15);
+    outline: 2px solid var(--accent-primary);
+}
+
+.keybindings-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+}
+
+.keybindings-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+/* Shortcut Button */
+.keybindings-shortcut {
+    min-width: 100px;
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-node);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-shortcut:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.keybindings-shortcut-custom {
+    background: rgba(91, 127, 214, 0.1);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.keybindings-shortcut-editing {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+    cursor: default;
+    animation: pulse 1s ease-in-out infinite;
+    will-change: opacity;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Reset Button */
+.keybindings-reset {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-md);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.keybindings-reset:hover {
+    border-color: var(--accent-warning);
+    color: var(--accent-warning);
+    background: rgba(212, 160, 80, 0.1);
+}
+
+/* Conflict Dialog */
+.keybindings-conflict-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.keybindings-conflict-dialog {
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--shadow-menu);
+}
+
+.keybindings-conflict-title {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    color: var(--accent-warning);
+}
+
+.keybindings-conflict-message {
+    margin: 0 0 var(--space-sm) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+}
+
+.keybindings-conflict-message strong {
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    padding: 2px var(--space-xs);
+    border-radius: var(--radius-sm);
+}
+
+.keybindings-conflict-list {
+    margin: 0 0 var(--space-md) 0;
+    padding-left: var(--space-lg);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.keybindings-conflict-list li {
+    margin-bottom: var(--space-xs);
+}
+
+.keybindings-conflict-question {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.keybindings-conflict-buttons {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+}
+
+.keybindings-conflict-cancel,
+.keybindings-conflict-confirm {
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-conflict-cancel {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.keybindings-conflict-cancel:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.keybindings-conflict-confirm {
+    background: var(--accent-primary);
+    border: 1px solid var(--accent-primary);
+    color: white;
+}
+
+.keybindings-conflict-confirm:hover {
+    background: var(--accent-secondary);
+    border-color: var(--accent-secondary);
+}
+
+/* Error State */
+.keybindings-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xl);
+    text-align: center;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--accent-danger);
+}
+
+.keybindings-error h4 {
+    margin: 0 0 var(--space-sm) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    color: var(--accent-danger);
+}
+
+.keybindings-error p {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    max-width: 300px;
+}
+
+.keybindings-error button {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: white;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.keybindings-error button:hover {
+    background: var(--accent-secondary);
+}

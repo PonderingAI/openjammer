@@ -391,16 +391,38 @@ export const useGraphStore = create<GraphStore>()(
             },
 
             // Select nodes within a rectangle (for box selection)
+            // Only selects nodes that are FULLY contained within the selection box
             selectNodesInRect: (rect) => {
                 const state = get();
                 const selectedIds: string[] = [];
 
-                state.nodes.forEach((node, id) => {
-                    // Node dimensions (approximate)
-                    const nodeWidth = 200;
-                    const nodeHeight = 150;
+                // Get approximate dimensions based on node type
+                const getNodeDimensions = (node: GraphNode): { width: number; height: number } => {
+                    switch (node.type) {
+                        case 'keyboard':
+                            return { width: 160, height: 120 };
+                        case 'speaker':
+                            return { width: 140, height: 160 };
+                        case 'piano':
+                        case 'cello':
+                        case 'violin':
+                        case 'saxophone':
+                        case 'strings':
+                        case 'keys':
+                        case 'winds':
+                            // Instrument nodes: height varies by number of input ports
+                            const inputPorts = node.ports.filter(p => p.direction === 'input').length;
+                            return { width: 180, height: 60 + (inputPorts * 28) };
+                        default:
+                            // Standard nodes (microphone, looper, effect, amplifier, recorder)
+                            return { width: 200, height: 150 };
+                    }
+                };
 
-                    // Check if node intersects with selection rect
+                state.nodes.forEach((node, id) => {
+                    const { width: nodeWidth, height: nodeHeight } = getNodeDimensions(node);
+
+                    // Calculate node bounds
                     const nodeRight = node.position.x + nodeWidth;
                     const nodeBottom = node.position.y + nodeHeight;
                     const rectRight = rect.x + rect.width;
@@ -412,10 +434,11 @@ export const useGraphStore = create<GraphStore>()(
                     const minY = Math.min(rect.y, rectBottom);
                     const maxY = Math.max(rect.y, rectBottom);
 
-                    if (node.position.x < maxX &&
-                        nodeRight > minX &&
-                        node.position.y < maxY &&
-                        nodeBottom > minY) {
+                    // Check if node is FULLY contained within selection rect
+                    if (node.position.x >= minX &&
+                        nodeRight <= maxX &&
+                        node.position.y >= minY &&
+                        nodeBottom <= maxY) {
                         selectedIds.push(id);
                     }
                 });
@@ -489,37 +512,80 @@ export const useGraphStore = create<GraphStore>()(
             // Custom serialization for Map and Set
             storage: {
                 getItem: (name) => {
-                    const str = localStorage.getItem(name);
-                    if (!str) return null;
+                    try {
+                        const str = localStorage.getItem(name);
+                        if (!str) return null;
 
-                    const parsed = JSON.parse(str);
-                    return {
-                        state: {
-                            ...parsed.state,
-                            nodes: new Map(parsed.state.nodes || []),
-                            connections: new Map(parsed.state.connections || []),
-                            selectedNodeIds: new Set(parsed.state.selectedNodeIds || []),
-                            selectedConnectionIds: new Set(parsed.state.selectedConnectionIds || []),
-                            history: parsed.state.history || [],
-                            historyIndex: parsed.state.historyIndex ?? -1
+                        const parsed = JSON.parse(str);
+
+                        // Validate data structure exists
+                        if (!parsed?.state) {
+                            console.warn('Invalid graph store data structure, resetting');
+                            return null;
                         }
-                    };
+
+                        return {
+                            state: {
+                                ...parsed.state,
+                                nodes: new Map(Array.isArray(parsed.state.nodes) ? parsed.state.nodes : []),
+                                connections: new Map(Array.isArray(parsed.state.connections) ? parsed.state.connections : []),
+                                selectedNodeIds: new Set(Array.isArray(parsed.state.selectedNodeIds) ? parsed.state.selectedNodeIds : []),
+                                selectedConnectionIds: new Set(Array.isArray(parsed.state.selectedConnectionIds) ? parsed.state.selectedConnectionIds : []),
+                                history: Array.isArray(parsed.state.history) ? parsed.state.history : [],
+                                historyIndex: typeof parsed.state.historyIndex === 'number' ? parsed.state.historyIndex : -1
+                            }
+                        };
+                    } catch (error) {
+                        console.error('Failed to load graph store from localStorage:', error);
+                        return null; // Graceful reset on any error
+                    }
                 },
                 setItem: (name, value) => {
-                    const serialized = {
-                        state: {
-                            ...value.state,
-                            nodes: Array.from(value.state.nodes.entries()),
-                            connections: Array.from(value.state.connections.entries()),
-                            selectedNodeIds: Array.from(value.state.selectedNodeIds),
-                            selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
-                            history: value.state.history,
-                            historyIndex: value.state.historyIndex
+                    try {
+                        const serialized = {
+                            state: {
+                                ...value.state,
+                                nodes: Array.from(value.state.nodes.entries()),
+                                connections: Array.from(value.state.connections.entries()),
+                                selectedNodeIds: Array.from(value.state.selectedNodeIds),
+                                selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
+                                history: value.state.history,
+                                historyIndex: value.state.historyIndex
+                            }
+                        };
+                        localStorage.setItem(name, JSON.stringify(serialized));
+                    } catch (error) {
+                        // Handle QuotaExceededError by clearing history and retrying
+                        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+                            console.warn('localStorage quota exceeded, clearing history');
+                            try {
+                                const serializedWithoutHistory = {
+                                    state: {
+                                        ...value.state,
+                                        nodes: Array.from(value.state.nodes.entries()),
+                                        connections: Array.from(value.state.connections.entries()),
+                                        selectedNodeIds: Array.from(value.state.selectedNodeIds),
+                                        selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
+                                        history: [],
+                                        historyIndex: -1
+                                    }
+                                };
+                                localStorage.setItem(name, JSON.stringify(serializedWithoutHistory));
+                            } catch (retryError) {
+                                console.error('Failed to save graph store even after clearing history:', retryError);
+                            }
+                        } else {
+                            console.error('Failed to save graph store to localStorage:', error);
                         }
-                    };
-                    localStorage.setItem(name, JSON.stringify(serialized));
+                    }
                 },
-                removeItem: (name) => localStorage.removeItem(name)
+                removeItem: (name) => {
+                    try {
+                        localStorage.removeItem(name);
+                    } catch (error) {
+                        console.error('Failed to remove graph store from localStorage:', error);
+                    }
+                }
             }
         }
     )

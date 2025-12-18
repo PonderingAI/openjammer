@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { themes, applyTheme, getThemeById, getSavedThemeId, saveThemeId } from '../../styles/themes';
+import { KeybindingsPanel } from './KeybindingsPanel';
 import '../Nodes/SchematicNodes.css';
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
@@ -31,7 +32,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 <div className="minimal-settings-content">
                     {/* Sidebar */}
                     <div className="minimal-sidebar">
-                        {['graphics', 'audio', 'gameplay', 'interface'].map(tab => (
+                        {['graphics', 'keybindings', 'audio', 'interface'].map(tab => (
                             <button
                                 key={tab}
                                 className={`minimal-tab-btn ${activeTab === tab ? 'active' : ''}`}
@@ -73,7 +74,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                                 </div>
                             </div>
                         )}
-                        {activeTab !== 'graphics' && (
+                        {activeTab === 'keybindings' && (
+                            <KeybindingsPanel />
+                        )}
+                        {activeTab !== 'graphics' && activeTab !== 'keybindings' && (
                             <div style={{ color: '#888', fontStyle: 'italic' }}>
                                 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} settings coming soon.
                             </div>

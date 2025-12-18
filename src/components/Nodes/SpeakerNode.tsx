@@ -8,6 +8,15 @@ import { useGraphStore } from '../../store/graphStore';
 
 interface SpeakerNodeProps {
     node: GraphNode;
+    handlePortClick?: (portId: string, e: React.MouseEvent) => void;
+    hasConnection?: (portId: string) => boolean;
+    handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
+    isSelected?: boolean;
+    isDragging?: boolean;
+    isHoveredWithConnections?: boolean;
+    style?: React.CSSProperties;
 }
 
 interface AudioDevice {
@@ -15,7 +24,18 @@ interface AudioDevice {
     label: string;
 }
 
-export function SpeakerNode({ node }: SpeakerNodeProps) {
+export function SpeakerNode({
+    node,
+    handlePortClick,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    isHoveredWithConnections,
+    style
+}: SpeakerNodeProps) {
     const data = node.data as SpeakerNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
 
@@ -46,18 +66,43 @@ export function SpeakerNode({ node }: SpeakerNodeProps) {
         setShowDevices(false);
     };
 
+    // Get input port for the speaker
+    const inputPort = node.ports.find(p => p.direction === 'input' && p.type === 'audio');
+
     return (
-        <div className="speaker-node schematic-node">
+        <div
+            className={`speaker-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isHoveredWithConnections ? 'hover-connecting' : ''}`}
+            style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
+        >
+            {/* Header */}
+            <div
+                className="schematic-header"
+                onMouseDown={handleHeaderMouseDown}
+            >
+                <span className="schematic-title">Speaker</span>
+            </div>
+
             {/* Visual Container */}
             <div className="schematic-container">
+                {/* Input Port */}
+                {inputPort && (
+                    <div
+                        className={`speaker-input-port ${hasConnection?.(inputPort.id) ? 'connected' : ''}`}
+                        data-node-id={node.id}
+                        data-port-id={inputPort.id}
+                        onClick={(e) => handlePortClick?.(inputPort.id, e)}
+                        title={inputPort.name}
+                    />
+                )}
+
                 {/* Speaker Symbol */}
                 <div className="speaker-symbol">
                     <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
                         <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                     </svg>
                 </div>
-
-                <div className="speaker-label">Speaker symbol</div>
             </div>
 
             {/* Output Device Selector */}
@@ -73,7 +118,10 @@ export function SpeakerNode({ node }: SpeakerNodeProps) {
                 </button>
 
                 {showDevices && (
-                    <div className="device-dropdown schematic-dropdown">
+                    <div
+                        className="device-dropdown schematic-dropdown"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
                         <div
                             className="device-item"
                             onClick={(e) => {

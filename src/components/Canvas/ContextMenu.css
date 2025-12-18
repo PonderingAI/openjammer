@@ -7,6 +7,7 @@
     min-width: 180px;
     z-index: 1000;
     animation: menuFadeIn 0.1s ease;
+    will-change: opacity, transform;
 }
 
 @keyframes menuFadeIn {

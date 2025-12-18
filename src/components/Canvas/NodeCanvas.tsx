@@ -6,6 +6,8 @@ import { useCallback, useRef, useState, useEffect } from 'react';
 import type { Position, NodeType, Connection } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
+import { useAudioStore } from '../../store/audioStore';
+import { useKeybindingsStore } from '../../store/keybindingsStore';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
 import './NodeCanvas.css';
@@ -21,6 +23,11 @@ export function NodeCanvas() {
     const canvasRef = useRef<HTMLDivElement>(null);
     const [contextMenu, setContextMenu] = useState<Position | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+
+    // Right-click drag state (for pan vs context menu)
+    const [rightClickStart, setRightClickStart] = useState<Position | null>(null);
+    const rightClickMoved = useRef(false);
+    const rightClickOnCanvas = useRef(false);
 
     // Graph store
     const nodes = useGraphStore((s) => s.nodes);
@@ -49,19 +56,33 @@ export function NodeCanvas() {
     const ghostMode = useCanvasStore((s) => s.ghostMode);
     const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
 
+    // Audio store for mode switching
+    const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
+
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
-    // Handle right-click context menu
+    // Port position cache with TTL
+    const portPositionCache = useRef<Map<string, { position: Position; timestamp: number }>>(new Map());
+    const CACHE_TTL_MS = 200; // Cache valid for 200ms (increased for animation smoothness)
+    const CACHE_PAN_THRESHOLD = 5; // Clear cache when pan changes by more than 5px
+    const CACHE_ZOOM_THRESHOLD = 0.05; // Clear cache when zoom changes by more than 5%
+    const lastPanZoom = useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
+
+    // Clear cache when pan/zoom changes significantly (in useEffect to avoid render-phase side effects)
+    useEffect(() => {
+        if (Math.abs(pan.x - lastPanZoom.current.pan.x) > CACHE_PAN_THRESHOLD ||
+            Math.abs(pan.y - lastPanZoom.current.pan.y) > CACHE_PAN_THRESHOLD ||
+            Math.abs(zoom - lastPanZoom.current.zoom) > CACHE_ZOOM_THRESHOLD) {
+            portPositionCache.current.clear();
+            lastPanZoom.current = { pan: { x: pan.x, y: pan.y }, zoom };
+        }
+    }, [pan.x, pan.y, zoom]);
+
+    // Handle right-click context menu - just prevent default
+    // Menu is shown on mouseup if no drag occurred
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
-
-        // Only show menu if clicking on empty canvas
-        if ((e.target as HTMLElement).closest('.node')) {
-            return;
-        }
-
-        setContextMenu({ x: e.clientX, y: e.clientY });
     }, []);
 
     // Handle adding a node
@@ -72,6 +93,17 @@ export function NodeCanvas() {
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        // Right mouse button - start potential pan or context menu
+        if (e.button === 2) {
+            e.preventDefault();
+            setRightClickStart({ x: e.clientX, y: e.clientY });
+            rightClickMoved.current = false;
+            // Check if clicking on empty canvas (not on a node)
+            const isOnNode = (e.target as HTMLElement).closest('.node, .schematic-node');
+            rightClickOnCanvas.current = !isOnNode;
+            return;
+        }
+
         // Middle mouse button or Alt + left click for panning
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
@@ -81,7 +113,11 @@ export function NodeCanvas() {
         }
 
         // Left click on empty canvas - start box selection
-        if (e.button === 0 && !(e.target as HTMLElement).closest('.node, .port')) {
+        // Check for all node and port classes (standard and schematic)
+        const isNodeOrPort = (e.target as HTMLElement).closest(
+            '.node, .schematic-node, .port, .port-dot, .port-circle-marker, .note-input-port, .output-port, .speaker-input-port'
+        );
+        if (e.button === 0 && !isNodeOrPort) {
             clearSelection();
             stopConnecting();
 
@@ -100,6 +136,19 @@ export function NodeCanvas() {
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         setMousePos({ x: e.clientX, y: e.clientY });
 
+        // Right-click drag panning
+        if (rightClickStart) {
+            const dx = e.clientX - rightClickStart.x;
+            const dy = e.clientY - rightClickStart.y;
+
+            // If moved more than threshold, it's a drag (pan the canvas)
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                rightClickMoved.current = true;
+                panBy({ x: dx, y: dy });
+                setRightClickStart({ x: e.clientX, y: e.clientY });
+            }
+        }
+
         if (isPanning) {
             const dx = e.clientX - lastPanPos.current.x;
             const dy = e.clientY - lastPanPos.current.y;
@@ -107,20 +156,44 @@ export function NodeCanvas() {
             lastPanPos.current = { x: e.clientX, y: e.clientY };
         }
 
-        // Update box selection
+        // Update box selection and select nodes in real-time
         if (selectionBox) {
             const canvasPos = screenToCanvas({ x: e.clientX, y: e.clientY });
-            setSelectionBox(prev => prev ? {
-                ...prev,
+            const newBox = {
+                ...selectionBox,
                 currentX: canvasPos.x,
                 currentY: canvasPos.y
-            } : null);
+            };
+            setSelectionBox(newBox);
+
+            // Live selection - select nodes as the box changes
+            const width = newBox.currentX - newBox.startX;
+            const height = newBox.currentY - newBox.startY;
+            if (Math.abs(width) > 5 || Math.abs(height) > 5) {
+                selectNodesInRect({
+                    x: Math.min(newBox.startX, newBox.currentX),
+                    y: Math.min(newBox.startY, newBox.currentY),
+                    width: Math.abs(width),
+                    height: Math.abs(height)
+                });
+            }
         }
-    }, [isPanning, panBy, selectionBox, screenToCanvas]);
+    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
         setPanning(false);
+
+        // Right-click release - show context menu if no drag
+        if (rightClickStart) {
+            if (!rightClickMoved.current && rightClickOnCanvas.current) {
+                // Didn't drag and was on empty canvas - show context menu
+                setContextMenu({ x: rightClickStart.x, y: rightClickStart.y });
+            }
+            setRightClickStart(null);
+            rightClickMoved.current = false;
+            rightClickOnCanvas.current = false;
+        }
 
         // Complete box selection
         if (selectionBox) {
@@ -139,7 +212,7 @@ export function NodeCanvas() {
 
             setSelectionBox(null);
         }
-    }, [setPanning, selectionBox, selectNodesInRect]);
+    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart]);
 
     // Handle wheel for zoom
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -151,80 +224,143 @@ export function NodeCanvas() {
         zoomTo(newZoom, { x: e.clientX, y: e.clientY });
     }, [zoom, zoomTo]);
 
-    // Handle keyboard shortcuts
+    // Handle keyboard shortcuts using keybindings store
     useEffect(() => {
+        const { matchesAction } = useKeybindingsStore.getState();
+
         function handleKeyDown(e: KeyboardEvent) {
             // Skip if typing in input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
-            // Delete/Backspace - delete selected
-            if (e.key === 'Delete' || e.key === 'Backspace') {
+            // Check keybinding actions
+            if (matchesAction(e, 'edit.delete') || e.key === 'Backspace') {
                 e.preventDefault();
                 deleteSelected();
+                return;
             }
 
-            // Ghost Mode toggle with W key
-            if (e.key === 'w' || e.key === 'W') {
+            if (matchesAction(e, 'view.ghostMode')) {
                 e.preventDefault();
                 toggleGhostMode();
+                return;
             }
 
-            // Ctrl+Z - Undo
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            if (matchesAction(e, 'edit.undo')) {
                 e.preventDefault();
                 undo();
+                return;
             }
 
-            // Ctrl+Y or Ctrl+Shift+Z - Redo
-            if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+            if (matchesAction(e, 'edit.redo')) {
                 e.preventDefault();
                 redo();
+                return;
             }
 
-            // 'A' Key - Multi-connect from selected node
-            if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                // Get selected node
+            if (matchesAction(e, 'canvas.multiConnect')) {
+                // Get all selected nodes
                 const selectedIds = useGraphStore.getState().selectedNodeIds;
-                if (selectedIds.size === 1) {
+                const graphNodes = useGraphStore.getState().nodes;
+                const graphConnections = useGraphStore.getState().connections;
+
+                if (selectedIds.size >= 1) {
                     e.preventDefault();
-                    const nodeId = Array.from(selectedIds)[0];
-                    const node = useGraphStore.getState().nodes.get(nodeId);
 
-                    if (node) {
-                        // Get all output ports
-                        const outputPorts = node.ports
-                            .filter(p => p.direction === 'output' && p.type === 'technical') // Restrict to technical for now?
-                            .map(p => p.id);
+                    // Build array of all empty output ports from all selected nodes
+                    const allSources: { nodeId: string; portId: string }[] = [];
 
-                        if (outputPorts.length > 0) {
-                            startConnecting(nodeId, outputPorts);
+                    for (const nodeId of selectedIds) {
+                        const node = graphNodes.get(nodeId);
+                        if (!node) continue;
+
+                        // Get all output ports (both audio and technical)
+                        const outputPorts = node.ports.filter(p => p.direction === 'output');
+
+                        // Filter to only empty (unconnected) ports
+                        const emptyOutputs = outputPorts.filter(port => {
+                            const hasConnection = Array.from(graphConnections.values()).some(
+                                conn => conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
+                            );
+                            return !hasConnection;
+                        });
+
+                        for (const port of emptyOutputs) {
+                            allSources.push({ nodeId, portId: port.id });
                         }
                     }
+
+                    if (allSources.length > 0) {
+                        startConnecting(allSources);
+                    }
                 }
+                return;
+            }
+
+            // 1-9 Keys - Mode switching (not customizable for now)
+            const keyNum = parseInt(e.key, 10);
+            if (!isNaN(keyNum) && keyNum >= 1 && keyNum <= 9) {
+                e.preventDefault();
+                setCurrentMode(keyNum);
+                return;
             }
         }
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode]);
 
-    // Get port position for connection rendering
+    // Get port position for connection rendering using DOM measurement
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
-        const node = nodes.get(nodeId);
-        if (!node) return null;
+        const cacheKey = `${nodeId}:${portId}`;
+        const now = Date.now();
 
-        const port = node.ports.find(p => p.id === portId);
-        if (!port) return null;
+        // Check cache first
+        const cached = portPositionCache.current.get(cacheKey);
+        if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+            return cached.position;
+        }
 
-        const portIndex = node.ports
-            .filter(p => p.direction === port.direction)
-            .indexOf(port);
+        // Query port element by data attributes
+        const portElement = document.querySelector(
+            `[data-node-id="${nodeId}"][data-port-id="${portId}"]`
+        );
 
-        const x = port.direction === 'input' ? node.position.x : node.position.x + 200;
-        const y = node.position.y + 36 + 24 + portIndex * 24;
+        // Fallback: If DOM element not found, calculate approximate position from node position
+        if (!portElement) {
+            const node = nodes.get(nodeId);
+            if (node) {
+                // Approximate position: node center + small offset for ports
+                const fallbackPos = {
+                    x: node.position.x + 80, // Approximate half-width
+                    y: node.position.y + 40  // Approximate half-height
+                };
+                return fallbackPos;
+            }
+            return null;
+        }
 
-        return { x, y };
-    }, [nodes]);
+        const canvasElement = canvasRef.current;
+        if (!canvasElement) return null;
+
+        const portRect = portElement.getBoundingClientRect();
+        const canvasRect = canvasElement.getBoundingClientRect();
+
+        // Convert screen coordinates to canvas coordinates
+        // Account for pan and zoom
+        const centerX = portRect.left + portRect.width / 2 - canvasRect.left;
+        const centerY = portRect.top + portRect.height / 2 - canvasRect.top;
+
+        // Inverse transform to get canvas-space coordinates
+        const canvasX = (centerX - pan.x) / zoom;
+        const canvasY = (centerY - pan.y) / zoom;
+
+        const position = { x: canvasX, y: canvasY };
+
+        // Cache the result
+        portPositionCache.current.set(cacheKey, { position, timestamp: now });
+
+        return position;
+    }, [pan, zoom, nodes]);
 
     // Render connection path
     const renderConnection = useCallback((conn: Connection) => {
@@ -324,7 +460,7 @@ export function NodeCanvas() {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
             onWheel={handleWheel}
-            style={{ cursor: isPanning ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
+            style={{ cursor: isPanning || (rightClickStart && rightClickMoved.current) ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
         >
             <div className="node-canvas-grid" style={{
                 backgroundPosition: `${pan.x}px ${pan.y}px`,
