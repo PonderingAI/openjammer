@@ -24,6 +24,11 @@ export function NodeCanvas() {
     const [contextMenu, setContextMenu] = useState<Position | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
 
+    // Right-click drag state (for pan vs context menu)
+    const [rightClickStart, setRightClickStart] = useState<Position | null>(null);
+    const rightClickMoved = useRef(false);
+    const rightClickOnCanvas = useRef(false);
+
     // Graph store
     const nodes = useGraphStore((s) => s.nodes);
     const connections = useGraphStore((s) => s.connections);
@@ -59,27 +64,25 @@ export function NodeCanvas() {
 
     // Port position cache with TTL
     const portPositionCache = useRef<Map<string, { position: Position; timestamp: number }>>(new Map());
-    const CACHE_TTL_MS = 100; // Cache valid for 100ms
+    const CACHE_TTL_MS = 200; // Cache valid for 200ms (increased for animation smoothness)
+    const CACHE_PAN_THRESHOLD = 5; // Clear cache when pan changes by more than 5px
+    const CACHE_ZOOM_THRESHOLD = 0.05; // Clear cache when zoom changes by more than 5%
     const lastPanZoom = useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
 
-    // Clear cache when pan/zoom changes significantly
-    if (Math.abs(pan.x - lastPanZoom.current.pan.x) > 5 ||
-        Math.abs(pan.y - lastPanZoom.current.pan.y) > 5 ||
-        Math.abs(zoom - lastPanZoom.current.zoom) > 0.05) {
-        portPositionCache.current.clear();
-        lastPanZoom.current = { pan: { x: pan.x, y: pan.y }, zoom };
-    }
+    // Clear cache when pan/zoom changes significantly (in useEffect to avoid render-phase side effects)
+    useEffect(() => {
+        if (Math.abs(pan.x - lastPanZoom.current.pan.x) > CACHE_PAN_THRESHOLD ||
+            Math.abs(pan.y - lastPanZoom.current.pan.y) > CACHE_PAN_THRESHOLD ||
+            Math.abs(zoom - lastPanZoom.current.zoom) > CACHE_ZOOM_THRESHOLD) {
+            portPositionCache.current.clear();
+            lastPanZoom.current = { pan: { x: pan.x, y: pan.y }, zoom };
+        }
+    }, [pan.x, pan.y, zoom]);
 
-    // Handle right-click context menu
+    // Handle right-click context menu - just prevent default
+    // Menu is shown on mouseup if no drag occurred
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
-
-        // Only show menu if clicking on empty canvas
-        if ((e.target as HTMLElement).closest('.node')) {
-            return;
-        }
-
-        setContextMenu({ x: e.clientX, y: e.clientY });
     }, []);
 
     // Handle adding a node
@@ -90,6 +93,17 @@ export function NodeCanvas() {
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        // Right mouse button - start potential pan or context menu
+        if (e.button === 2) {
+            e.preventDefault();
+            setRightClickStart({ x: e.clientX, y: e.clientY });
+            rightClickMoved.current = false;
+            // Check if clicking on empty canvas (not on a node)
+            const isOnNode = (e.target as HTMLElement).closest('.node, .schematic-node');
+            rightClickOnCanvas.current = !isOnNode;
+            return;
+        }
+
         // Middle mouse button or Alt + left click for panning
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
@@ -122,6 +136,19 @@ export function NodeCanvas() {
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         setMousePos({ x: e.clientX, y: e.clientY });
 
+        // Right-click drag panning
+        if (rightClickStart) {
+            const dx = e.clientX - rightClickStart.x;
+            const dy = e.clientY - rightClickStart.y;
+
+            // If moved more than threshold, it's a drag (pan the canvas)
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                rightClickMoved.current = true;
+                panBy({ x: dx, y: dy });
+                setRightClickStart({ x: e.clientX, y: e.clientY });
+            }
+        }
+
         if (isPanning) {
             const dx = e.clientX - lastPanPos.current.x;
             const dy = e.clientY - lastPanPos.current.y;
@@ -129,20 +156,44 @@ export function NodeCanvas() {
             lastPanPos.current = { x: e.clientX, y: e.clientY };
         }
 
-        // Update box selection
+        // Update box selection and select nodes in real-time
         if (selectionBox) {
             const canvasPos = screenToCanvas({ x: e.clientX, y: e.clientY });
-            setSelectionBox(prev => prev ? {
-                ...prev,
+            const newBox = {
+                ...selectionBox,
                 currentX: canvasPos.x,
                 currentY: canvasPos.y
-            } : null);
+            };
+            setSelectionBox(newBox);
+
+            // Live selection - select nodes as the box changes
+            const width = newBox.currentX - newBox.startX;
+            const height = newBox.currentY - newBox.startY;
+            if (Math.abs(width) > 5 || Math.abs(height) > 5) {
+                selectNodesInRect({
+                    x: Math.min(newBox.startX, newBox.currentX),
+                    y: Math.min(newBox.startY, newBox.currentY),
+                    width: Math.abs(width),
+                    height: Math.abs(height)
+                });
+            }
         }
-    }, [isPanning, panBy, selectionBox, screenToCanvas]);
+    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
         setPanning(false);
+
+        // Right-click release - show context menu if no drag
+        if (rightClickStart) {
+            if (!rightClickMoved.current && rightClickOnCanvas.current) {
+                // Didn't drag and was on empty canvas - show context menu
+                setContextMenu({ x: rightClickStart.x, y: rightClickStart.y });
+            }
+            setRightClickStart(null);
+            rightClickMoved.current = false;
+            rightClickOnCanvas.current = false;
+        }
 
         // Complete box selection
         if (selectionBox) {
@@ -161,7 +212,7 @@ export function NodeCanvas() {
 
             setSelectionBox(null);
         }
-    }, [setPanning, selectionBox, selectNodesInRect]);
+    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart]);
 
     // Handle wheel for zoom
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -409,7 +460,7 @@ export function NodeCanvas() {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
             onWheel={handleWheel}
-            style={{ cursor: isPanning ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
+            style={{ cursor: isPanning || (rightClickStart && rightClickMoved.current) ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
         >
             <div className="node-canvas-grid" style={{
                 backgroundPosition: `${pan.x}px ${pan.y}px`,

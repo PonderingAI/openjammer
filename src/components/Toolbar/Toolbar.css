@@ -12,7 +12,7 @@
     gap: var(--space-xs);
     padding: var(--space-xs) var(--space-sm);
     background: var(--bg-node);
-    border: var(--border-sketch-width) solid var(--sketch-black);
+    border: none;
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-menu);
     z-index: 100;
@@ -138,28 +138,6 @@
     font-size: var(--text-xs);
 }
 
-/* Logo */
-.logo {
-    position: fixed;
-    bottom: var(--space-md);
-    right: var(--space-md);
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    background: var(--bg-node);
-    border: var(--border-sketch-width) solid var(--sketch-black);
-    border-radius: var(--radius-lg);
-    font-family: var(--font-sketch);
-    font-weight: 600;
-    font-size: var(--text-lg);
-    color: var(--text-primary);
-    z-index: 100;
-}
-
-.logo-icon {
-    font-size: var(--text-xl);
-}
 
 /* ============================================
  * Help Panel Mode Indicator

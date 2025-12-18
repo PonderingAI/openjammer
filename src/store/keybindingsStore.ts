@@ -6,6 +6,13 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+// Sentinel value for explicitly unbound keybindings (cleared conflicts)
+export const UNBOUND_KEY = '__UNBOUND__';
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -193,6 +200,54 @@ interface KeybindingsStore {
 // Store Implementation
 // ============================================================================
 
+// Custom storage with validation
+const validatedStorage = {
+    getItem: (name: string) => {
+        try {
+            const item = localStorage.getItem(name);
+            if (!item) return null;
+
+            const parsed = JSON.parse(item);
+            if (!parsed || typeof parsed !== 'object') return null;
+
+            // Validate customBindings structure
+            if (parsed.state?.customBindings) {
+                const bindings = parsed.state.customBindings;
+                if (typeof bindings !== 'object' || Array.isArray(bindings)) {
+                    parsed.state.customBindings = {};
+                } else {
+                    // Validate each binding has required 'key' property
+                    for (const [actionId, combo] of Object.entries(bindings)) {
+                        if (!combo || typeof combo !== 'object' || typeof (combo as KeyCombo).key !== 'string') {
+                            delete bindings[actionId];
+                        }
+                        // Note: UNBOUND_KEY sentinel is valid and passes validation
+                    }
+                }
+            }
+
+            return parsed;
+        } catch {
+            // On any error, return null to use default state
+            return null;
+        }
+    },
+    setItem: (name: string, value: { state: KeybindingsStore }): void => {
+        try {
+            localStorage.setItem(name, JSON.stringify(value));
+        } catch {
+            // Ignore storage errors (quota exceeded, etc.)
+        }
+    },
+    removeItem: (name: string): void => {
+        try {
+            localStorage.removeItem(name);
+        } catch {
+            // Ignore errors
+        }
+    },
+};
+
 export const useKeybindingsStore = create<KeybindingsStore>()(
     persist(
         (set, get) => ({
@@ -203,6 +258,10 @@ export const useKeybindingsStore = create<KeybindingsStore>()(
 
                 // Check for custom binding first
                 if (customBindings[actionId]) {
+                    // Return undefined for explicitly unbound keys
+                    if (customBindings[actionId].key === UNBOUND_KEY) {
+                        return undefined;
+                    }
                     return customBindings[actionId];
                 }
 
@@ -274,13 +333,9 @@ export const useKeybindingsStore = create<KeybindingsStore>()(
                     const newBindings = { ...state.customBindings };
 
                     for (const conflict of conflicts) {
-                        // If there's a custom binding, remove it
-                        // If it's using default, set to an empty/null binding
-                        // For simplicity, we'll set conflicting bindings to an unbound state
-                        // by assigning an impossible key combo
-                        delete newBindings[conflict.id];
-                        // Set to unbound (empty key means unbound)
-                        newBindings[conflict.id] = { key: '' };
+                        // Mark conflicting bindings as explicitly unbound
+                        // using a sentinel value that getBinding() recognizes
+                        newBindings[conflict.id] = { key: UNBOUND_KEY };
                     }
 
                     return { customBindings: newBindings };
@@ -289,6 +344,7 @@ export const useKeybindingsStore = create<KeybindingsStore>()(
         }),
         {
             name: 'openjammer-keybindings',
+            storage: validatedStorage,
         }
     )
 );

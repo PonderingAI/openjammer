@@ -5,6 +5,7 @@ import {
     matchesKeyCombo,
     keyComboEquals,
     keybindingActions,
+    UNBOUND_KEY,
     type KeyCombo,
 } from '../keybindingsStore';
 
@@ -244,22 +245,35 @@ describe('keybindingsStore', () => {
         });
 
         describe('clearConflictingBindings', () => {
-            it('should clear conflicting bindings', () => {
+            it('should clear conflicting bindings using UNBOUND_KEY sentinel', () => {
                 // Set up a conflict
                 useKeybindingsStore.getState().setBinding('edit.delete', { key: 'x', ctrl: true });
 
                 // Clear conflicts when setting another action to same combo
                 useKeybindingsStore.getState().clearConflictingBindings('edit.undo', { key: 'x', ctrl: true });
 
-                // The conflicting binding should now be cleared (set to empty key)
+                // The conflicting binding should now use UNBOUND_KEY sentinel
+                const rawBinding = useKeybindingsStore.getState().customBindings['edit.delete'];
+                expect(rawBinding?.key).toBe(UNBOUND_KEY);
+
+                // getBinding should return undefined for unbound keys
                 const binding = useKeybindingsStore.getState().getBinding('edit.delete');
-                expect(binding?.key).toBe('');
+                expect(binding).toBeUndefined();
             });
 
             it('should do nothing when no conflicts', () => {
                 const initialBindings = { ...useKeybindingsStore.getState().customBindings };
                 useKeybindingsStore.getState().clearConflictingBindings('edit.delete', { key: 'q', alt: true });
                 expect(useKeybindingsStore.getState().customBindings).toEqual(initialBindings);
+            });
+
+            it('should clear default bindings that conflict', () => {
+                // Try to set edit.delete to Ctrl+Z (which conflicts with edit.undo default)
+                useKeybindingsStore.getState().clearConflictingBindings('edit.delete', { key: 'z', ctrl: true });
+
+                // edit.undo should now return undefined
+                const binding = useKeybindingsStore.getState().getBinding('edit.undo');
+                expect(binding).toBeUndefined();
             });
         });
     });
@@ -286,6 +300,102 @@ describe('keybindingsStore', () => {
                 expect(action?.label).toBeTruthy();
                 expect(action?.category).toBeTruthy();
                 expect(action?.defaultBinding).toBeDefined();
+            }
+        });
+    });
+
+    describe('UNBOUND_KEY sentinel', () => {
+        it('should be a unique identifier string', () => {
+            expect(UNBOUND_KEY).toBe('__UNBOUND__');
+        });
+
+        it('should cause getBinding to return undefined', () => {
+            // Manually set an unbound binding
+            useKeybindingsStore.setState({
+                customBindings: { 'edit.delete': { key: UNBOUND_KEY } }
+            });
+
+            const binding = useKeybindingsStore.getState().getBinding('edit.delete');
+            expect(binding).toBeUndefined();
+        });
+
+        it('should not match any key events', () => {
+            useKeybindingsStore.setState({
+                customBindings: { 'edit.delete': { key: UNBOUND_KEY } }
+            });
+
+            // Try various key events - none should match
+            const events = [
+                new KeyboardEvent('keydown', { key: UNBOUND_KEY }),
+                new KeyboardEvent('keydown', { key: 'Delete' }),
+                new KeyboardEvent('keydown', { key: '' }),
+            ];
+
+            for (const event of events) {
+                expect(useKeybindingsStore.getState().matchesAction(event, 'edit.delete')).toBe(false);
+            }
+        });
+    });
+
+    describe('localStorage validation', () => {
+        it('should handle corrupted JSON gracefully', () => {
+            localStorage.setItem('openjammer-keybindings', 'not valid json');
+
+            // Access the store's internal storage
+            const storage = (useKeybindingsStore as unknown as {
+                persist: { getOptions: () => { storage: { getItem: (name: string) => string | null } } }
+            }).persist?.getOptions?.()?.storage;
+
+            if (storage) {
+                const result = storage.getItem('openjammer-keybindings');
+                // Should return null on parse error
+                expect(result).toBeNull();
+            }
+        });
+
+        it('should handle invalid customBindings type gracefully', () => {
+            localStorage.setItem('openjammer-keybindings', JSON.stringify({
+                state: {
+                    customBindings: 'not an object'
+                }
+            }));
+
+            const storage = (useKeybindingsStore as unknown as {
+                persist: { getOptions: () => { storage: { getItem: (name: string) => { state: { customBindings: Record<string, unknown> } } | null } } }
+            }).persist?.getOptions?.()?.storage;
+
+            if (storage) {
+                const result = storage.getItem('openjammer-keybindings');
+                if (result) {
+                    expect(result.state.customBindings).toEqual({});
+                }
+            }
+        });
+
+        it('should filter out bindings without valid key property', () => {
+            localStorage.setItem('openjammer-keybindings', JSON.stringify({
+                state: {
+                    customBindings: {
+                        'valid': { key: 'a', ctrl: true },
+                        'invalid-null': null,
+                        'invalid-no-key': { ctrl: true },
+                        'invalid-wrong-type': { key: 123 },
+                    }
+                }
+            }));
+
+            const storage = (useKeybindingsStore as unknown as {
+                persist: { getOptions: () => { storage: { getItem: (name: string) => { state: { customBindings: Record<string, unknown> } } | null } } }
+            }).persist?.getOptions?.()?.storage;
+
+            if (storage) {
+                const result = storage.getItem('openjammer-keybindings');
+                if (result) {
+                    expect(result.state.customBindings['valid']).toBeDefined();
+                    expect(result.state.customBindings['invalid-null']).toBeUndefined();
+                    expect(result.state.customBindings['invalid-no-key']).toBeUndefined();
+                    expect(result.state.customBindings['invalid-wrong-type']).toBeUndefined();
+                }
             }
         });
     });

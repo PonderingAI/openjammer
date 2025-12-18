@@ -118,7 +118,10 @@ export function SpeakerNode({
                 </button>
 
                 {showDevices && (
-                    <div className="device-dropdown schematic-dropdown">
+                    <div
+                        className="device-dropdown schematic-dropdown"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
                         <div
                             className="device-item"
                             onClick={(e) => {

@@ -118,12 +118,6 @@ function App() {
 
       {/* Help Panel */}
       <HelpPanel />
-
-      {/* Logo */}
-      <div className="logo">
-        <span className="logo-icon">🎹</span>
-        <span onClick={() => setShowSettings(true)} style={{ cursor: 'pointer' }}>OpenJammer</span>
-      </div>
     </>
   );
 }

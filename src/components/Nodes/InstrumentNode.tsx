@@ -90,6 +90,18 @@ export function InstrumentNode({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [showPopup]);
 
+    // Clear dragStartPos on mouseup to prevent stale state
+    useEffect(() => {
+        if (!dragStartPos) return;
+
+        const handleMouseUp = () => {
+            setDragStartPos(null);
+        };
+
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => window.removeEventListener('mouseup', handleMouseUp);
+    }, [dragStartPos]);
+
     // Get persisted input ports
     const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');

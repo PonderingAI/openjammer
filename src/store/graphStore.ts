@@ -391,16 +391,38 @@ export const useGraphStore = create<GraphStore>()(
             },
 
             // Select nodes within a rectangle (for box selection)
+            // Only selects nodes that are FULLY contained within the selection box
             selectNodesInRect: (rect) => {
                 const state = get();
                 const selectedIds: string[] = [];
 
-                state.nodes.forEach((node, id) => {
-                    // Node dimensions (approximate)
-                    const nodeWidth = 200;
-                    const nodeHeight = 150;
+                // Get approximate dimensions based on node type
+                const getNodeDimensions = (node: GraphNode): { width: number; height: number } => {
+                    switch (node.type) {
+                        case 'keyboard':
+                            return { width: 160, height: 120 };
+                        case 'speaker':
+                            return { width: 140, height: 160 };
+                        case 'piano':
+                        case 'cello':
+                        case 'violin':
+                        case 'saxophone':
+                        case 'strings':
+                        case 'keys':
+                        case 'winds':
+                            // Instrument nodes: height varies by number of input ports
+                            const inputPorts = node.ports.filter(p => p.direction === 'input').length;
+                            return { width: 180, height: 60 + (inputPorts * 28) };
+                        default:
+                            // Standard nodes (microphone, looper, effect, amplifier, recorder)
+                            return { width: 200, height: 150 };
+                    }
+                };
 
-                    // Check if node intersects with selection rect
+                state.nodes.forEach((node, id) => {
+                    const { width: nodeWidth, height: nodeHeight } = getNodeDimensions(node);
+
+                    // Calculate node bounds
                     const nodeRight = node.position.x + nodeWidth;
                     const nodeBottom = node.position.y + nodeHeight;
                     const rectRight = rect.x + rect.width;
@@ -412,10 +434,11 @@ export const useGraphStore = create<GraphStore>()(
                     const minY = Math.min(rect.y, rectBottom);
                     const maxY = Math.max(rect.y, rectBottom);
 
-                    if (node.position.x < maxX &&
-                        nodeRight > minX &&
-                        node.position.y < maxY &&
-                        nodeBottom > minY) {
+                    // Check if node is FULLY contained within selection rect
+                    if (node.position.x >= minX &&
+                        nodeRight <= maxX &&
+                        node.position.y >= minY &&
+                        nodeBottom <= maxY) {
                         selectedIds.push(id);
                     }
                 });
