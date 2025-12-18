@@ -1,8 +1,12 @@
 /**
  * Instrument Node - Virtual instrument with dynamic inputs from Keyboard Node
+ *
+ * Design: Hand-drawn schematic with clickable header to open settings popup
+ * Shows note grid with scientific notation and offset values
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { GraphNode, InstrumentNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
@@ -11,9 +15,31 @@ import { nodeDefinitions } from '../../engine/registry';
 
 interface InstrumentNodeProps {
     node: GraphNode;
+    handlePortClick?: (portId: string, e: React.MouseEvent) => void;
+    hasConnection?: (portId: string) => boolean;
+    handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    isSelected?: boolean;
+    isDragging?: boolean;
+    style?: React.CSSProperties;
 }
 
-export function InstrumentNode({ node }: InstrumentNodeProps) {
+// Constants
+const NOTE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const MAX_INPUT_PORTS = 7;
+const DRAG_THRESHOLD_PX = 5;
+
+// Instrument display names
+const INSTRUMENT_LABELS: Record<string, string> = {
+    piano: 'Classic Piano',
+    cello: 'Cello',
+    violin: 'Violin',
+    saxophone: 'Saxophone',
+    strings: 'Strings',
+    keys: 'Keys',
+    winds: 'Winds'
+};
+
+export function InstrumentNode({ node, handlePortClick, hasConnection, handleHeaderMouseDown, isSelected, isDragging, style }: InstrumentNodeProps) {
     const data = node.data as unknown as InstrumentNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const updateNodePorts = useGraphStore((s) => s.updateNodePorts);
@@ -23,6 +49,7 @@ export function InstrumentNode({ node }: InstrumentNodeProps) {
     // Internal audio state
     const instrumentRef = useRef<Instrument | null>(null);
     const [showPopup, setShowPopup] = useState(false);
+    const [dragStartPos, setDragStartPos] = useState<{x: number, y: number} | null>(null);
 
     // Initialize instrument audio
     useEffect(() => {
@@ -33,104 +60,213 @@ export function InstrumentNode({ node }: InstrumentNodeProps) {
         return () => inst.disconnect();
     }, [isAudioContextReady, node.type]);
 
-    // Dynamic Ports Logic
+    // Handle Escape key to close popup
+    useEffect(() => {
+        if (!showPopup) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                setShowPopup(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [showPopup]);
+
+    // Dynamic Ports Logic - add new input when all are connected
     useEffect(() => {
         const inputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
-        const connectedPorts1 = inputPorts.filter(p =>
+        const connectedPorts = inputPorts.filter(p =>
             Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
         );
 
         // If all inputs are connected, add a new one
-        if (connectedPorts1.length === inputPorts.length) {
+        if (connectedPorts.length === inputPorts.length && inputPorts.length < MAX_INPUT_PORTS) {
             const nextIndex = inputPorts.length + 1;
             const newPort = {
-                id: `input-${Date.now()}`, // Unique ID for new port
+                id: `input-${Date.now()}`,
                 name: `In ${nextIndex}`,
                 type: 'technical' as const,
                 direction: 'input' as const
             };
-
-            // Should probably use a more stable ID scheme if possible, but timestamp works for now
-            // Better: Find max index
-
             updateNodePorts(node.id, [...node.ports, newPort]);
         }
     }, [connections, node.id, node.ports, updateNodePorts]);
 
-    // Render schematic table row
-    const renderRow = (port: any) => {
-        const offset = data.offsets?.[port.id] || 0;
-        return (
-            <div key={port.id} className="connection-row">
-                <span className="port-name-schematic" title={port.name}>○</span> {/* Minimal circle indicator */}
-                <span className="connection-note">C</span> {/* Placeholder note */}
-                <span className="connection-offset">{offset}</span>
-            </div>
-        );
+    // Get input ports for display
+    const inputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+    const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
+
+    // Get display name
+    const displayName = INSTRUMENT_LABELS[node.type] || nodeDefinitions[node.type]?.name || 'Instrument';
+
+    // Handle header mouse down - track drag start
+    const handleHeaderMouseDownLocal = (e: React.MouseEvent) => {
+        setDragStartPos({ x: e.clientX, y: e.clientY });
+        handleHeaderMouseDown?.(e);
+    };
+
+    // Handle header click to open popup (only if not dragging)
+    const handleHeaderClick = (e: React.MouseEvent) => {
+        if (dragStartPos) {
+            const distance = Math.sqrt(
+                Math.pow(e.clientX - dragStartPos.x, 2) +
+                Math.pow(e.clientY - dragStartPos.y, 2)
+            );
+            if (distance > DRAG_THRESHOLD_PX) {
+                setDragStartPos(null);
+                return; // Was a drag, don't open popup
+            }
+        }
+        e.stopPropagation();
+        setShowPopup(true);
+        setDragStartPos(null);
+    };
+
+    // Get note name for a port index
+    const getNoteName = (index: number): string => {
+        return NOTE_NAMES[index % NOTE_NAMES.length];
+    };
+
+    // Get octave for display
+    const getOctave = (index: number): number => {
+        return Math.floor(index / 7) + 4;
     };
 
     return (
-        <div className="instrument-node schematic-node">
-            {/* Header */}
+        <div
+            className={`instrument-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            style={style}
+        >
+            {/* Header - Clickable to open popup */}
             <div
                 className="schematic-header"
-                onClick={(e) => { e.stopPropagation(); setShowPopup(true); }}
-                style={{ cursor: 'pointer' }}
+                onClick={handleHeaderClick}
+                onMouseDown={handleHeaderMouseDownLocal}
             >
-                <span className="schematic-title">{nodeDefinitions[node.type].name}</span>
-                <span className="schematic-header-icon">▼</span>
+                <span className="schematic-title">{displayName}</span>
             </div>
 
-            {/* Main Table View */}
-            <div className="schematic-body">
-                {node.ports.filter(p => p.type === 'technical' && p.direction === 'input').map(renderRow)}
+            {/* Note Grid */}
+            <div className="instrument-schematic-body">
+                <div className="note-grid">
+                    {inputPorts.map((port, index) => {
+                        const offset = data.offsets?.[port.id] ?? 0;
+                        const isConnected = hasConnection?.(port.id) ?? false;
+
+                        return (
+                            <div key={port.id} className="note-row">
+                                {/* Input port circle */}
+                                <div
+                                    className={`note-input-port ${isConnected ? 'connected' : ''}`}
+                                    data-node-id={node.id}
+                                    data-port-id={port.id}
+                                    onClick={(e) => handlePortClick?.(port.id, e)}
+                                    title={port.name}
+                                />
+                                {/* Note name */}
+                                <span className="note-name">
+                                    {getNoteName(index)}
+                                </span>
+                                {/* Octave indicator */}
+                                <span className="note-offset">
+                                    {getOctave(index)}
+                                </span>
+                                {/* Offset value */}
+                                <span className="note-offset">
+                                    {offset >= 0 ? `+${offset}` : offset}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* Output port */}
+                {outputPort && (
+                    <div className="instrument-output">
+                        <span className="output-label">output</span>
+                        <div
+                            className={`output-port ${hasConnection?.(outputPort.id) ? 'connected' : ''}`}
+                            data-node-id={node.id}
+                            data-port-id={outputPort.id}
+                            onClick={(e) => handlePortClick?.(outputPort.id, e)}
+                            title={outputPort.name}
+                        />
+                    </div>
+                )}
             </div>
 
-            {/* Config Popup */}
-            {showPopup && (
-                <div className="instrument-popup-overlay" onClick={(e) => { e.stopPropagation(); setShowPopup(false); }}>
-                    <div className="instrument-popup-content" onClick={e => e.stopPropagation()}>
-                        <div className="popup-header">
-                            <h3>{nodeDefinitions[node.type].name} Settings</h3>
-                            <button onClick={() => setShowPopup(false)}>Close</button>
-                        </div>
-                        <div className="popup-body">
-                            <label>Instrument Type</label>
-                            <select
-                                value={node.type}
-                                onChange={() => {
-                                    // Logic to change instrument type?
-                                    // Would need to update Node Type in GraphStore...
-                                    // GraphStore doesn't support changing type easily without re-creating?
-                                    // Hack: updateNodeData can't change type.
-                                    // Maybe just handle offsets here.
-                                    alert("Changing instrument type requires re-creating node for now.");
-                                }}
+            {/* Settings Popup */}
+            {showPopup && createPortal(
+                <div
+                    className="instrument-popup-overlay"
+                    onClick={(e) => { e.stopPropagation(); setShowPopup(false); }}
+                >
+                    <div
+                        className="instrument-popup"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="instrument-popup-header">
+                            <h3>{displayName}</h3>
+                            <button
+                                className="instrument-popup-close"
+                                onClick={() => setShowPopup(false)}
                             >
-                                <option value="piano">Piano</option>
-                                <option value="cello">Cello</option>
-                                <option value="violin">Violin</option>
-                                <option value="saxophone">Saxophone</option>
-                            </select>
-
-                            <h4>Input Offsets</h4>
-                            {node.ports.filter(p => p.type === 'technical' && p.direction === 'input').map(port => (
-                                <div key={port.id} className="popup-setting-row">
-                                    <span>{port.name}</span>
-                                    <input
-                                        type="number"
-                                        step="0.5"
-                                        value={data.offsets?.[port.id] || 0}
-                                        onChange={(e) => {
-                                            const newOffsets = { ...(data.offsets || {}), [port.id]: parseFloat(e.target.value) };
-                                            updateNodeData(node.id, { offsets: newOffsets });
-                                        }}
-                                    />
+                                ×
+                            </button>
+                        </div>
+                        <div className="instrument-popup-content">
+                            {/* Instrument Type Selection */}
+                            <div className="popup-section">
+                                <label className="popup-label">Instrument Type</label>
+                                <div className="instrument-options">
+                                    {['piano', 'cello', 'violin', 'saxophone'].map((type) => (
+                                        <div
+                                            key={type}
+                                            className={`instrument-option ${node.type === type ? 'selected' : ''}`}
+                                            onClick={() => {
+                                                // Note: Changing type requires node recreation
+                                                // For now, show as disabled for current type
+                                            }}
+                                        >
+                                            {INSTRUMENT_LABELS[type]}
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            </div>
+
+                            {/* Input Offsets */}
+                            <div className="popup-section">
+                                <label className="popup-label">Note Offsets</label>
+                                <div className="offset-grid">
+                                    {inputPorts.map((port, index) => (
+                                        <div key={port.id} className="offset-row">
+                                            <span className="offset-note">
+                                                {getNoteName(index)}{getOctave(index)}
+                                            </span>
+                                            <input
+                                                type="number"
+                                                step="0.5"
+                                                className="offset-input"
+                                                value={data.offsets?.[port.id] ?? 0}
+                                                onChange={(e) => {
+                                                    const newOffsets = {
+                                                        ...(data.offsets || {}),
+                                                        [port.id]: parseFloat(e.target.value) || 0
+                                                    };
+                                                    updateNodeData(node.id, { offsets: newOffsets });
+                                                }}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

@@ -1,178 +1,468 @@
-/* Schematic / Minimal Design System (Light Theme) */
-:root {
-    --bg-canvas: #F5F0E8;
-    /* Cream/Beige */
-    --bg-node: #F5F0E8;
-    --text-primary: #000000;
-    --border-node: #000000;
-    --border-radius-lg: 12px;
-    --font-hand: 'Inter', sans-serif;
-    /* Placeholder, sketch looks handwritten but user said 'clean minimal' */
-}
+/**
+ * SchematicNodes.css - Hand-drawn schematic styling for special nodes
+ *
+ * Uses variables from variables.css for consistency with the sketch theme.
+ */
 
-/* Schematic Node Base */
+/* ============================================
+ * Schematic Node Base
+ * ============================================ */
 .schematic-node {
+    position: absolute;
     background: var(--bg-node);
-    border: 2px solid var(--border-node);
-    border-radius: var(--border-radius-lg);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
     color: var(--text-primary);
     min-width: 140px;
-    overflow: hidden;
-    /* Box shadow for depth? Maybe minimal */
+    overflow: visible;
+    user-select: none;
+    z-index: 1;
+    transition: box-shadow var(--transition-fast);
+}
+
+.schematic-node.selected {
+    z-index: 10;
+    box-shadow: 0 0 0 2px var(--accent-primary), var(--shadow-sketch);
+}
+
+.schematic-node.dragging {
+    z-index: 100;
+    cursor: grabbing;
+    box-shadow: 0 0 0 2px var(--accent-primary), 6px 6px 0 var(--sketch-black);
 }
 
 .schematic-header {
-    border-bottom: 2px solid var(--border-node);
-    padding: 8px 12px;
-    font-weight: 700;
+    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-sketch);
+    font-weight: 600;
+    font-size: var(--text-lg);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: transparent;
+    background: var(--bg-node-header);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    cursor: grab;
+}
+
+.schematic-header:active {
+    cursor: grabbing;
 }
 
 .schematic-container {
-    padding: 12px;
+    position: relative;
+    padding: var(--space-md);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-sm);
 }
 
-/* Speaker Node */
+/* ============================================
+ * Speaker Node
+ * ============================================ */
 .speaker-node .speaker-symbol {
+    font-size: var(--text-2xl);
     color: var(--text-primary);
-    margin-bottom: 4px;
+    margin-bottom: var(--space-xs);
 }
 
 .speaker-node .speaker-label {
-    font-size: 0.9em;
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
     font-weight: 500;
+}
+
+/* Speaker input port - audio (light blue, receives audio from instruments) */
+.speaker-input-port {
+    position: absolute;
+    left: -7px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--audio-input);
+    cursor: crosshair;
+    flex-shrink: 0;
+    transition: all var(--transition-fast);
+}
+
+.speaker-input-port:hover {
+    transform: translateY(-50%) scale(1.2);
+    filter: brightness(1.1);
+}
+
+.speaker-input-port.connected {
+    background: var(--audio-connected);
+    box-shadow: 0 0 6px var(--audio-connected);
 }
 
 .device-selector-container {
     position: relative;
     width: 100%;
-    margin-top: 8px;
+    margin-top: var(--space-sm);
 }
 
 .device-select-trigger {
     width: 100%;
-    border: 2px solid var(--border-node);
-    border-radius: 20px;
-    /* Capsule shape */
-    background: transparent;
-    padding: 4px 12px;
-    font-size: 0.85em;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-pill);
+    background: var(--bg-canvas);
+    padding: var(--space-xs) var(--space-md);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
     text-align: center;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: all var(--transition-fast);
+}
+
+.device-select-trigger:hover {
+    background: var(--bg-tertiary);
 }
 
 .schematic-dropdown {
     position: absolute;
-    top: 110%;
+    top: calc(100% + var(--space-xs));
     left: 0;
     width: 100%;
     background: var(--bg-node);
-    border: 2px solid var(--border-node);
-    border-radius: 8px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-md);
     z-index: 100;
     max-height: 200px;
     overflow-y: auto;
+    box-shadow: var(--shadow-menu);
 }
 
 .device-item {
-    padding: 6px 12px;
-    border-bottom: 1px solid #ccc;
-    font-size: 0.85em;
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
     cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.device-item:last-child {
+    border-bottom: none;
 }
 
 .device-item:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--bg-tertiary);
 }
 
-/* Keyboard Node */
-.keyboard-node .keyboard-schematic-body {
-    padding: 12px 20px;
+.device-item.selected {
+    background: var(--accent-primary);
+    color: white;
+}
+
+/* ============================================
+ * Keyboard Node
+ * ============================================ */
+.keyboard-node {
+    min-width: 160px;
+}
+
+/* Keyboard node active (Mode 2-9 focused on this keyboard) */
+.keyboard-node.active {
+    border-width: 4px;
+    border-color: var(--accent-success);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px rgba(95, 173, 101, 0.4), var(--shadow-sketch);
+}
+
+.keyboard-node .schematic-header {
+    padding: var(--space-sm) var(--space-md);
+}
+
+.keyboard-octave {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    font-weight: 600;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--sketch-light);
+    border-radius: var(--radius-sm);
+    padding: 2px var(--space-sm);
+}
+
+.keyboard-schematic-body {
+    padding: var(--space-md);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-sm);
 }
 
 .keyboard-row-numbers {
     display: flex;
-    justify-content: space-between;
+    justify-content: space-around;
     width: 100%;
-    padding: 0 10px;
-    /* Adjust based on port spacing */
+    gap: var(--space-sm);
 }
 
 .row-number {
+    font-family: var(--font-sketch);
     font-weight: 700;
-    font-size: 1.4em;
-    width: 24px;
-    text-align: center;
+    font-size: var(--text-lg);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-sm);
+    background: var(--bg-canvas);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.row-number:hover {
+    background: var(--bg-tertiary);
+}
+
+.row-number.active {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
 }
 
 .keyboard-row-ports-marker {
     display: flex;
-    justify-content: space-between;
+    justify-content: space-around;
     width: 100%;
-    padding: 0 10px;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
 }
 
+/* Keyboard output ports - technical (light grey) */
 .port-circle-marker {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--text-primary);
+    width: 20px;
+    height: 20px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: 50%;
-    background: transparent;
+    background: var(--technical-output);
     cursor: crosshair;
-    transition: background 0.2s, transform 0.1s;
+    transition: all var(--transition-fast);
 }
 
 .port-circle-marker:hover {
-    background: rgba(0, 0, 0, 0.1);
-    transform: scale(1.1);
+    background: var(--technical-output);
+    transform: scale(1.15);
+    filter: brightness(1.1);
 }
 
 .port-circle-marker.connected {
-    background: var(--text-primary);
+    background: var(--technical-connected);
+    box-shadow: 0 0 6px var(--technical-connected);
 }
 
-/* Instrument Node */
-.instrument-node .schematic-body {
+/* ============================================
+ * Instrument Node
+ * ============================================ */
+.instrument-node {
+    min-width: 180px;
+}
+
+.instrument-node .schematic-header {
+    cursor: pointer;
+}
+
+.instrument-node .schematic-header:hover {
+    background: var(--bg-tertiary);
+}
+
+.instrument-schematic-body {
     padding: 0;
 }
 
-.connection-row {
+.note-grid {
+    display: flex;
+    flex-direction: column;
+}
+
+.note-row {
+    display: flex;
+    align-items: center;
+    padding: var(--space-xs) var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+    gap: var(--space-sm);
+}
+
+.note-row:last-child {
+    border-bottom: none;
+}
+
+/* Instrument input ports - technical (dark grey, receives data from keyboard) */
+.note-input-port {
+    width: 14px;
+    height: 14px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--technical-input);
+    cursor: crosshair;
+    flex-shrink: 0;
+    transition: all var(--transition-fast);
+}
+
+.note-input-port:hover {
+    transform: scale(1.2);
+    filter: brightness(1.2);
+}
+
+.note-input-port.connected {
+    background: var(--technical-connected);
+    box-shadow: 0 0 6px var(--technical-connected);
+}
+
+.note-name {
+    font-family: var(--font-sketch);
+    font-weight: 600;
+    font-size: var(--text-md);
+    min-width: 24px;
+}
+
+.note-offset {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.instrument-output {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-sm);
+    border-top: 1px solid var(--border-subtle);
+}
+
+.output-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+/* Instrument output port - audio (dark blue, sends audio to speaker) */
+.output-port {
+    width: 16px;
+    height: 16px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--audio-output);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+}
+
+.output-port:hover {
+    transform: scale(1.2);
+    filter: brightness(1.2);
+}
+
+.output-port.connected {
+    background: var(--audio-connected);
+    box-shadow: 0 0 6px var(--audio-connected);
+}
+
+/* ============================================
+ * Instrument Options Popup
+ * ============================================ */
+.instrument-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(2px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+.instrument-popup {
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
+    width: 300px;
+    max-height: 400px;
+    overflow: hidden;
+    box-shadow: var(--shadow-menu);
+}
+
+.instrument-popup-header {
+    padding: var(--space-md);
+    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 6px 12px;
-    border-bottom: 1px solid transparent;
-    /* Separator if needed */
 }
 
-.connection-note {
+.instrument-popup-header h3 {
+    margin: 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
     font-weight: 600;
-    font-family: monospace;
 }
 
-.connection-offset {
-    font-size: 0.9em;
+.instrument-popup-close {
+    width: 28px;
+    height: 28px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--bg-canvas);
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
 }
 
-/* Settings Panel Minimal */
+.instrument-popup-close:hover {
+    background: var(--accent-danger);
+    color: white;
+    border-color: var(--accent-danger);
+}
+
+.instrument-popup-content {
+    padding: var(--space-md);
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.instrument-option {
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-sm);
+    cursor: pointer;
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    transition: all var(--transition-fast);
+}
+
+.instrument-option:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--sketch-light);
+}
+
+.instrument-option.selected {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+/* ============================================
+ * Settings Panel (Updated for Sketch Theme)
+ * ============================================ */
 .minimal-settings-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(0, 0, 0, 0.3);
     backdrop-filter: blur(4px);
     display: flex;
     justify-content: center;
@@ -182,21 +472,20 @@
 
 .minimal-settings-container {
     background: var(--bg-node);
-    /* Cream */
-    border: 2px solid var(--text-primary);
-    border-radius: 16px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-xl);
     width: 600px;
     height: 500px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     color: var(--text-primary);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-menu);
 }
 
 .minimal-settings-header {
-    padding: 24px;
-    border-bottom: 2px solid var(--text-primary);
+    padding: var(--space-lg);
+    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -204,7 +493,8 @@
 
 .minimal-settings-header h2 {
     margin: 0;
-    font-size: 1.5em;
+    font-family: var(--font-sketch);
+    font-size: var(--text-xl);
     font-weight: 700;
 }
 
@@ -215,48 +505,62 @@
 
 .minimal-sidebar {
     width: 180px;
-    border-right: 1px solid #ddd;
-    /* Softer divider */
-    padding: 20px 0;
+    border-right: 1px solid var(--border-subtle);
+    padding: var(--space-md) 0;
 }
 
 .minimal-tab-btn {
     width: 100%;
     text-align: left;
-    padding: 10px 24px;
+    padding: var(--space-sm) var(--space-lg);
     background: none;
     border: none;
-    font-weight: 600;
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    font-weight: 500;
     cursor: pointer;
-    color: #666;
+    color: var(--text-muted);
+    transition: all var(--transition-fast);
+}
+
+.minimal-tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
 }
 
 .minimal-tab-btn.active {
-    color: #000;
-    background: rgba(0, 0, 0, 0.05);
-    border-right: 3px solid #000;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border-right: 3px solid var(--sketch-black);
 }
 
 .minimal-main {
     flex: 1;
-    padding: 24px;
+    padding: var(--space-lg);
     overflow-y: auto;
 }
 
 .minimal-theme-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 16px;
+    gap: var(--space-md);
 }
 
 .minimal-theme-card {
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
     cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.minimal-theme-card:hover {
+    border-color: var(--sketch-light);
+    background: var(--bg-tertiary);
 }
 
 .minimal-theme-card.active {
-    border-color: #000;
-    background: #fff;
+    border-color: var(--sketch-black);
+    border-width: var(--border-sketch-width);
+    background: var(--bg-canvas);
 }

@@ -28,10 +28,17 @@ export interface Theme {
         accentWarning: string;
         accentDanger: string;
 
-        // Connection colors
-        audioOutput: string;
-        audioInput: string;
-        technical: string;
+        // Audio connections (Blue, Directional)
+        audioInput: string;       // Light blue - audio input ports
+        audioOutput: string;      // Dark blue - audio output ports
+        audioConnection: string;  // Medium blue - audio connection lines
+        audioConnected: string;   // Bright blue - connected audio ports
+
+        // Technical connections (Grey, Bidirectional)
+        technicalInput: string;      // Dark grey - technical input ports
+        technicalOutput: string;     // Light grey - technical output ports
+        technicalConnection: string; // Medium grey - technical connection lines
+        technicalConnected: string;  // Grey - connected technical ports
     };
 }
 
@@ -54,9 +61,14 @@ export const themes: Theme[] = [
             accentSuccess: '#4A7C59',
             accentWarning: '#C68B3F',
             accentDanger: '#A65353',
-            audioOutput: '#E74C3C',
-            audioInput: '#3498DB',
-            technical: '#9B59B6'
+            audioInput: '#7EB3D8',
+            audioOutput: '#2C5F88',
+            audioConnection: '#4A90C2',
+            audioConnected: '#5B9FD4',
+            technicalInput: '#606060',
+            technicalOutput: '#A0A0A0',
+            technicalConnection: '#808080',
+            technicalConnected: '#909090'
         }
     },
     {
@@ -77,9 +89,14 @@ export const themes: Theme[] = [
             accentSuccess: '#3FB950',
             accentWarning: '#D29922',
             accentDanger: '#F85149',
-            audioOutput: '#F97583',
             audioInput: '#79C0FF',
-            technical: '#D2A8FF'
+            audioOutput: '#3B6FA5',
+            audioConnection: '#58A6FF',
+            audioConnected: '#6CB6FF',
+            technicalInput: '#505050',
+            technicalOutput: '#909090',
+            technicalConnection: '#707070',
+            technicalConnected: '#808080'
         }
     },
     {
@@ -100,9 +117,14 @@ export const themes: Theme[] = [
             accentSuccess: '#00FF88',
             accentWarning: '#FFFF00',
             accentDanger: '#FF0066',
-            audioOutput: '#FF0066',
             audioInput: '#00FFFF',
-            technical: '#FF00FF'
+            audioOutput: '#0088AA',
+            audioConnection: '#00CCDD',
+            audioConnected: '#00EEFF',
+            technicalInput: '#444455',
+            technicalOutput: '#8888AA',
+            technicalConnection: '#666688',
+            technicalConnected: '#7777AA'
         }
     },
     {
@@ -123,9 +145,14 @@ export const themes: Theme[] = [
             accentSuccess: '#22C55E',
             accentWarning: '#F59E0B',
             accentDanger: '#EF4444',
-            audioOutput: '#F472B6',
-            audioInput: '#60A5FA',
-            technical: '#A78BFA'
+            audioInput: '#93C5FD',
+            audioOutput: '#3B82F6',
+            audioConnection: '#60A5FA',
+            audioConnected: '#7DB8FF',
+            technicalInput: '#475569',
+            technicalOutput: '#94A3B8',
+            technicalConnection: '#64748B',
+            technicalConnected: '#78859B'
         }
     }
 ];
@@ -151,9 +178,14 @@ export function applyTheme(theme: Theme): void {
     root.style.setProperty('--accent-warning', theme.colors.accentWarning);
     root.style.setProperty('--accent-danger', theme.colors.accentDanger);
 
-    root.style.setProperty('--audio-output', theme.colors.audioOutput);
     root.style.setProperty('--audio-input', theme.colors.audioInput);
-    root.style.setProperty('--technical', theme.colors.technical);
+    root.style.setProperty('--audio-output', theme.colors.audioOutput);
+    root.style.setProperty('--audio-connection', theme.colors.audioConnection);
+    root.style.setProperty('--audio-connected', theme.colors.audioConnected);
+    root.style.setProperty('--technical-input', theme.colors.technicalInput);
+    root.style.setProperty('--technical-output', theme.colors.technicalOutput);
+    root.style.setProperty('--technical-connection', theme.colors.technicalConnection);
+    root.style.setProperty('--technical-connected', theme.colors.technicalConnected);
 }
 
 export function getThemeById(id: string): Theme | undefined {

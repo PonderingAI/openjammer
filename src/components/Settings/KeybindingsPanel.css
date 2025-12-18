@@ -1,0 +1,163 @@
+/**
+ * KeybindingsPanel.css - Keyboard shortcuts configuration UI
+ */
+
+.keybindings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.keybindings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.keybindings-description {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.keybindings-reset-all {
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-reset-all:hover:not(:disabled) {
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+}
+
+.keybindings-reset-all:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Category */
+.keybindings-category {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.keybindings-category-title {
+    margin: 0;
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* List */
+.keybindings-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+/* Row */
+.keybindings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast);
+}
+
+.keybindings-row:hover {
+    background: var(--bg-canvas-alt);
+}
+
+.keybindings-row-editing {
+    background: rgba(91, 127, 214, 0.15);
+    outline: 2px solid var(--accent-primary);
+}
+
+.keybindings-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+}
+
+.keybindings-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+/* Shortcut Button */
+.keybindings-shortcut {
+    min-width: 100px;
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-node);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.keybindings-shortcut:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.keybindings-shortcut-custom {
+    background: rgba(91, 127, 214, 0.1);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.keybindings-shortcut-editing {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+    cursor: default;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Reset Button */
+.keybindings-reset {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-md);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.keybindings-reset:hover {
+    border-color: var(--accent-warning);
+    color: var(--accent-warning);
+    background: rgba(212, 160, 80, 0.1);
+}

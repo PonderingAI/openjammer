@@ -1,5 +1,5 @@
 /**
- * Toolbar - Top toolbar with workflow actions
+ * Toolbar - Photoshop-style menu bar with dropdown menus
  */
 
 import { useCallback, useRef, useState, useEffect } from 'react';
@@ -9,6 +9,7 @@ import { useAudioStore } from '../../store/audioStore';
 import { beatClock } from '../../audio/BeatClock';
 import type { BeatClockState } from '../../audio/BeatClock';
 import { exportWorkflow, downloadWorkflow, loadWorkflowFromFile, importWorkflow } from '../../engine/serialization';
+import { DropdownMenu, type MenuItemOrSeparator } from './DropdownMenu';
 import './Toolbar.css';
 
 export function Toolbar() {
@@ -19,45 +20,28 @@ export function Toolbar() {
     const clearGraph = useGraphStore((s) => s.clearGraph);
     const loadGraph = useGraphStore((s) => s.loadGraph);
     const deleteSelected = useGraphStore((s) => s.deleteSelected);
+    const undo = useGraphStore((s) => s.undo);
+    const redo = useGraphStore((s) => s.redo);
 
     const zoom = useCanvasStore((s) => s.zoom);
     const resetView = useCanvasStore((s) => s.resetView);
     const zoomTo = useCanvasStore((s) => s.zoomTo);
+    const ghostMode = useCanvasStore((s) => s.ghostMode);
+    const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
 
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+    const currentMode = useAudioStore((s) => s.currentMode);
+    const isToolbarFocused = currentMode === 1;
 
-    // Beat clock state
+    // Beat clock state for play/stop
     const [clockState, setClockState] = useState<BeatClockState>(beatClock.getState());
-    const [bpmInput, setBpmInput] = useState(String(clockState.bpm));
 
-    // Subscribe to beat clock state changes
     useEffect(() => {
         const unsubscribe = beatClock.onStateChange((state) => {
             setClockState(state);
-            setBpmInput(String(state.bpm));
         });
         return unsubscribe;
     }, []);
-
-    // Handle BPM change
-    const handleBpmChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        setBpmInput(e.target.value);
-    }, []);
-
-    const handleBpmBlur = useCallback(() => {
-        const bpm = parseInt(bpmInput, 10);
-        if (!isNaN(bpm) && bpm >= 20 && bpm <= 300) {
-            beatClock.setBPM(bpm);
-        } else {
-            setBpmInput(String(clockState.bpm));
-        }
-    }, [bpmInput, clockState.bpm]);
-
-    const handleBpmKeyDown = useCallback((e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            handleBpmBlur();
-        }
-    }, [handleBpmBlur]);
 
     // Transport controls
     const handlePlayStop = useCallback(() => {
@@ -88,7 +72,6 @@ export function Toolbar() {
             alert('Failed to import workflow. Please check the file format.');
         }
 
-        // Reset file input
         e.target.value = '';
     }, [loadGraph]);
 
@@ -116,82 +99,117 @@ export function Toolbar() {
         resetView();
     }, [resetView]);
 
+    // Detect platform for shortcut display
+    const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const cmdKey = isMac ? '⌘' : 'Ctrl';
+
+    // Menu definitions
+    const fileMenuItems: MenuItemOrSeparator[] = [
+        {
+            id: 'new',
+            label: 'New',
+            shortcut: `${cmdKey}+N`,
+            onClick: handleNew,
+        },
+        {
+            id: 'import',
+            label: 'Import...',
+            shortcut: `${cmdKey}+O`,
+            onClick: handleImport,
+        },
+        {
+            id: 'export',
+            label: 'Export...',
+            shortcut: `${cmdKey}+S`,
+            onClick: handleExport,
+        },
+    ];
+
+    const editMenuItems: MenuItemOrSeparator[] = [
+        {
+            id: 'delete',
+            label: 'Delete Selected',
+            shortcut: 'Del',
+            onClick: deleteSelected,
+        },
+    ];
+
+    const viewMenuItems: MenuItemOrSeparator[] = [
+        {
+            id: 'zoom-in',
+            label: 'Zoom In',
+            shortcut: `${cmdKey}+=`,
+            onClick: handleZoomIn,
+        },
+        {
+            id: 'zoom-out',
+            label: 'Zoom Out',
+            shortcut: `${cmdKey}+-`,
+            onClick: handleZoomOut,
+        },
+        {
+            id: 'reset-view',
+            label: 'Reset View',
+            shortcut: `${cmdKey}+0`,
+            onClick: handleResetView,
+        },
+        { type: 'separator' },
+        {
+            id: 'ghost-mode',
+            label: ghostMode ? '✓ Ghost Mode' : 'Ghost Mode',
+            shortcut: 'W',
+            onClick: toggleGhostMode,
+        },
+    ];
+
     return (
-        <div className="toolbar">
-            {/* File Actions */}
-            <button className="toolbar-btn" onClick={handleNew} title="New Workflow">
-                📄 New
-            </button>
-            <button className="toolbar-btn" onClick={handleImport} title="Import Workflow">
-                📂 Import
-            </button>
-            <button className="toolbar-btn" onClick={handleExport} title="Export Workflow">
-                💾 Export
-            </button>
-
-            <div className="toolbar-separator" />
-
-            {/* Edit Actions */}
-            <button className="toolbar-btn" onClick={deleteSelected} title="Delete Selected (Del)">
-                🗑️ Delete
-            </button>
-
-            <div className="toolbar-separator" />
-
-            {/* Zoom Controls */}
-            <button className="toolbar-btn" onClick={handleZoomOut} title="Zoom Out">
-                −
-            </button>
-            <div className="toolbar-zoom">
-                {Math.round(zoom * 100)}%
+        <div className={`toolbar ${isToolbarFocused ? 'toolbar-focused' : ''}`}>
+            {/* Menu Bar */}
+            <div className="toolbar-menus">
+                <DropdownMenu label="File" items={fileMenuItems} />
+                <DropdownMenu label="Edit" items={editMenuItems} />
+                <DropdownMenu label="View" items={viewMenuItems} />
             </div>
-            <button className="toolbar-btn" onClick={handleZoomIn} title="Zoom In">
-                +
+
+            <div className="toolbar-separator" />
+
+            {/* Undo/Redo Buttons */}
+            <button
+                className="toolbar-btn toolbar-btn-icon"
+                onClick={undo}
+                title="Undo (Ctrl+Z)"
+            >
+                ↶
             </button>
-            <button className="toolbar-btn" onClick={handleResetView} title="Reset View">
-                ⌂
+            <button
+                className="toolbar-btn toolbar-btn-icon"
+                onClick={redo}
+                title="Redo (Ctrl+Shift+Z)"
+            >
+                ↷
             </button>
 
             <div className="toolbar-separator" />
 
-            {/* Transport & BPM Controls */}
+            {/* Play/Stop */}
             <button
-                className={`toolbar-btn ${clockState.isPlaying ? 'toolbar-btn-active' : ''}`}
+                className={`toolbar-btn toolbar-btn-icon ${clockState.isPlaying ? 'toolbar-btn-active' : ''}`}
                 onClick={handlePlayStop}
                 disabled={!isAudioContextReady}
                 title={clockState.isPlaying ? 'Stop Clock' : 'Start Clock'}
             >
                 {clockState.isPlaying ? '⏹' : '▶'}
             </button>
-            <div className="toolbar-bpm">
-                <input
-                    type="number"
-                    value={bpmInput}
-                    onChange={handleBpmChange}
-                    onBlur={handleBpmBlur}
-                    onKeyDown={handleBpmKeyDown}
-                    min="20"
-                    max="300"
-                    className="toolbar-bpm-input"
-                    title="BPM (20-300)"
-                />
-                <span className="toolbar-bpm-label">BPM</span>
-            </div>
-            {clockState.isPlaying && (
-                <div className="toolbar-beat-indicator">
-                    Beat {(clockState.currentBeat % clockState.beatsPerBar) + 1}
-                </div>
-            )}
 
             <div className="toolbar-separator" />
 
             {/* Settings */}
             <button
-                className="toolbar-btn"
+                className="toolbar-btn toolbar-btn-icon"
                 onClick={() => window.dispatchEvent(new CustomEvent('openjammer:toggle-settings'))}
                 title="Settings"
             >
-                ⚙️ Settings
+                ⚙️
             </button>
 
             {/* Hidden File Input */}

@@ -17,9 +17,18 @@ interface AudioStore {
     currentMode: number; // 1 = config, 2-9 = keyboard node modes
     setCurrentMode: (mode: number) => void;
 
+    // Tracks if current mode has no keyboard assigned (for warning display)
+    isModeUnassigned: boolean;
+
     // Active Keyboard Node (when in mode 2-9)
     activeKeyboardId: string | null;
     setActiveKeyboard: (keyboardId: string | null) => void;
+
+    // Keyboard number to node ID mapping
+    keyboardNumberMap: Map<number, string>;
+    registerKeyboard: (num: number, nodeId: string) => void;
+    unregisterKeyboard: (num: number) => void;
+    getKeyboardByNumber: (num: number) => string | null;
 
     // Active Keys (for visual feedback)
     activeKeys: Set<string>;
@@ -41,11 +50,50 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
 
     // Mode Switching
     currentMode: 1, // Start in config mode
-    setCurrentMode: (mode) => set({ currentMode: mode }),
+    setCurrentMode: (mode) => {
+        const state = get();
+        // Check if mode 2-9 has a keyboard assigned
+        const isModeUnassigned = mode >= 2 && mode <= 9 && !state.keyboardNumberMap.has(mode);
+
+        // If switching to a keyboard mode, also set the active keyboard
+        if (mode >= 2 && mode <= 9) {
+            const keyboardId = state.keyboardNumberMap.get(mode) || null;
+            set({
+                currentMode: mode,
+                isModeUnassigned,
+                activeKeyboardId: keyboardId
+            });
+        } else {
+            set({
+                currentMode: mode,
+                isModeUnassigned: false,
+                activeKeyboardId: null
+            });
+        }
+    },
+    isModeUnassigned: false,
 
     // Active Keyboard
     activeKeyboardId: null,
     setActiveKeyboard: (keyboardId) => set({ activeKeyboardId: keyboardId }),
+
+    // Keyboard number mapping
+    keyboardNumberMap: new Map(),
+    registerKeyboard: (num, nodeId) => set((state) => {
+        const newMap = new Map(state.keyboardNumberMap);
+        newMap.set(num, nodeId);
+        // Update isModeUnassigned if current mode now has a keyboard
+        const isModeUnassigned = state.currentMode >= 2 && state.currentMode <= 9 && !newMap.has(state.currentMode);
+        return { keyboardNumberMap: newMap, isModeUnassigned };
+    }),
+    unregisterKeyboard: (num) => set((state) => {
+        const newMap = new Map(state.keyboardNumberMap);
+        newMap.delete(num);
+        // Update isModeUnassigned if current mode lost its keyboard
+        const isModeUnassigned = state.currentMode >= 2 && state.currentMode <= 9 && !newMap.has(state.currentMode);
+        return { keyboardNumberMap: newMap, isModeUnassigned };
+    }),
+    getKeyboardByNumber: (num) => get().keyboardNumberMap.get(num) || null,
 
     // Active Keys
     activeKeys: new Set(),

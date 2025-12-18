@@ -6,6 +6,8 @@ import { useCallback, useRef, useState, useEffect } from 'react';
 import type { Position, NodeType, Connection } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
+import { useAudioStore } from '../../store/audioStore';
+import { useKeybindingsStore } from '../../store/keybindingsStore';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
 import './NodeCanvas.css';
@@ -49,6 +51,9 @@ export function NodeCanvas() {
     const ghostMode = useCanvasStore((s) => s.ghostMode);
     const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
 
+    // Audio store for mode switching
+    const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
+
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
@@ -81,7 +86,11 @@ export function NodeCanvas() {
         }
 
         // Left click on empty canvas - start box selection
-        if (e.button === 0 && !(e.target as HTMLElement).closest('.node, .port')) {
+        // Check for all node and port classes (standard and schematic)
+        const isNodeOrPort = (e.target as HTMLElement).closest(
+            '.node, .schematic-node, .port, .port-dot, .port-circle-marker, .note-input-port, .output-port, .speaker-input-port'
+        );
+        if (e.button === 0 && !isNodeOrPort) {
             clearSelection();
             stopConnecting();
 
@@ -151,38 +160,40 @@ export function NodeCanvas() {
         zoomTo(newZoom, { x: e.clientX, y: e.clientY });
     }, [zoom, zoomTo]);
 
-    // Handle keyboard shortcuts
+    // Handle keyboard shortcuts using keybindings store
     useEffect(() => {
+        const { matchesAction } = useKeybindingsStore.getState();
+
         function handleKeyDown(e: KeyboardEvent) {
             // Skip if typing in input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
-            // Delete/Backspace - delete selected
-            if (e.key === 'Delete' || e.key === 'Backspace') {
+            // Check keybinding actions
+            if (matchesAction(e, 'edit.delete') || e.key === 'Backspace') {
                 e.preventDefault();
                 deleteSelected();
+                return;
             }
 
-            // Ghost Mode toggle with W key
-            if (e.key === 'w' || e.key === 'W') {
+            if (matchesAction(e, 'view.ghostMode')) {
                 e.preventDefault();
                 toggleGhostMode();
+                return;
             }
 
-            // Ctrl+Z - Undo
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            if (matchesAction(e, 'edit.undo')) {
                 e.preventDefault();
                 undo();
+                return;
             }
 
-            // Ctrl+Y or Ctrl+Shift+Z - Redo
-            if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+            if (matchesAction(e, 'edit.redo')) {
                 e.preventDefault();
                 redo();
+                return;
             }
 
-            // 'A' Key - Multi-connect from selected node
-            if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            if (matchesAction(e, 'canvas.multiConnect')) {
                 // Get selected node
                 const selectedIds = useGraphStore.getState().selectedNodeIds;
                 if (selectedIds.size === 1) {
@@ -193,7 +204,7 @@ export function NodeCanvas() {
                     if (node) {
                         // Get all output ports
                         const outputPorts = node.ports
-                            .filter(p => p.direction === 'output' && p.type === 'technical') // Restrict to technical for now?
+                            .filter(p => p.direction === 'output' && p.type === 'technical')
                             .map(p => p.id);
 
                         if (outputPorts.length > 0) {
@@ -201,30 +212,48 @@ export function NodeCanvas() {
                         }
                     }
                 }
+                return;
+            }
+
+            // 1-9 Keys - Mode switching (not customizable for now)
+            const keyNum = parseInt(e.key, 10);
+            if (!isNaN(keyNum) && keyNum >= 1 && keyNum <= 9) {
+                e.preventDefault();
+                setCurrentMode(keyNum);
+                return;
             }
         }
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode]);
 
-    // Get port position for connection rendering
+    // Get port position for connection rendering using DOM measurement
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
-        const node = nodes.get(nodeId);
-        if (!node) return null;
+        // Query port element by data attributes
+        const portElement = document.querySelector(
+            `[data-node-id="${nodeId}"][data-port-id="${portId}"]`
+        );
 
-        const port = node.ports.find(p => p.id === portId);
-        if (!port) return null;
+        if (!portElement) return null;
 
-        const portIndex = node.ports
-            .filter(p => p.direction === port.direction)
-            .indexOf(port);
+        const canvasElement = canvasRef.current;
+        if (!canvasElement) return null;
 
-        const x = port.direction === 'input' ? node.position.x : node.position.x + 200;
-        const y = node.position.y + 36 + 24 + portIndex * 24;
+        const portRect = portElement.getBoundingClientRect();
+        const canvasRect = canvasElement.getBoundingClientRect();
 
-        return { x, y };
-    }, [nodes]);
+        // Convert screen coordinates to canvas coordinates
+        // Account for pan and zoom
+        const centerX = portRect.left + portRect.width / 2 - canvasRect.left;
+        const centerY = portRect.top + portRect.height / 2 - canvasRect.top;
+
+        // Inverse transform to get canvas-space coordinates
+        const canvasX = (centerX - pan.x) / zoom;
+        const canvasY = (centerY - pan.y) / zoom;
+
+        return { x: canvasX, y: canvasY };
+    }, [pan, zoom, nodes]);
 
     // Render connection path
     const renderConnection = useCallback((conn: Connection) => {

@@ -49,11 +49,11 @@
 }
 
 .connection-line.audio {
-    stroke: var(--audio-output);
+    stroke: var(--audio-connection);
 }
 
 .connection-line.technical {
-    stroke: var(--technical);
+    stroke: var(--technical-connection);
 }
 
 .connection-line.selected {
@@ -115,11 +115,11 @@
 
     0%,
     100% {
-        box-shadow: 0 0 8px 2px var(--audio-output);
+        box-shadow: 0 0 8px 2px var(--audio-connection);
     }
 
     50% {
-        box-shadow: 0 0 16px 4px var(--audio-output);
+        box-shadow: 0 0 16px 4px var(--audio-connection);
     }
 }
 

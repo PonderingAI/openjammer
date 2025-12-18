@@ -1,16 +1,26 @@
 /**
- * Help Panel - Keyboard shortcuts and tips
+ * Help Panel - Keyboard shortcuts, mode indicator, and tips
  */
 
 import { useState } from 'react';
+import { useAudioStore } from '../../store/audioStore';
 
 export function HelpPanel() {
     const [isVisible, setIsVisible] = useState(true);
 
+    const currentMode = useAudioStore((s) => s.currentMode);
+    const isModeUnassigned = useAudioStore((s) => s.isModeUnassigned);
+
+    // Get mode description
+    const getModeLabel = () => {
+        if (currentMode === 1) return 'Config';
+        return `Keyboard ${currentMode}`;
+    };
+
     if (!isVisible) {
         return (
             <button
-                className="toolbar-btn"
+                className={`toolbar-btn help-btn-minimized ${isModeUnassigned ? 'warning' : ''}`}
                 onClick={() => setIsVisible(true)}
                 style={{
                     position: 'fixed',
@@ -22,13 +32,13 @@ export function HelpPanel() {
                     zIndex: 100
                 }}
             >
-                ❓ Help
+                {isModeUnassigned ? '⚠️' : '❓'} Help
             </button>
         );
     }
 
     return (
-        <div className="help-panel">
+        <div className={`help-panel ${isModeUnassigned ? 'help-panel-warning' : ''}`}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3>🎹 OpenJammer</h3>
                 <button
@@ -44,7 +54,25 @@ export function HelpPanel() {
                 </button>
             </div>
 
+            {/* Mode Indicator */}
+            <div className="help-mode-indicator">
+                <span className="help-mode-label">Mode:</span>
+                <span className={`help-mode-value ${currentMode === 1 ? 'mode-config' : 'mode-keyboard'}`}>
+                    <kbd>{currentMode}</kbd> {getModeLabel()}
+                </span>
+            </div>
+
+            {/* Warning for unassigned mode */}
+            {isModeUnassigned && (
+                <div className="help-mode-warning">
+                    <span className="warning-icon">⚠️</span>
+                    <span>No keyboard assigned to key {currentMode}. Create a Keyboard node and set its number to {currentMode}.</span>
+                </div>
+            )}
+
             <ul>
+                <li><kbd>1</kbd> Config mode (toolbar)</li>
+                <li><kbd>2-9</kbd> Keyboard modes</li>
                 <li><kbd>Right Click</kbd> Add nodes</li>
                 <li><kbd>Drag</kbd> Box select</li>
                 <li><kbd>Alt + Drag</kbd> Pan canvas</li>
