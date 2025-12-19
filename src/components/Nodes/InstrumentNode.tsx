@@ -364,17 +364,27 @@ export function InstrumentNode({
         // Update on scroll/resize
         window.addEventListener('resize', updateDropdownPosition);
 
-        // Use RAF to update on canvas transforms (panning/zooming)
-        let rafId: number;
-        const rafUpdate = () => {
+        // Use ResizeObserver to detect node size/position changes
+        // This is more efficient than RAF loop - only fires when actual changes occur
+        const resizeObserver = new ResizeObserver(() => {
             updateDropdownPosition();
-            rafId = requestAnimationFrame(rafUpdate);
-        };
-        rafId = requestAnimationFrame(rafUpdate);
+        });
+        resizeObserver.observe(nodeRef.current);
+
+        // Also observe the canvas container for transform changes (pan/zoom)
+        const canvasContainer = nodeRef.current.closest('.node-canvas-container');
+        if (canvasContainer) {
+            resizeObserver.observe(canvasContainer);
+        }
+
+        // Fallback: throttled interval check for transforms (only if needed)
+        // Much more efficient than RAF - 100ms interval vs 16ms
+        const intervalId = window.setInterval(updateDropdownPosition, 100);
 
         return () => {
             window.removeEventListener('resize', updateDropdownPosition);
-            cancelAnimationFrame(rafId);
+            resizeObserver.disconnect();
+            clearInterval(intervalId);
         };
     }, [showPopup]);
 

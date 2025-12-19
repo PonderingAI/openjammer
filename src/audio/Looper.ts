@@ -55,8 +55,10 @@ export class Looper {
     private cycleTimerId: number | null = null;
     private animationFrameId: number | null = null;
 
-    // Waveform history (builds during recording)
-    private waveformHistory: number[] = [];
+    // Waveform history (builds during recording) - uses circular buffer for O(1) inserts
+    private waveformHistory: Float32Array;
+    private waveformIndex: number = 0;
+    private waveformLength: number = 0; // Actual number of samples (may be less than MAX during initial recording)
     private lastWaveformSampleTime: number = 0;
     private readonly WAVEFORM_SAMPLE_INTERVAL = 50; // ms between samples
     private readonly MAX_WAVEFORM_SAMPLES = 2000; // Cap waveform data to prevent memory issues
@@ -69,6 +71,7 @@ export class Looper {
 
     constructor(duration: number = 10) {
         this.duration = duration;
+        this.waveformHistory = new Float32Array(this.MAX_WAVEFORM_SAMPLES);
         this.initOutput();
     }
 
@@ -116,6 +119,32 @@ export class Looper {
 
     setOnWaveformHistoryUpdate(callback: (history: number[], playheadPosition: number) => void): void {
         this.onWaveformHistoryUpdate = callback;
+    }
+
+    /**
+     * Extract waveform history from circular buffer as a regular array.
+     * Returns samples in chronological order (oldest to newest).
+     */
+    private getWaveformHistoryArray(): number[] {
+        if (this.waveformLength === 0) return [];
+
+        const result: number[] = new Array(this.waveformLength);
+
+        if (this.waveformLength < this.MAX_WAVEFORM_SAMPLES) {
+            // Buffer hasn't wrapped yet - simple copy from start
+            for (let i = 0; i < this.waveformLength; i++) {
+                result[i] = this.waveformHistory[i];
+            }
+        } else {
+            // Buffer has wrapped - need to reorder
+            // waveformIndex points to the next write position (oldest data)
+            for (let i = 0; i < this.waveformLength; i++) {
+                const srcIndex = (this.waveformIndex + i) % this.MAX_WAVEFORM_SAMPLES;
+                result[i] = this.waveformHistory[srcIndex];
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -218,7 +247,9 @@ export class Looper {
         if (!ctx) return;
 
         this.recordedChunks = [];
-        this.waveformHistory = [];  // Reset waveform history for new cycle
+        // Reset circular buffer for new cycle (just reset indices, no allocation needed)
+        this.waveformIndex = 0;
+        this.waveformLength = 0;
         this.lastWaveformSampleTime = 0;
         this.cycleStartTime = ctx.currentTime;
 
@@ -294,7 +325,7 @@ export class Looper {
                 isMuted: false,
                 gainNode: null,
                 sourceNode: null,
-                waveformData: [...this.waveformHistory]  // Store waveform shape
+                waveformData: this.getWaveformHistoryArray()  // Store waveform shape
             };
 
             this.loops.push(loop);
@@ -345,11 +376,13 @@ export class Looper {
                     const amplitude = Math.abs(dataArray[i] - 128) / 128;
                     if (amplitude > peak) peak = amplitude;
                 }
-                // Use circular buffer to prevent unbounded memory growth
-                if (this.waveformHistory.length >= this.MAX_WAVEFORM_SAMPLES) {
-                    this.waveformHistory.shift();
+
+                // Add to circular buffer - O(1) operation instead of O(n) shift
+                this.waveformHistory[this.waveformIndex] = peak;
+                this.waveformIndex = (this.waveformIndex + 1) % this.MAX_WAVEFORM_SAMPLES;
+                if (this.waveformLength < this.MAX_WAVEFORM_SAMPLES) {
+                    this.waveformLength++;
                 }
-                this.waveformHistory.push(peak);
                 this.lastWaveformSampleTime = now;
             }
 
@@ -360,8 +393,8 @@ export class Looper {
                     ? (this.currentTime / this.duration) * 100
                     : 0;
 
-                // Send waveform history update
-                this.onWaveformHistoryUpdate?.(this.waveformHistory, playheadPosition);
+                // Send waveform history update (extract ordered array from circular buffer)
+                this.onWaveformHistoryUpdate?.(this.getWaveformHistoryArray(), playheadPosition);
             }
         }
 

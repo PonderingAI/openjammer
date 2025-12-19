@@ -20,17 +20,20 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        # Pinned to v4.3.1 for supply chain security
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 2
 
       - name: Claude Security Review
-        uses: anthropics/claude-code-security-review@main
+        # Pinned to latest main commit for supply chain security
+        uses: anthropics/claude-code-security-review@25e460eb0a12077f0c6a1934d5dbae2f50785dda
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           comment-pr: true
-          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Optional: customize the security review focus
           prompt: |
             Perform a comprehensive security review of this PR with focus on:

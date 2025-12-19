@@ -62,6 +62,7 @@ class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
     private activeAudioConnections: Set<string> = new Set(); // Track "sourceId->targetId" pairs
     private pendingDisconnects: Map<string, number> = new Map(); // Track pending disconnect timeouts
+    private connectionGenerations: Map<string, number> = new Map(); // Track connection versions for race condition prevention
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
@@ -345,9 +346,17 @@ class AudioGraphManager {
             audioNode.instance.disconnect();
         }
 
-        // Disconnect nodes
-        audioNode.inputNode?.disconnect();
-        audioNode.outputNode?.disconnect();
+        // Disconnect nodes (may throw if already disconnected)
+        try {
+            audioNode.inputNode?.disconnect();
+        } catch {
+            // Already disconnected - safe to ignore
+        }
+        try {
+            audioNode.outputNode?.disconnect();
+        } catch {
+            // Already disconnected - safe to ignore
+        }
     }
 
     /**
@@ -430,7 +439,12 @@ class AudioGraphManager {
             return;
         }
 
-        // Cancel any pending disconnect for this connection (race condition fix)
+        // Increment connection generation to invalidate any pending disconnects
+        // This prevents race conditions where a disconnect timeout fires after reconnection
+        const newGeneration = (this.connectionGenerations.get(connectionKey) || 0) + 1;
+        this.connectionGenerations.set(connectionKey, newGeneration);
+
+        // Cancel any pending disconnect for this connection
         const pendingTimeout = this.pendingDisconnects.get(connectionKey);
         if (pendingTimeout !== undefined) {
             clearTimeout(pendingTimeout);
@@ -476,6 +490,9 @@ class AudioGraphManager {
             return;
         }
 
+        // Capture current generation - if it changes before timeout, connection was recreated
+        const capturedGeneration = this.connectionGenerations.get(connectionKey) || 0;
+
         // Fade out before disconnecting
         if (sourceAudioNode.gainEnvelope) {
             const now = ctx.currentTime;
@@ -487,6 +504,15 @@ class AudioGraphManager {
 
             // Track and disconnect after fade (can be canceled if reconnected)
             const timeoutId = window.setTimeout(() => {
+                // Double-check: verify generation hasn't changed (connection wasn't recreated)
+                // This prevents race conditions even if timeout cancellation fails
+                const currentGeneration = this.connectionGenerations.get(connectionKey) || 0;
+                if (currentGeneration !== capturedGeneration) {
+                    // Connection was recreated - don't disconnect
+                    this.pendingDisconnects.delete(connectionKey);
+                    return;
+                }
+
                 // Verify key still exists - callback may fire after reconnection canceled it
                 if (this.pendingDisconnects.has(connectionKey)) {
                     this.pendingDisconnects.delete(connectionKey);

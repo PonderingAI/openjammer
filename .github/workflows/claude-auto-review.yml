@@ -11,12 +11,17 @@ permissions:
 jobs:
   review:
     # Don't run on bot commits to prevent loops
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    # Check commit message, actor identity, and PR author
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      github.actor != 'claude[bot]' &&
+      github.event.pull_request.user.login != 'claude[bot]'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        # Pinned to v4.3.1 for supply chain security
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -27,10 +32,12 @@ jobs:
           git config user.email "claude[bot]@users.noreply.github.com"
 
       - name: Claude Iterative Review & Fix
-        uses: anthropics/claude-code-action@v1
+        # Pinned to v1.0.26 for supply chain security
+        uses: anthropics/claude-code-action@0d1933529914177075d5bc3558ae3d047f188146
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --max-turns 5
           prompt: |
