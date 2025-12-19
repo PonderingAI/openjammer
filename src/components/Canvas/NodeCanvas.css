@@ -140,3 +140,56 @@
     z-index: 1000;
     pointer-events: none;
 }
+
+/* ============================================================================
+   Back to Action - Navigation button when nodes are out of view
+   ============================================================================ */
+
+.back-to-action {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    z-index: 100;
+    box-shadow: var(--shadow-menu);
+    animation: back-to-action-fade-in 0.3s ease-out;
+}
+
+.back-to-action:hover {
+    transform: translate(-50%, -50%) scale(1.05);
+    box-shadow: var(--shadow-menu), 0 0 20px rgba(91, 127, 214, 0.2);
+}
+
+.back-to-action-arrow {
+    font-size: 48px;
+    transform: rotate(var(--arrow-rotation));
+    transition: transform var(--transition-fast);
+    line-height: 1;
+}
+
+.back-to-action-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    color: var(--text-secondary);
+}
+
+@keyframes back-to-action-fade-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}

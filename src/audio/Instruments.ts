@@ -95,7 +95,7 @@ export function getRowNote(key: string, row: number, baseOctave: number): string
 // Instrument Synthesizers
 // ============================================================================
 
-export type InstrumentType = 'piano' | 'cello' | 'violin' | 'saxophone';
+export type InstrumentType = 'piano' | 'cello' | 'electricCello' | 'violin' | 'saxophone';
 
 interface ActiveNote {
     oscillators: OscillatorNode[];
@@ -303,6 +303,169 @@ export class Cello extends Instrument {
 }
 
 /**
+ * Electric Cello - Modern, processed string sound with saturation and chorus
+ *
+ * Sound design:
+ * - Warm sawtooth base with soft saturation (waveshaper)
+ * - Chorus effect via detuned oscillators for stereo width
+ * - Expressive slow attack with sustain
+ * - Rich harmonics with resonant low-pass filter
+ * - Deeper, more expressive vibrato than acoustic
+ */
+export class ElectricCello extends Instrument {
+    private waveShaperCurve: Float32Array<ArrayBuffer> | null = null;
+
+    // Sound design constants
+    private static readonly FILTER_RESONANCE = 2;
+    private static readonly FILTER_CUTOFF_START = 800;
+    private static readonly FILTER_CUTOFF_END = 2500;
+    private static readonly VIBRATO_FREQUENCY = 4.5;
+    private static readonly VIBRATO_DEPTH = 0.015; // As fraction of note frequency
+    private static readonly VIBRATO_ONSET_TIME = 0.4;
+    private static readonly ATTACK_TIME = 0.2;
+    private static readonly ATTACK_PEAK = 0.45;
+    private static readonly SUSTAIN_LEVEL = 0.38;
+    private static readonly SUSTAIN_TIME = 0.5;
+    private static readonly CHORUS_DETUNE_CENTS = 7;
+    private static readonly CHORUS_GAIN = 0.35;
+    private static readonly SUB_OSC_GAIN = 0.2;
+    private static readonly SATURATION_AMOUNT = 1.5;
+
+    constructor() {
+        super('cello'); // Base type for compatibility
+    }
+
+    /**
+     * Generate soft clipping curve for saturation effect.
+     * Returns Float32Array compatible with WaveShaperNode.curve
+     */
+    private getSaturationCurve(): Float32Array<ArrayBuffer> {
+        if (!this.waveShaperCurve) {
+            const samples = 256;
+            // Explicitly create ArrayBuffer for WaveShaperNode compatibility
+            const buffer = new ArrayBuffer(samples * Float32Array.BYTES_PER_ELEMENT);
+            const curve = new Float32Array(buffer);
+            for (let i = 0; i < samples; i++) {
+                const x = (i * 2) / samples - 1;
+                // Soft clipping curve using tanh for smooth saturation
+                curve[i] = Math.tanh(x * ElectricCello.SATURATION_AMOUNT);
+            }
+            this.waveShaperCurve = curve;
+        }
+        return this.waveShaperCurve;
+    }
+
+    playNote(note: string): void {
+        if (this.activeNotes.has(note)) return;
+
+        const ctx = getAudioContext();
+        if (!ctx || !this.outputNode) return;
+
+        const freq = noteToFrequency(note);
+        const now = ctx.currentTime;
+
+        // Resonant low-pass filter for warmth with slight resonance
+        const filterNode = ctx.createBiquadFilter();
+        filterNode.type = 'lowpass';
+        filterNode.frequency.setValueAtTime(ElectricCello.FILTER_CUTOFF_START, now);
+        filterNode.frequency.linearRampToValueAtTime(ElectricCello.FILTER_CUTOFF_END, now + ElectricCello.ATTACK_TIME + 0.1);
+        filterNode.Q.value = ElectricCello.FILTER_RESONANCE;
+        filterNode.connect(this.outputNode);
+
+        // Waveshaper for soft saturation
+        const waveshaper = ctx.createWaveShaper();
+        waveshaper.curve = this.getSaturationCurve();
+        waveshaper.oversample = '2x';
+        waveshaper.connect(filterNode);
+
+        // Main gain envelope - slow, expressive attack
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(ElectricCello.ATTACK_PEAK, now + ElectricCello.ATTACK_TIME);
+        gainNode.gain.linearRampToValueAtTime(ElectricCello.SUSTAIN_LEVEL, now + ElectricCello.SUSTAIN_TIME);
+        gainNode.connect(waveshaper);
+
+        const oscillators: OscillatorNode[] = [];
+
+        // Main oscillator - sawtooth for rich harmonics
+        const osc1 = ctx.createOscillator();
+        osc1.type = 'sawtooth';
+        osc1.frequency.value = freq;
+        osc1.connect(gainNode);
+        osc1.start(now);
+        oscillators.push(osc1);
+
+        // Detuned oscillator +N cents for chorus width
+        const osc2Gain = ctx.createGain();
+        osc2Gain.gain.value = ElectricCello.CHORUS_GAIN;
+        osc2Gain.connect(gainNode);
+
+        const osc2 = ctx.createOscillator();
+        osc2.type = 'sawtooth';
+        osc2.frequency.value = freq * Math.pow(2, ElectricCello.CHORUS_DETUNE_CENTS / 1200);
+        osc2.connect(osc2Gain);
+        osc2.start(now);
+        oscillators.push(osc2);
+
+        // Detuned oscillator -N cents for chorus width
+        const osc3Gain = ctx.createGain();
+        osc3Gain.gain.value = ElectricCello.CHORUS_GAIN;
+        osc3Gain.connect(gainNode);
+
+        const osc3 = ctx.createOscillator();
+        osc3.type = 'sawtooth';
+        osc3.frequency.value = freq * Math.pow(2, -ElectricCello.CHORUS_DETUNE_CENTS / 1200);
+        osc3.connect(osc3Gain);
+        osc3.start(now);
+        oscillators.push(osc3);
+
+        // Sub oscillator one octave down for depth
+        const subGain = ctx.createGain();
+        subGain.gain.value = ElectricCello.SUB_OSC_GAIN;
+        subGain.connect(gainNode);
+
+        const subOsc = ctx.createOscillator();
+        subOsc.type = 'sine';
+        subOsc.frequency.value = freq / 2;
+        subOsc.connect(subGain);
+        subOsc.start(now);
+        oscillators.push(subOsc);
+
+        // Deep, expressive vibrato
+        const lfo = ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = ElectricCello.VIBRATO_FREQUENCY;
+
+        const lfoGain = ctx.createGain();
+        lfoGain.gain.setValueAtTime(0, now);
+        lfoGain.gain.linearRampToValueAtTime(freq * ElectricCello.VIBRATO_DEPTH, now + ElectricCello.VIBRATO_ONSET_TIME);
+
+        lfo.connect(lfoGain);
+        // Apply vibrato to all tuned oscillators
+        lfoGain.connect(osc1.frequency);
+        lfoGain.connect(osc2.frequency);
+        lfoGain.connect(osc3.frequency);
+        lfo.start(now);
+        oscillators.push(lfo);
+
+        // Slight filter modulation for movement
+        const filterLfo = ctx.createOscillator();
+        filterLfo.type = 'sine';
+        filterLfo.frequency.value = 0.5;
+
+        const filterLfoGain = ctx.createGain();
+        filterLfoGain.gain.value = 500;
+
+        filterLfo.connect(filterLfoGain);
+        filterLfoGain.connect(filterNode.frequency);
+        filterLfo.start(now);
+        oscillators.push(filterLfo);
+
+        this.activeNotes.set(note, { oscillators, gainNode, filterNode });
+    }
+}
+
+/**
  * Violin - Bright, agile string sound
  */
 export class Violin extends Instrument {
@@ -451,6 +614,8 @@ export function createInstrument(type: InstrumentType): Instrument {
             return new Piano();
         case 'cello':
             return new Cello();
+        case 'electricCello':
+            return new ElectricCello();
         case 'violin':
             return new Violin();
         case 'saxophone':

@@ -5,10 +5,14 @@
 import { useState, useEffect } from 'react';
 import type { GraphNode, SpeakerNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
+import { audioGraphManager } from '../../audio/AudioGraphManager';
 
 interface SpeakerNodeProps {
     node: GraphNode;
-    handlePortClick?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
     hasConnection?: (portId: string) => boolean;
     handleHeaderMouseDown?: (e: React.MouseEvent) => void;
     handleNodeMouseEnter?: () => void;
@@ -26,7 +30,10 @@ interface AudioDevice {
 
 export function SpeakerNode({
     node,
-    handlePortClick,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
     hasConnection,
     handleHeaderMouseDown,
     handleNodeMouseEnter,
@@ -41,6 +48,7 @@ export function SpeakerNode({
 
     const [devices, setDevices] = useState<AudioDevice[]>([]);
     const [showDevices, setShowDevices] = useState(false);
+    const isMuted = data.isMuted ?? false;
 
     // Fetch output devices
     useEffect(() => {
@@ -57,13 +65,41 @@ export function SpeakerNode({
         });
     }, []);
 
+    // Click outside to close device dropdown
+    useEffect(() => {
+        if (!showDevices) return;
+
+        const handleClickOutside = (e: MouseEvent) => {
+            const dropdown = document.querySelector('.speaker-node .device-dropdown');
+            const trigger = document.querySelector('.speaker-node .device-select-trigger');
+            if (dropdown && !dropdown.contains(e.target as Node) &&
+                trigger && !trigger.contains(e.target as Node)) {
+                setShowDevices(false);
+            }
+        };
+
+        setTimeout(() => {
+            document.addEventListener('mousedown', handleClickOutside);
+        }, 0);
+
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showDevices]);
+
     const currentDeviceId = data.deviceId || 'default';
-    const currentLabel = devices.find(d => d.deviceId === currentDeviceId)?.label || 'output device';
+    const currentLabel = devices.find(d => d.deviceId === currentDeviceId)?.label || 'Default Output';
 
     // Handle device selection
     const handleDeviceSelect = (deviceId: string) => {
         updateNodeData<SpeakerNodeData>(node.id, { deviceId });
         setShowDevices(false);
+    };
+
+    // Handle mute toggle
+    const handleMuteToggle = () => {
+        const newMuted = !isMuted;
+        updateNodeData<SpeakerNodeData>(node.id, { isMuted: newMuted });
+        // Update the actual audio node
+        audioGraphManager.updateSpeakerVolume(node.id, data.volume ?? 1, newMuted);
     };
 
     // Get input port for the speaker
@@ -85,66 +121,79 @@ export function SpeakerNode({
             </div>
 
             {/* Visual Container */}
-            <div className="schematic-container">
+            <div className="speaker-body">
                 {/* Input Port */}
                 {inputPort && (
                     <div
                         className={`speaker-input-port ${hasConnection?.(inputPort.id) ? 'connected' : ''}`}
                         data-node-id={node.id}
                         data-port-id={inputPort.id}
-                        onClick={(e) => handlePortClick?.(inputPort.id, e)}
+                        onMouseDown={(e) => handlePortMouseDown?.(inputPort.id, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(inputPort.id, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(inputPort.id)}
+                        onMouseLeave={handlePortMouseLeave}
                         title={inputPort.name}
                     />
                 )}
 
-                {/* Speaker Symbol */}
-                <div className="speaker-symbol">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
-                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-                    </svg>
-                </div>
-            </div>
-
-            {/* Output Device Selector */}
-            <div className="device-selector-container">
-                <button
-                    className="device-select-trigger"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        setShowDevices(!showDevices);
-                    }}
-                >
-                    {currentLabel}
-                </button>
-
-                {showDevices && (
-                    <div
-                        className="device-dropdown schematic-dropdown"
-                        onWheel={(e) => e.stopPropagation()}
+                {/* Speaker Symbol with Mute Button */}
+                <div className="speaker-symbol-container">
+                    <button
+                        className={`speaker-mute-btn ${isMuted ? 'muted' : 'live'}`}
+                        onClick={handleMuteToggle}
+                        title={isMuted ? 'Unmute' : 'Mute'}
                     >
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
+                            {isMuted ? (
+                                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+                            ) : (
+                                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                            )}
+                        </svg>
+                    </button>
+                </div>
+
+                {/* Output Device Selector */}
+                <div className="device-selector-container">
+                    <button
+                        className="device-select-trigger"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowDevices(!showDevices);
+                        }}
+                    >
+                        {currentLabel}
+                    </button>
+
+                    {showDevices && (
                         <div
-                            className="device-item"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeviceSelect('default');
-                            }}
+                            className="device-dropdown schematic-dropdown"
+                            onWheel={(e) => e.stopPropagation()}
                         >
-                            Default Output
-                        </div>
-                        {devices.map(d => (
                             <div
-                                key={d.deviceId}
                                 className="device-item"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDeviceSelect(d.deviceId);
+                                    handleDeviceSelect('default');
                                 }}
                             >
-                                {d.label}
+                                Default Output
                             </div>
-                        ))}
-                    </div>
-                )}
+                            {devices.map(d => (
+                                <div
+                                    key={d.deviceId}
+                                    className="device-item"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeviceSelect(d.deviceId);
+                                    }}
+                                >
+                                    {d.label}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

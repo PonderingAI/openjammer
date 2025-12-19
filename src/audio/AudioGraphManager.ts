@@ -6,12 +6,37 @@
  */
 
 import { getAudioContext } from './AudioEngine';
-import { createInstrument, Instrument } from './Instruments';
+import { createInstrument, Instrument, getNoteName } from './Instruments';
 import type { InstrumentType } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData } from '../engine/types';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, NodeData } from '../engine/types';
+
+// Type guard for instrument node data
+function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
+    if (typeof data !== 'object' || data === null) return false;
+    if (!('offsets' in data)) return false;
+
+    const offsets = (data as InstrumentNodeData).offsets;
+    return typeof offsets === 'object' && offsets !== null;
+}
+import { useGraphStore } from '../store/graphStore';
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Valid instrument node types for keyboard triggering */
+const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'] as const;
+
+/** Keyboard row bounds (1-indexed rows) */
+const MIN_KEYBOARD_ROW = 1;
+const MAX_KEYBOARD_ROW = 3;
+
+/** Key index bounds (0-indexed within each row) */
+const MIN_KEY_INDEX = 0;
+const MAX_KEY_INDEX = 11; // 12 keys per row (chromatic octave)
 
 // ============================================================================
 // Types
@@ -35,11 +60,22 @@ type NodeChangeCallback = (nodes: Map<string, GraphNode>) => void;
 
 class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
+    private activeAudioConnections: Set<string> = new Set(); // Track "sourceId->targetId" pairs
+    private pendingDisconnects: Map<string, number> = new Map(); // Track pending disconnect timeouts
+    private connectionGenerations: Map<string, number> = new Map(); // Track connection versions for race condition prevention
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
     // Ramp time for smooth transitions (10ms)
     private readonly RAMP_TIME = 0.01;
+
+    /**
+     * Safety buffer (ms) added to ramp time delays.
+     * Ensures the gain ramp completes before disconnecting nodes.
+     * Without this buffer, race conditions can cause audio clicks
+     * if setTimeout fires slightly before the ramp finishes.
+     */
+    private readonly RAMP_SAFETY_BUFFER_MS = 10;
 
     /**
      * Initialize the manager and subscribe to graph changes
@@ -78,10 +114,17 @@ class AudioGraphManager {
      * Cleanup and disconnect all audio nodes
      */
     dispose(): void {
+        // Clear pending disconnect timeouts
+        this.pendingDisconnects.forEach((timeoutId) => {
+            clearTimeout(timeoutId);
+        });
+        this.pendingDisconnects.clear();
+
         this.audioNodes.forEach((nodeInstance) => {
             this.destroyAudioNode(nodeInstance);
         });
         this.audioNodes.clear();
+        this.activeAudioConnections.clear();
 
         if (this.unsubscribeGraph) {
             this.unsubscribeGraph();
@@ -284,10 +327,10 @@ class AudioGraphManager {
             );
             audioNode.gainEnvelope.gain.linearRampToValueAtTime(0, now + this.RAMP_TIME);
 
-            // Disconnect after fade
+            // Disconnect after fade (with safety buffer to ensure ramp completes)
             setTimeout(() => {
                 audioNode.gainEnvelope?.disconnect();
-            }, this.RAMP_TIME * 1000 + 10);
+            }, this.RAMP_TIME * 1000 + this.RAMP_SAFETY_BUFFER_MS);
         }
 
         // Cleanup specific instance types
@@ -303,9 +346,17 @@ class AudioGraphManager {
             audioNode.instance.disconnect();
         }
 
-        // Disconnect nodes
-        audioNode.inputNode?.disconnect();
-        audioNode.outputNode?.disconnect();
+        // Disconnect nodes (may throw if already disconnected)
+        try {
+            audioNode.inputNode?.disconnect();
+        } catch {
+            // Already disconnected - safe to ignore
+        }
+        try {
+            audioNode.outputNode?.disconnect();
+        } catch {
+            // Already disconnected - safe to ignore
+        }
     }
 
     /**
@@ -344,13 +395,34 @@ class AudioGraphManager {
         const audioConnections = Array.from(graphConnections.values())
             .filter(conn => conn.type === 'audio');
 
-        // Connect audio connections
+        // Build set of current connection keys
+        const currentConnectionKeys = new Set<string>();
         audioConnections.forEach(connection => {
-            this.connectAudioNodes(
-                connection.sourceNodeId,
-                connection.targetNodeId
-            );
+            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            currentConnectionKeys.add(key);
         });
+
+        // Find and disconnect removed connections
+        this.activeAudioConnections.forEach(key => {
+            if (!currentConnectionKeys.has(key)) {
+                const [sourceNodeId, targetNodeId] = key.split('->');
+                this.disconnectAudioNodes(sourceNodeId, targetNodeId);
+            }
+        });
+
+        // Connect new audio connections
+        audioConnections.forEach(connection => {
+            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            if (!this.activeAudioConnections.has(key)) {
+                this.connectAudioNodes(
+                    connection.sourceNodeId,
+                    connection.targetNodeId
+                );
+            }
+        });
+
+        // Update tracked connections
+        this.activeAudioConnections = currentConnectionKeys;
     }
 
     /**
@@ -360,6 +432,25 @@ class AudioGraphManager {
         const ctx = getAudioContext();
         if (!ctx) return;
 
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+
+        // Prevent duplicate connections
+        if (this.activeAudioConnections.has(connectionKey)) {
+            return;
+        }
+
+        // Increment connection generation to invalidate any pending disconnects
+        // This prevents race conditions where a disconnect timeout fires after reconnection
+        const newGeneration = (this.connectionGenerations.get(connectionKey) || 0) + 1;
+        this.connectionGenerations.set(connectionKey, newGeneration);
+
+        // Cancel any pending disconnect for this connection
+        const pendingTimeout = this.pendingDisconnects.get(connectionKey);
+        if (pendingTimeout !== undefined) {
+            clearTimeout(pendingTimeout);
+            this.pendingDisconnects.delete(connectionKey);
+        }
+
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
@@ -367,7 +458,7 @@ class AudioGraphManager {
             return;
         }
 
-        // Check if already connected (Web Audio doesn't track this, so we manage it)
+        // Web Audio allows multiple connections, track to prevent duplicates
         try {
             // Fade in the connection smoothly
             if (sourceAudioNode.gainEnvelope) {
@@ -391,12 +482,16 @@ class AudioGraphManager {
         const ctx = getAudioContext();
         if (!ctx) return;
 
+        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
         if (!sourceAudioNode?.outputNode || !targetAudioNode?.inputNode) {
             return;
         }
+
+        // Capture current generation - if it changes before timeout, connection was recreated
+        const capturedGeneration = this.connectionGenerations.get(connectionKey) || 0;
 
         // Fade out before disconnecting
         if (sourceAudioNode.gainEnvelope) {
@@ -407,19 +502,38 @@ class AudioGraphManager {
             );
             sourceAudioNode.gainEnvelope.gain.linearRampToValueAtTime(0, now + this.RAMP_TIME);
 
-            // Disconnect after fade
-            setTimeout(() => {
+            // Track and disconnect after fade (can be canceled if reconnected)
+            const timeoutId = window.setTimeout(() => {
+                // Double-check: verify generation hasn't changed (connection wasn't recreated)
+                // This prevents race conditions even if timeout cancellation fails
+                const currentGeneration = this.connectionGenerations.get(connectionKey) || 0;
+                if (currentGeneration !== capturedGeneration) {
+                    // Connection was recreated - don't disconnect
+                    this.pendingDisconnects.delete(connectionKey);
+                    return;
+                }
+
+                // Verify key still exists - callback may fire after reconnection canceled it
+                if (this.pendingDisconnects.has(connectionKey)) {
+                    this.pendingDisconnects.delete(connectionKey);
+                    if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
+                        try {
+                            sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
+                        } catch {
+                            // May not be connected
+                        }
+                    }
+                }
+            }, this.RAMP_TIME * 1000 + this.RAMP_SAFETY_BUFFER_MS);
+
+            this.pendingDisconnects.set(connectionKey, timeoutId);
+        } else {
+            if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
                 try {
-                    sourceAudioNode.outputNode?.disconnect(targetAudioNode.inputNode!);
+                    sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
                 } catch {
                     // May not be connected
                 }
-            }, this.RAMP_TIME * 1000 + 10);
-        } else {
-            try {
-                sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
-            } catch {
-                // May not be connected
             }
         }
     }
@@ -547,6 +661,192 @@ class AudioGraphManager {
             const mediaStream = audioNode.instance.mediaStream;
             mediaStream.getTracks().forEach(track => track.stop());
             audioNode.instance = null;
+        }
+    }
+
+    /**
+     * Set the output node for a microphone (called from MicrophoneNode component)
+     * This allows the component to manage its own audio stream while routing through connections
+     */
+    setMicrophoneOutput(nodeId: string, outputNode: GainNode): void {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (audioNode) {
+            // Disconnect old output if exists (may throw if already disconnected)
+            if (audioNode.outputNode) {
+                try {
+                    audioNode.outputNode.disconnect();
+                } catch {
+                    // Node may already be disconnected - safe to ignore
+                }
+            }
+            audioNode.outputNode = outputNode;
+
+            // Re-establish any existing connections from this node
+            this.reconnectNodeOutputs(nodeId);
+        }
+    }
+
+    /**
+     * Reconnect all outputs from a node (used when output node changes)
+     */
+    private reconnectNodeOutputs(nodeId: string): void {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (!audioNode?.outputNode) return;
+
+        // Get connections from graphStore
+        const graphConnections = useGraphStore.getState().connections;
+
+        // Find all audio connections from this node and reconnect
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === nodeId && connection.type === 'audio') {
+                const targetAudioNode = this.audioNodes.get(connection.targetNodeId);
+                if (targetAudioNode?.inputNode) {
+                    try {
+                        audioNode.outputNode.connect(targetAudioNode.inputNode);
+                    } catch (e) {
+                        // Connection might already exist
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================================
+    // Keyboard Note Triggering
+    // ============================================================================
+
+    /**
+     * Trigger a note from keyboard input
+     * @param keyboardId - The keyboard node ID
+     * @param row - The active row (1, 2, or 3)
+     * @param keyIndex - The key index within the row (0-11 for chromatic octave)
+     */
+    triggerKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        // Validate input bounds to prevent array access errors
+        if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
+        if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
+
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the output port for this row (e.g., "row-1", "row-2", "row-3")
+        const rowPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+        )?.id;
+
+        if (!rowPortId) return;
+
+        // Get keyboard's row octave settings
+        const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
+        const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2]; // Default octaves for rows 1, 2, 3
+        const baseOctave = rowOctaves[row - 1] ?? 4;
+
+        // Find all connections from this port (technical connections to instruments)
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is an instrument
+                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+
+                // Validate instrument data with type guard
+                if (!isInstrumentNodeData(targetNode.data)) continue;
+                const instrumentData = targetNode.data;
+
+                const targetPortId = connection.targetPortId;
+                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                // Calculate final note
+                // keyIndex is 0-11, maps to chromatic notes
+                // baseOctave is the octave from the keyboard row
+                // Add instrument's offsets
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                // Convert to note name string (e.g., "C4", "D#4")
+                const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                // Get the instrument and play the note
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument) {
+                    instrument.playNote(noteName);
+                }
+            }
+        }
+    }
+
+    /**
+     * Release a note from keyboard input
+     * @param keyboardId - The keyboard node ID
+     * @param row - The active row (1, 2, or 3)
+     * @param keyIndex - The key index within the row (0-11 for chromatic octave)
+     */
+    releaseKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+        // Validate input bounds to prevent array access errors
+        if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
+        if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
+
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the output port for this row
+        const rowPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+        )?.id;
+
+        if (!rowPortId) return;
+
+        // Get keyboard's row octave settings
+        const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
+        const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2];
+        const baseOctave = rowOctaves[row - 1] ?? 4;
+
+        // Find all connections from this port
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is an instrument
+                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+
+                // Validate instrument data with type guard
+                if (!isInstrumentNodeData(targetNode.data)) continue;
+                const instrumentData = targetNode.data;
+
+                const targetPortId = connection.targetPortId;
+                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                // Calculate final note (same as trigger)
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                // Convert to note name string
+                const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                // Get the instrument and stop the note
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument) {
+                    instrument.stopNote(noteName);
+                }
+            }
         }
     }
 }

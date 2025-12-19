@@ -61,16 +61,16 @@
 /* ============================================
  * Speaker Node
  * ============================================ */
-.speaker-node .speaker-symbol {
-    font-size: var(--text-2xl);
-    color: var(--text-primary);
-    margin-bottom: var(--space-xs);
+.speaker-node {
+    min-width: 100px;
 }
 
-.speaker-node .speaker-label {
-    font-family: var(--font-sketch);
-    font-size: var(--text-md);
-    font-weight: 500;
+.speaker-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    position: relative;
 }
 
 /* Hover state when dragging connections over speaker node */
@@ -78,24 +78,22 @@
     box-shadow: 0 0 0 2px var(--accent-primary), 0 0 12px rgba(91, 127, 214, 0.3);
 }
 
-/* Speaker input port - audio (light blue, receives audio from instruments) */
+/* Speaker input port - inside top left corner */
 .speaker-input-port {
     position: absolute;
-    left: -7px;
-    top: 50%;
-    transform: translateY(-50%);
+    left: var(--space-sm);
+    top: var(--space-sm);
     width: 14px;
     height: 14px;
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: 50%;
     background: var(--audio-input);
     cursor: crosshair;
-    flex-shrink: 0;
     transition: all var(--transition-fast);
 }
 
 .speaker-input-port:hover {
-    transform: translateY(-50%) scale(1.2);
+    transform: scale(1.2);
     filter: brightness(1.1);
 }
 
@@ -104,10 +102,44 @@
     box-shadow: 0 0 6px var(--audio-connected);
 }
 
+/* Speaker symbol container */
+.speaker-symbol-container {
+    margin-bottom: var(--space-xs);
+}
+
+/* Speaker mute button - big speaker icon */
+.speaker-mute-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    color: var(--text-primary);
+}
+
+.speaker-mute-btn:hover {
+    background: var(--bg-tertiary);
+    transform: scale(1.05);
+}
+
+.speaker-mute-btn.live {
+    color: var(--accent-success);
+}
+
+.speaker-mute-btn.muted {
+    color: var(--accent-danger);
+    opacity: 0.7;
+}
+
+/* Device selector */
 .device-selector-container {
     position: relative;
     width: 100%;
-    margin-top: var(--space-sm);
 }
 
 .device-select-trigger {
@@ -115,9 +147,9 @@
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: var(--radius-pill);
     background: var(--bg-canvas);
-    padding: var(--space-xs) var(--space-md);
+    padding: var(--space-xs) var(--space-sm);
     font-family: var(--font-sketch);
-    font-size: var(--text-sm);
+    font-size: var(--text-xs);
     text-align: center;
     cursor: pointer;
     white-space: nowrap;
@@ -278,11 +310,11 @@
 }
 
 .instrument-node .schematic-header {
-    cursor: pointer;
+    cursor: grab;
 }
 
-.instrument-node .schematic-header:hover {
-    background: var(--bg-tertiary);
+.instrument-node .schematic-header:active {
+    cursor: grabbing;
 }
 
 .instrument-schematic-body {
@@ -408,91 +440,202 @@
 }
 
 /* ============================================
- * Instrument Options Popup
+ * Instrument Selector Dropdown (no overlay)
  * ============================================ */
-.instrument-popup-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(2px);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 2000;
-}
-
-.instrument-popup {
+.instrument-selector-dropdown {
+    position: absolute;
+    /* Dimensions controlled by JS for dynamic viewport fitting */
+    min-width: 250px;
+    min-height: 150px;
     background: var(--bg-node);
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: var(--radius-lg);
-    width: 300px;
-    max-height: 400px;
-    overflow: hidden;
     box-shadow: var(--shadow-menu);
+    z-index: 2000;
+    flex-direction: column;
+    overflow: hidden;
 }
 
-.instrument-popup-header {
-    padding: var(--space-md);
-    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.instrument-popup-header h3 {
-    margin: 0;
-    font-family: var(--font-sketch);
-    font-size: var(--text-lg);
-    font-weight: 600;
-}
-
-.instrument-popup-close {
-    width: 28px;
-    height: 28px;
-    border: var(--border-sketch-width) solid var(--sketch-black);
-    border-radius: 50%;
-    background: var(--bg-canvas);
+.instrument-search {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
     font-family: var(--font-sketch);
     font-size: var(--text-md);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    box-sizing: border-box;
+    flex-shrink: 0;
 }
 
-.instrument-popup-close:hover {
-    background: var(--accent-danger);
-    color: white;
-    border-color: var(--accent-danger);
+.instrument-search:focus {
+    outline: none;
+    background: var(--bg-node);
 }
 
-.instrument-popup-content {
-    padding: var(--space-md);
-    max-height: 300px;
+/* Instrument grid container */
+.instrument-grid-container {
+    flex: 1;
     overflow-y: auto;
+    padding: var(--space-sm);
 }
 
-.instrument-option {
-    padding: var(--space-sm) var(--space-md);
+/* Subcategory grouping */
+.instrument-subcategory {
+    margin-bottom: var(--space-sm);
+}
+
+.instrument-subcategory:last-child {
+    margin-bottom: 0;
+}
+
+/* Horizontal separator between subcategories */
+.subcategory-separator {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: var(--space-md) 0;
+}
+
+/* Instrument grid */
+.instrument-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: var(--space-sm);
+}
+
+/* Keyboard shortcut hint */
+.category-nav-hint {
+    font-family: var(--font-sketch);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-align: center;
+    padding: var(--space-xs) var(--space-sm);
+    border-top: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+}
+
+/* Instrument card with icon on top */
+.instrument-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-sm);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    margin-bottom: var(--space-sm);
     cursor: pointer;
-    font-family: var(--font-sketch);
-    font-size: var(--text-md);
     transition: all var(--transition-fast);
+    background: var(--bg-canvas);
 }
 
-.instrument-option:hover {
+.instrument-card:hover {
     background: var(--bg-tertiary);
     border-color: var(--sketch-light);
+    transform: translateY(-2px);
 }
 
-.instrument-option.selected {
+.instrument-card.selected {
     background: var(--accent-primary);
     color: white;
     border-color: var(--accent-primary);
+}
+
+/* Instrument icon container */
+.instrument-icon {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--space-xs);
+}
+
+.instrument-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Instrument name label */
+.instrument-name {
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.no-results {
+    text-align: center;
+    color: var(--text-secondary);
+    font-family: var(--font-sketch);
+    padding: var(--space-lg);
+}
+
+/* Clickable instrument name in header */
+.instrument-name-clickable {
+    cursor: pointer;
+}
+
+.instrument-name-clickable:hover {
+    text-decoration: underline;
+}
+
+/* ============================================
+ * Inline Editable Values
+ * ============================================ */
+.editable-value {
+    cursor: ns-resize;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast);
+    user-select: none;
+}
+
+.editable-value:hover {
+    background: var(--bg-tertiary);
+}
+
+.note-octave {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.inline-edit-input {
+    width: 36px;
+    padding: 2px 4px;
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    text-align: center;
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+}
+
+.inline-edit-input.inline-edit-note {
+    width: 24px;
+    font-family: var(--font-sketch);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.inline-edit-input:focus {
+    outline: none;
+}
+
+/* Hide number input spinners */
+.inline-edit-input::-webkit-outer-spin-button,
+.inline-edit-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.inline-edit-input[type=number] {
+    -moz-appearance: textfield;
 }
 
 /* ============================================
@@ -602,4 +745,446 @@
     border-color: var(--sketch-black);
     border-width: var(--border-sketch-width);
     background: var(--bg-canvas);
+}
+
+/* ============================================
+ * Looper Node (Schematic Style)
+ * ============================================ */
+.looper-node {
+    min-width: 220px;
+    max-width: 260px;
+}
+
+/* Main row with inline ports and duration */
+.looper-main-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-sm);
+}
+
+.looper-input-port,
+.looper-output-port {
+    width: 14px;
+    height: 14px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.looper-input-port {
+    background: var(--audio-input);
+}
+
+.looper-output-port {
+    background: var(--audio-output);
+}
+
+.looper-input-port.connected,
+.looper-output-port.connected {
+    background: var(--audio-connected);
+    box-shadow: 0 0 6px var(--audio-connected);
+}
+
+.looper-input-port:hover,
+.looper-output-port:hover {
+    transform: scale(1.2);
+}
+
+/* Duration container - centered with fixed height */
+.looper-duration-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    flex: 1;
+    height: 24px;
+}
+
+/* Duration value - click to edit, scroll to adjust */
+.looper-duration {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast);
+    user-select: none;
+    min-width: 24px;
+    line-height: 24px;
+    text-align: center;
+}
+
+.looper-duration:hover {
+    background: var(--bg-tertiary);
+}
+
+.looper-duration.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Duration input for inline editing */
+.looper-duration-input {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--sketch-black);
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+    width: 36px;
+    text-align: center;
+    outline: none;
+}
+
+.looper-duration-input:focus {
+    border-color: var(--accent-primary);
+}
+
+/* Hide number input spinners */
+.looper-duration-input::-webkit-outer-spin-button,
+.looper-duration-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.looper-duration-input[type=number] {
+    -moz-appearance: textfield;
+}
+
+.looper-duration-unit {
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    color: var(--text-muted);
+}
+
+/* Active recording waveform */
+.looper-active-waveform {
+    height: 24px;
+    background: var(--bg-tertiary);
+    margin: 0 var(--space-md);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.looper-active-waveform svg {
+    width: 100%;
+    height: 100%;
+}
+
+.looper-waveform-path {
+    stroke: var(--accent-primary);
+}
+
+.looper-waveform-path.recording {
+    stroke: var(--accent-danger);
+}
+
+.looper-playhead {
+    stroke: var(--accent-danger);
+    stroke-width: 2;
+}
+
+/* Completed loops list */
+.looper-loops {
+    display: flex;
+    flex-direction: column-reverse; /* Newest at bottom, scroll up to see older */
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    max-height: 96px; /* ~3 loops visible */
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Scrollbar styling for loops */
+.looper-loops::-webkit-scrollbar {
+    width: 4px;
+}
+
+.looper-loops::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+}
+
+.looper-loops::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 2px;
+}
+
+.looper-loops::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+.looper-loop-item {
+    position: relative;
+    min-height: 24px;
+    height: 24px;
+    flex-shrink: 0; /* Prevent compression */
+    background: var(--bg-canvas);
+    border-radius: 4px;
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+}
+
+.looper-loop-item svg {
+    width: 100%;
+    height: 100%;
+}
+
+.looper-loop-item.muted {
+    opacity: 0.4;
+}
+
+.looper-loop-item.muted .looper-waveform-path {
+    stroke: var(--text-muted);
+}
+
+/* Loop controls overlay */
+.looper-loop-controls {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.looper-loop-item:hover .looper-loop-controls {
+    opacity: 1;
+}
+
+.looper-loop-btn {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg-node);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+}
+
+.looper-loop-btn:hover {
+    background: var(--bg-tertiary);
+}
+
+.looper-loop-btn.muted {
+    color: var(--accent-danger);
+}
+
+.looper-loop-btn.delete:hover {
+    background: var(--accent-danger);
+    color: white;
+    border-color: var(--accent-danger);
+}
+
+/* Record button container - no border */
+.looper-record-container {
+    display: flex;
+    justify-content: center;
+    padding: var(--space-sm);
+}
+
+/* Record button - rectangular with white circle */
+.looper-record-btn {
+    width: 100%;
+    max-width: 200px;
+    height: 28px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-md);
+    background: var(--accent-danger);
+    cursor: pointer;
+    position: relative;
+    transition: all var(--transition-fast);
+    margin: 0 var(--space-md);
+}
+
+/* White inner circle */
+.looper-record-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+}
+
+.looper-record-btn:hover:not(:disabled) {
+    background: #c94444;
+    box-shadow: 0 2px 8px rgba(212, 85, 85, 0.4);
+}
+
+.looper-record-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Recording state - pulsing, square stop icon */
+.looper-record-btn.recording::after {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+
+.looper-record-btn.recording {
+    animation: looper-record-pulse 1s ease-in-out infinite;
+}
+
+/* Armed state - waiting for signal */
+.looper-record-btn.armed {
+    animation: looper-armed-blink 0.5s ease-in-out infinite;
+}
+
+@keyframes looper-record-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(212, 85, 85, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(212, 85, 85, 0); }
+}
+
+@keyframes looper-armed-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ============================================
+ * Microphone Node - Compact Layout
+ * ============================================ */
+.microphone-node {
+    min-width: 140px;
+}
+
+.mic-content {
+    padding: var(--space-sm) var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+/* Controls row: source + mute + output */
+.mic-controls-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+/* Source selector button */
+.mic-device-selector {
+    position: relative;
+}
+
+/* Device dropdown - expand to right */
+.mic-device-selector .device-dropdown {
+    left: 0;
+    right: auto;
+    min-width: 180px;
+    white-space: nowrap;
+}
+
+.mic-source-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: 2px solid var(--sketch-black);
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.mic-source-btn:hover {
+    background: var(--bg-tertiary);
+}
+
+/* Mute button */
+.mic-mute-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: 2px solid var(--sketch-black);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+}
+
+.mic-mute-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mic-mute-btn.live {
+    background: var(--accent-success);
+    color: white;
+}
+
+.mic-mute-btn.live:hover:not(:disabled) {
+    background: #3cb371;
+}
+
+.mic-mute-btn.muted {
+    background: var(--accent-danger);
+    color: white;
+}
+
+.mic-mute-btn.muted:hover:not(:disabled) {
+    background: #c94444;
+}
+
+/* Slash overlay for muted state */
+.mic-mute-btn.muted::after {
+    content: "";
+    position: absolute;
+    width: 70%;
+    height: 2px;
+    background: white;
+    transform: rotate(-45deg);
+    border-radius: 1px;
+}
+
+/* Output port - same size as instrument node */
+.mic-output-port {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--audio-output);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-left: auto;
+}
+
+.mic-output-port:hover {
+    transform: scale(1.2);
+}
+
+.mic-output-port.connected {
+    box-shadow: 0 0 8px var(--audio-output);
+}
+
+/* Waveform line */
+.mic-waveform-line {
+    width: 100%;
+    height: 20px;
+}
+
+.mic-waveform-path {
+    stroke: var(--accent-primary);
 }

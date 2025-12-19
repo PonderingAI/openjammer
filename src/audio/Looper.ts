@@ -4,6 +4,18 @@
 
 import { getAudioContext, getMasterGain } from './AudioEngine';
 
+/**
+ * Sentinel value for infinite duration.
+ * Using -1 as it's clearly invalid for duration and serializes properly to JSON.
+ * (Number.POSITIVE_INFINITY serializes to null)
+ */
+export const INFINITE_DURATION = -1;
+
+/** Type guard to check if duration represents infinite */
+export function isInfiniteDuration(duration: number): boolean {
+    return duration < 0;
+}
+
 export interface Loop {
     id: string;
     buffer: AudioBuffer;
@@ -11,17 +23,24 @@ export interface Loop {
     isMuted: boolean;
     gainNode: GainNode | null;
     sourceNode: AudioBufferSourceNode | null;
+    waveformData: number[];  // Amplitude values over time for visualization
 }
 
 /**
  * Looper class for recording and playing back loops
+ *
+ * Works like a traditional loop pedal:
+ * - Recording happens in fixed cycles based on duration
+ * - After each cycle, the recording becomes a loop and starts playing
+ * - Recording continues, layering new audio on top of previous loops
+ * - User manually stops recording when done
  */
 export class Looper {
     private duration: number;
     private loops: Loop[] = [];
     private isRecording: boolean = false;
     private currentTime: number = 0;
-    private startTime: number = 0;
+    private cycleStartTime: number = 0;
     private outputNode: GainNode | null = null;
 
     // Recording
@@ -31,16 +50,28 @@ export class Looper {
     private inputNode: AudioNode | null = null;
     private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
     private analyser: AnalyserNode | null = null;
-    private silenceThreshold: number = 0.01;
-    private silenceStartTime: number = 0;
-    private hasDetectedSound: boolean = false;
+
+    // Cycle timer
+    private cycleTimerId: number | null = null;
+    private animationFrameId: number | null = null;
+
+    // Waveform history (builds during recording) - uses circular buffer for O(1) inserts
+    private waveformHistory: Float32Array;
+    private waveformIndex: number = 0;
+    private waveformLength: number = 0; // Actual number of samples (may be less than MAX during initial recording)
+    private lastWaveformSampleTime: number = 0;
+    private readonly WAVEFORM_SAMPLE_INTERVAL = 50; // ms between samples
+    private readonly MAX_WAVEFORM_SAMPLES = 2000; // Cap waveform data to prevent memory issues
 
     // Callbacks
     private onLoopAdded: ((loop: Loop) => void) | null = null;
     private onTimeUpdate: ((time: number) => void) | null = null;
+    private onWaveformUpdate: ((bars: number[]) => void) | null = null;
+    private onWaveformHistoryUpdate: ((history: number[], playheadPosition: number) => void) | null = null;
 
     constructor(duration: number = 10) {
         this.duration = duration;
+        this.waveformHistory = new Float32Array(this.MAX_WAVEFORM_SAMPLES);
         this.initOutput();
     }
 
@@ -82,10 +113,46 @@ export class Looper {
         this.onTimeUpdate = callback;
     }
 
+    setOnWaveformUpdate(callback: (bars: number[]) => void): void {
+        this.onWaveformUpdate = callback;
+    }
+
+    setOnWaveformHistoryUpdate(callback: (history: number[], playheadPosition: number) => void): void {
+        this.onWaveformHistoryUpdate = callback;
+    }
+
     /**
-     * Get the input node for connecting upstream audio
+     * Extract waveform history from circular buffer as a regular array.
+     * Returns samples in chronological order (oldest to newest).
      */
-    getInputNode(): GainNode | null {
+    private getWaveformHistoryArray(): number[] {
+        if (this.waveformLength === 0) return [];
+
+        const result: number[] = new Array(this.waveformLength);
+
+        if (this.waveformLength < this.MAX_WAVEFORM_SAMPLES) {
+            // Buffer hasn't wrapped yet - simple copy from start
+            for (let i = 0; i < this.waveformLength; i++) {
+                result[i] = this.waveformHistory[i];
+            }
+        } else {
+            // Buffer has wrapped - need to reorder
+            // waveformIndex points to the next write position (oldest data)
+            for (let i = 0; i < this.waveformLength; i++) {
+                const srcIndex = (this.waveformIndex + i) % this.MAX_WAVEFORM_SAMPLES;
+                result[i] = this.waveformHistory[srcIndex];
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get the input node for connecting upstream audio.
+     * Returns an AnalyserNode which passes audio through while allowing
+     * waveform analysis. Compatible with AudioNode interface for connections.
+     */
+    getInputNode(): AudioNode | null {
         const ctx = getAudioContext();
         if (!ctx) return null;
 
@@ -97,15 +164,20 @@ export class Looper {
             // Create MediaStreamDestination for recording from AudioNode
             this.mediaStreamDestination = ctx.createMediaStreamDestination();
 
-            // Connect analyser to destination
+            // Connect analyser to destination for recording
             this.analyser.connect(this.mediaStreamDestination);
+
+            // Also connect to output for passthrough (audio flows through even when not recording)
+            if (this.outputNode) {
+                this.analyser.connect(this.outputNode);
+            }
 
             // Store the stream for MediaRecorder
             this.inputStream = this.mediaStreamDestination.stream;
         }
 
         // Return analyser as input (it passes audio through)
-        return this.analyser as unknown as GainNode;
+        return this.analyser;
     }
 
     /**
@@ -119,6 +191,11 @@ export class Looper {
         if (!this.analyser) {
             this.analyser = ctx.createAnalyser();
             this.analyser.fftSize = 256;
+
+            // Connect to output for passthrough
+            if (this.outputNode) {
+                this.analyser.connect(this.outputNode);
+            }
         }
 
         if (source instanceof MediaStream) {
@@ -140,98 +217,97 @@ export class Looper {
     }
 
     /**
-     * Start recording (auto-starts when sound detected)
+     * Start recording - immediately begins recording in cycles
+     * After each cycle (duration), the recording becomes a loop and plays
+     * Recording continues until manually stopped
      */
     async startRecording(): Promise<void> {
         if (this.isRecording) return;
 
         const ctx = getAudioContext();
-        if (!ctx || !this.analyser) return;
+        if (!ctx || !this.inputStream) return;
 
         this.isRecording = true;
-        this.hasDetectedSound = false;
-        this.recordedChunks = [];
+        this.cycleStartTime = ctx.currentTime;
 
-        // Set up MediaRecorder if we have an input stream
-        if (this.inputStream) {
-            this.mediaRecorder = new MediaRecorder(this.inputStream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
+        // Start the first recording cycle
+        this.startRecordingCycle();
 
-            this.mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                    this.recordedChunks.push(e.data);
-                }
-            };
-
-            this.mediaRecorder.onstop = () => this.processRecording();
-        }
-
-        // Start monitoring for sound
-        this.monitorForSound();
+        // Start progress animation
+        this.updateProgress();
     }
 
     /**
-     * Monitor audio level and auto-start/stop recording
+     * Start a single recording cycle
      */
-    private monitorForSound(): void {
-        if (!this.isRecording || !this.analyser) return;
-
-        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-        this.analyser.getByteTimeDomainData(dataArray);
-
-        // Calculate RMS level
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-            const sample = (dataArray[i] - 128) / 128;
-            sum += sample * sample;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
+    private startRecordingCycle(): void {
+        if (!this.isRecording || !this.inputStream) return;
 
         const ctx = getAudioContext();
         if (!ctx) return;
 
-        if (rms > this.silenceThreshold) {
-            if (!this.hasDetectedSound) {
-                // First sound detected - start actual recording
-                this.hasDetectedSound = true;
-                this.startTime = ctx.currentTime;
-                this.mediaRecorder?.start();
-            }
-            this.silenceStartTime = ctx.currentTime;
-        } else if (this.hasDetectedSound) {
-            // Check if we've had a full loop of silence
-            const silenceDuration = ctx.currentTime - this.silenceStartTime;
-            if (silenceDuration >= this.duration) {
-                this.stopRecording();
-                return;
-            }
-        }
+        this.recordedChunks = [];
+        // Reset circular buffer for new cycle (just reset indices, no allocation needed)
+        this.waveformIndex = 0;
+        this.waveformLength = 0;
+        this.lastWaveformSampleTime = 0;
+        this.cycleStartTime = ctx.currentTime;
 
-        // Update current time
-        if (this.hasDetectedSound) {
-            this.currentTime = (ctx.currentTime - this.startTime) % this.duration;
-            this.onTimeUpdate?.(this.currentTime);
-        }
+        // Create new MediaRecorder for this cycle
+        this.mediaRecorder = new MediaRecorder(this.inputStream, {
+            mimeType: 'audio/webm;codecs=opus'
+        });
 
-        requestAnimationFrame(() => this.monitorForSound());
+        this.mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                this.recordedChunks.push(e.data);
+            }
+        };
+
+        this.mediaRecorder.onstop = () => this.processRecordingCycle();
+
+        // Start recording immediately
+        this.mediaRecorder.start();
+
+        // Schedule end of cycle (for non-infinite duration)
+        if (!isInfiniteDuration(this.duration)) {
+            this.cycleTimerId = window.setTimeout(() => {
+                this.endRecordingCycle();
+            }, this.duration * 1000);
+        }
     }
 
     /**
-     * Stop recording manually
+     * End current recording cycle and start next one
      */
-    stopRecording(): void {
+    private endRecordingCycle(): void {
         if (!this.isRecording) return;
 
-        this.isRecording = false;
-        this.mediaRecorder?.stop();
+        // Stop current MediaRecorder (triggers onstop -> processRecordingCycle)
+        // Wrap in try-catch: state could change between check and stop (race condition)
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            try {
+                this.mediaRecorder.stop();
+            } catch (err) {
+                // MediaRecorder may have already stopped
+                if (import.meta.env.DEV) {
+                    console.warn('MediaRecorder stop failed in endRecordingCycle:', err);
+                }
+            }
+        }
     }
 
     /**
-     * Process the recorded audio into a loop
+     * Process the recorded cycle into a loop, then start next cycle
      */
-    private async processRecording(): Promise<void> {
-        if (this.recordedChunks.length === 0) return;
+    private async processRecordingCycle(): Promise<void> {
+        if (this.recordedChunks.length === 0) {
+            // No audio recorded, but continue if still recording
+            if (this.isRecording) {
+                this.startRecordingCycle();
+            }
+            return;
+        }
 
         const ctx = getAudioContext();
         if (!ctx) return;
@@ -248,7 +324,8 @@ export class Looper {
                 startTime: 0,
                 isMuted: false,
                 gainNode: null,
-                sourceNode: null
+                sourceNode: null,
+                waveformData: this.getWaveformHistoryArray()  // Store waveform shape
             };
 
             this.loops.push(loop);
@@ -258,6 +335,118 @@ export class Looper {
             this.playLoop(loop);
         } catch (err) {
             console.error('Failed to decode recorded audio:', err);
+        }
+
+        // Start next cycle if still recording
+        if (this.isRecording) {
+            this.startRecordingCycle();
+        }
+    }
+
+    /**
+     * Update progress bar animation and waveform data
+     */
+    private updateProgress(): void {
+        if (!this.isRecording && this.loops.length === 0) {
+            return;
+        }
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const now = performance.now();
+
+        if (!isInfiniteDuration(this.duration)) {
+            this.currentTime = (ctx.currentTime - this.cycleStartTime) % this.duration;
+        } else {
+            this.currentTime = 0;
+        }
+        this.onTimeUpdate?.(this.currentTime);
+
+        // Sample amplitude for waveform history during recording
+        if (this.isRecording && this.analyser) {
+            // Sample at fixed intervals
+            if (now - this.lastWaveformSampleTime >= this.WAVEFORM_SAMPLE_INTERVAL) {
+                const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                this.analyser.getByteTimeDomainData(dataArray);
+
+                // Calculate peak amplitude
+                let peak = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const amplitude = Math.abs(dataArray[i] - 128) / 128;
+                    if (amplitude > peak) peak = amplitude;
+                }
+
+                // Add to circular buffer - O(1) operation instead of O(n) shift
+                this.waveformHistory[this.waveformIndex] = peak;
+                this.waveformIndex = (this.waveformIndex + 1) % this.MAX_WAVEFORM_SAMPLES;
+                if (this.waveformLength < this.MAX_WAVEFORM_SAMPLES) {
+                    this.waveformLength++;
+                }
+                this.lastWaveformSampleTime = now;
+            }
+
+            // Skip UI updates when document is hidden (performance optimization)
+            if (!document.hidden) {
+                // Calculate playhead position (0-100)
+                const playheadPosition = !isInfiniteDuration(this.duration)
+                    ? (this.currentTime / this.duration) * 100
+                    : 0;
+
+                // Send waveform history update (extract ordered array from circular buffer)
+                this.onWaveformHistoryUpdate?.(this.getWaveformHistoryArray(), playheadPosition);
+            }
+        }
+
+        // Extract real-time waveform data from analyser (for live display)
+        // Skip when document is hidden (performance optimization)
+        if (this.analyser && this.onWaveformUpdate && !document.hidden) {
+            const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            this.analyser.getByteFrequencyData(dataArray);
+
+            const NUM_BARS = 32;
+            const bars: number[] = [];
+            const step = Math.floor(dataArray.length / NUM_BARS);
+            for (let i = 0; i < NUM_BARS; i++) {
+                bars.push(dataArray[i * step] / 255);
+            }
+            this.onWaveformUpdate(bars);
+        }
+
+        this.animationFrameId = requestAnimationFrame(() => this.updateProgress());
+    }
+
+    /**
+     * Stop recording manually
+     */
+    stopRecording(): void {
+        if (!this.isRecording) return;
+
+        this.isRecording = false;
+
+        // Clear cycle timer
+        if (this.cycleTimerId !== null) {
+            clearTimeout(this.cycleTimerId);
+            this.cycleTimerId = null;
+        }
+
+        // Stop animation
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+
+        // Stop current MediaRecorder
+        // Wrap in try-catch: state could change between check and stop (race condition)
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            try {
+                this.mediaRecorder.stop();
+            } catch (err) {
+                // MediaRecorder may have already stopped
+                if (import.meta.env.DEV) {
+                    console.warn('MediaRecorder stop failed in stopRecording:', err);
+                }
+            }
         }
     }
 
@@ -348,6 +537,17 @@ export class Looper {
     disconnect(): void {
         this.stopAll();
         this.stopRecording();
+
+        // Clear timers
+        if (this.cycleTimerId !== null) {
+            clearTimeout(this.cycleTimerId);
+            this.cycleTimerId = null;
+        }
+
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
 
         if (this.analyser) {
             this.analyser.disconnect();

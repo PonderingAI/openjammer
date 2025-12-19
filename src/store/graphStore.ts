@@ -20,6 +20,43 @@ function generateId(): string {
     return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+/**
+ * Get approximate dimensions for a node based on its type
+ */
+export function getNodeDimensions(node: GraphNode): { width: number; height: number } {
+    switch (node.type) {
+        case 'keyboard':
+            return { width: 160, height: 120 };
+        case 'speaker':
+            return { width: 140, height: 160 };
+        case 'looper':
+            return { width: 240, height: 120 }; // Updated for schematic looper
+        case 'piano':
+        case 'cello':
+        case 'electricCello':
+        case 'violin':
+        case 'saxophone':
+        case 'strings':
+        case 'keys':
+        case 'winds':
+            // Instrument nodes: height varies by number of input ports
+            const inputPorts = node.ports.filter(p => p.direction === 'input').length;
+            return { width: 180, height: 60 + (inputPorts * 28) };
+        default:
+            // Standard nodes (microphone, effect, amplifier, recorder)
+            return { width: 200, height: 150 };
+    }
+}
+
+export interface NodeBounds {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    centerX: number;
+    centerY: number;
+}
+
 // ============================================================================
 // History Types
 // ============================================================================
@@ -52,6 +89,7 @@ interface GraphStore {
     updateNodePosition: (nodeId: string, position: Position) => void;
     updateNodeData: <T extends object>(nodeId: string, data: Partial<T>) => void;
     updateNodePorts: (nodeId: string, ports: import('../engine/types').PortDefinition[]) => void;
+    updateNodeType: (nodeId: string, type: NodeType) => void;
 
     // Connection Actions
     addConnection: (
@@ -85,6 +123,7 @@ interface GraphStore {
     // Getters
     getNode: (nodeId: string) => GraphNode | undefined;
     getNodesByType: (type: NodeType) => GraphNode[];
+    getNodesBounds: () => NodeBounds | null;
 
     // Subscription helpers for AudioGraphManager
     getNodes: () => Map<string, GraphNode>;
@@ -261,6 +300,22 @@ export const useGraphStore = create<GraphStore>()(
                 });
             },
 
+            updateNodeType: (nodeId, type) => {
+                const definition = getNodeDefinition(type);
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        type,
+                        category: definition.category
+                    });
+                    return { nodes: newNodes };
+                });
+            },
+
             // Connection Actions
             addConnection: (sourceNodeId, sourcePortId, targetNodeId, targetPortId) => {
                 const state = get();
@@ -396,29 +451,6 @@ export const useGraphStore = create<GraphStore>()(
                 const state = get();
                 const selectedIds: string[] = [];
 
-                // Get approximate dimensions based on node type
-                const getNodeDimensions = (node: GraphNode): { width: number; height: number } => {
-                    switch (node.type) {
-                        case 'keyboard':
-                            return { width: 160, height: 120 };
-                        case 'speaker':
-                            return { width: 140, height: 160 };
-                        case 'piano':
-                        case 'cello':
-                        case 'violin':
-                        case 'saxophone':
-                        case 'strings':
-                        case 'keys':
-                        case 'winds':
-                            // Instrument nodes: height varies by number of input ports
-                            const inputPorts = node.ports.filter(p => p.direction === 'input').length;
-                            return { width: 180, height: 60 + (inputPorts * 28) };
-                        default:
-                            // Standard nodes (microphone, looper, effect, amplifier, recorder)
-                            return { width: 200, height: 150 };
-                    }
-                };
-
                 state.nodes.forEach((node, id) => {
                     const { width: nodeWidth, height: nodeHeight } = getNodeDimensions(node);
 
@@ -501,6 +533,31 @@ export const useGraphStore = create<GraphStore>()(
 
             getNodesByType: (type) => {
                 return Array.from(get().nodes.values()).filter(node => node.type === type);
+            },
+
+            getNodesBounds: () => {
+                const { nodes } = get();
+                if (nodes.size === 0) return null;
+
+                let minX = Infinity, minY = Infinity;
+                let maxX = -Infinity, maxY = -Infinity;
+
+                nodes.forEach(node => {
+                    const dims = getNodeDimensions(node);
+                    minX = Math.min(minX, node.position.x);
+                    minY = Math.min(minY, node.position.y);
+                    maxX = Math.max(maxX, node.position.x + dims.width);
+                    maxY = Math.max(maxY, node.position.y + dims.height);
+                });
+
+                return {
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX,
+                    height: maxY - minY,
+                    centerX: (minX + maxX) / 2,
+                    centerY: (minY + maxY) / 2
+                };
             },
 
             // Subscription helpers for AudioGraphManager

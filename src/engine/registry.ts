@@ -95,6 +95,21 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         }
     },
 
+    electricCello: {
+        type: 'electricCello',
+        category: 'instruments',
+        name: 'Electric Cello',
+        description: 'Modern electric cello with saturation and chorus',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: {
+            offsets: { 'input-1': -12 }, // Same range as acoustic cello
+            activeInputs: ['input-1']
+        }
+    },
+
     violin: {
         type: 'violin',
         category: 'instruments',

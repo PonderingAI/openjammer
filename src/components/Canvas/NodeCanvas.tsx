@@ -2,7 +2,7 @@
  * Node Canvas - Main canvas with pan/zoom, box selection, and node rendering
  */
 
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import type { Position, NodeType, Connection } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -55,6 +55,8 @@ export function NodeCanvas() {
     const stopConnecting = useCanvasStore((s) => s.stopConnecting);
     const ghostMode = useCanvasStore((s) => s.ghostMode);
     const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
+    const fitToNodes = useCanvasStore((s) => s.fitToNodes);
+    const getNodesBounds = useGraphStore((s) => s.getNodesBounds);
 
     // Audio store for mode switching
     const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
@@ -212,7 +214,19 @@ export function NodeCanvas() {
 
             setSelectionBox(null);
         }
-    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart]);
+
+        // Cancel connection if mouseup happens on empty canvas (not on a valid port)
+        // This runs after port mouseup handlers, so if isConnecting is still true,
+        // it means the connection wasn't completed on a port
+        if (isConnecting) {
+            // Small delay to allow port mouseup to fire first
+            setTimeout(() => {
+                if (useCanvasStore.getState().isConnecting) {
+                    stopConnecting();
+                }
+            }, 0);
+        }
+    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting]);
 
     // Handle wheel for zoom
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -224,89 +238,152 @@ export function NodeCanvas() {
         zoomTo(newZoom, { x: e.clientX, y: e.clientY });
     }, [zoom, zoomTo]);
 
+    // Keyboard row key mappings
+    const ROW_KEYS: Record<number, string[]> = {
+        1: ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+        2: ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+        3: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
+    };
+
     // Handle keyboard shortcuts using keybindings store
     useEffect(() => {
         const { matchesAction } = useKeybindingsStore.getState();
+        const { emitKeyboardSignal, releaseKeyboardSignal } = useAudioStore.getState();
 
         function handleKeyDown(e: KeyboardEvent) {
             // Skip if typing in input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
-            // Check keybinding actions
-            if (matchesAction(e, 'edit.delete') || e.key === 'Backspace') {
-                e.preventDefault();
-                deleteSelected();
-                return;
-            }
+            // Get current mode from audio store
+            const currentMode = useAudioStore.getState().currentMode;
 
-            if (matchesAction(e, 'view.ghostMode')) {
-                e.preventDefault();
-                toggleGhostMode();
-                return;
-            }
-
-            if (matchesAction(e, 'edit.undo')) {
-                e.preventDefault();
-                undo();
-                return;
-            }
-
-            if (matchesAction(e, 'edit.redo')) {
-                e.preventDefault();
-                redo();
-                return;
-            }
-
-            if (matchesAction(e, 'canvas.multiConnect')) {
-                // Get all selected nodes
-                const selectedIds = useGraphStore.getState().selectedNodeIds;
-                const graphNodes = useGraphStore.getState().nodes;
-                const graphConnections = useGraphStore.getState().connections;
-
-                if (selectedIds.size >= 1) {
-                    e.preventDefault();
-
-                    // Build array of all empty output ports from all selected nodes
-                    const allSources: { nodeId: string; portId: string }[] = [];
-
-                    for (const nodeId of selectedIds) {
-                        const node = graphNodes.get(nodeId);
-                        if (!node) continue;
-
-                        // Get all output ports (both audio and technical)
-                        const outputPorts = node.ports.filter(p => p.direction === 'output');
-
-                        // Filter to only empty (unconnected) ports
-                        const emptyOutputs = outputPorts.filter(port => {
-                            const hasConnection = Array.from(graphConnections.values()).some(
-                                conn => conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
-                            );
-                            return !hasConnection;
-                        });
-
-                        for (const port of emptyOutputs) {
-                            allSources.push({ nodeId, portId: port.id });
-                        }
-                    }
-
-                    if (allSources.length > 0) {
-                        startConnecting(allSources);
-                    }
-                }
-                return;
-            }
-
-            // 1-9 Keys - Mode switching (not customizable for now)
+            // 1-9 Keys - Mode switching (always works)
             const keyNum = parseInt(e.key, 10);
             if (!isNaN(keyNum) && keyNum >= 1 && keyNum <= 9) {
                 e.preventDefault();
                 setCurrentMode(keyNum);
                 return;
             }
+
+            // Delete/Backspace always works
+            if (matchesAction(e, 'edit.delete') || e.key === 'Backspace') {
+                e.preventDefault();
+                deleteSelected();
+                return;
+            }
+
+            // Mode 1 only shortcuts (config mode)
+            if (currentMode === 1) {
+                if (matchesAction(e, 'view.ghostMode')) {
+                    e.preventDefault();
+                    toggleGhostMode();
+                    return;
+                }
+
+                if (matchesAction(e, 'edit.undo')) {
+                    e.preventDefault();
+                    undo();
+                    return;
+                }
+
+                if (matchesAction(e, 'edit.redo')) {
+                    e.preventDefault();
+                    redo();
+                    return;
+                }
+
+                if (matchesAction(e, 'canvas.multiConnect')) {
+                    // Get all selected nodes
+                    const selectedIds = useGraphStore.getState().selectedNodeIds;
+                    const graphNodes = useGraphStore.getState().nodes;
+                    const graphConnections = useGraphStore.getState().connections;
+
+                    if (selectedIds.size >= 1) {
+                        e.preventDefault();
+
+                        // Build array of all empty output ports from all selected nodes
+                        const allSources: { nodeId: string; portId: string }[] = [];
+
+                        for (const nodeId of selectedIds) {
+                            const node = graphNodes.get(nodeId);
+                            if (!node) continue;
+
+                            // Get all output ports (both audio and technical)
+                            const outputPorts = node.ports.filter(p => p.direction === 'output');
+
+                            // Filter to only empty (unconnected) ports
+                            const emptyOutputs = outputPorts.filter(port => {
+                                const hasConnection = Array.from(graphConnections.values()).some(
+                                    conn => conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
+                                );
+                                return !hasConnection;
+                            });
+
+                            for (const port of emptyOutputs) {
+                                allSources.push({ nodeId, portId: port.id });
+                            }
+                        }
+
+                        if (allSources.length > 0) {
+                            startConnecting(allSources);
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // Keyboard input mode (modes 2-9)
+            if (currentMode > 1) {
+                const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
+                if (activeKeyboardId) {
+                    // Check all three rows for the pressed key
+                    const key = e.key.toLowerCase();
+                    for (let row = 1; row <= 3; row++) {
+                        const rowKeys = ROW_KEYS[row];
+                        const keyIndex = rowKeys?.indexOf(key);
+
+                        if (keyIndex !== -1) {
+                            e.preventDefault();
+                            emitKeyboardSignal(activeKeyboardId, row, keyIndex);
+                            break; // Only one row can match per key
+                        }
+                    }
+                }
+            }
+        }
+
+        function handleKeyUp(e: KeyboardEvent) {
+            // Skip if typing in input
+            if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
+            const currentMode = useAudioStore.getState().currentMode;
+
+            // Keyboard input mode (modes 2-9) - release notes
+            if (currentMode > 1) {
+                const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
+                if (activeKeyboardId) {
+                    // Check all three rows for the released key
+                    const key = e.key.toLowerCase();
+                    for (let row = 1; row <= 3; row++) {
+                        const rowKeys = ROW_KEYS[row];
+                        const keyIndex = rowKeys?.indexOf(key);
+
+                        if (keyIndex !== -1) {
+                            e.preventDefault();
+                            releaseKeyboardSignal(activeKeyboardId, row, keyIndex);
+                            break; // Only one row can match per key
+                        }
+                    }
+                }
+            }
         }
 
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
     }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode]);
 
     // Get port position for connection rendering using DOM measurement
@@ -428,6 +505,62 @@ export function NodeCanvas() {
         );
     }, [isConnecting, connectingFrom, getPortPosition, screenToCanvas, mousePos]);
 
+    // Visibility detection for BackToAction button
+    const nodesVisibility = useMemo(() => {
+        if (nodes.size === 0) return { visible: true, direction: null };
+
+        const bounds = getNodesBounds();
+        if (!bounds) return { visible: true, direction: null };
+
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        // Convert bounds to screen coordinates
+        const screenLeft = bounds.x * zoom + pan.x;
+        const screenTop = bounds.y * zoom + pan.y;
+        const screenRight = (bounds.x + bounds.width) * zoom + pan.x;
+        const screenBottom = (bounds.y + bounds.height) * zoom + pan.y;
+
+        // Check if any part of bounds is visible
+        const visible = !(
+            screenRight < 0 ||           // All nodes to the left
+            screenLeft > viewportWidth || // All nodes to the right
+            screenBottom < 0 ||          // All nodes above
+            screenTop > viewportHeight   // All nodes below
+        );
+
+        // Check if zoomed out too far (nodes too small to see)
+        const nodeScreenSize = Math.max(bounds.width, bounds.height) * zoom;
+        const tooSmall = nodeScreenSize < 20;
+
+        // Calculate direction to nodes
+        let direction: number | null = null;
+        if (!visible || tooSmall) {
+            const centerScreenX = bounds.centerX * zoom + pan.x;
+            const centerScreenY = bounds.centerY * zoom + pan.y;
+            const viewCenterX = viewportWidth / 2;
+            const viewCenterY = viewportHeight / 2;
+
+            direction = Math.atan2(
+                centerScreenY - viewCenterY,
+                centerScreenX - viewCenterX
+            ) * (180 / Math.PI);
+        }
+
+        return {
+            visible: visible && !tooSmall,
+            direction
+        };
+    }, [nodes.size, pan.x, pan.y, zoom, getNodesBounds]);
+
+    // Handle back to action navigation
+    const handleBackToAction = useCallback(() => {
+        const bounds = getNodesBounds();
+        if (bounds) {
+            fitToNodes(bounds, window.innerWidth, window.innerHeight);
+        }
+    }, [getNodesBounds, fitToNodes]);
+
     // Render selection box
     const renderSelectionBox = () => {
         if (!selectionBox) return null;
@@ -499,6 +632,18 @@ export function NodeCanvas() {
                     onClose={() => setContextMenu(null)}
                     onAddNode={handleAddNode}
                 />
+            )}
+
+            {/* Back to Action button - appears when nodes are not visible */}
+            {nodes.size > 0 && !nodesVisibility.visible && nodesVisibility.direction !== null && (
+                <button
+                    className="back-to-action"
+                    onClick={handleBackToAction}
+                    style={{ '--arrow-rotation': `${nodesVisibility.direction}deg` } as React.CSSProperties}
+                >
+                    <span className="back-to-action-arrow">→</span>
+                    <span className="back-to-action-label">Back to nodes</span>
+                </button>
             )}
         </div>
     );

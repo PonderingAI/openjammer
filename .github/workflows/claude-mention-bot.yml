@@ -1,0 +1,118 @@
+name: Claude Mention Bot
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  respond:
+    # Only run on PRs with @claude mention
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get PR branch
+        id: get-branch
+        run: |
+          # CRITICAL: issue_comment runs on default branch, not PR branch
+          # We must explicitly fetch the PR branch
+          PR_REF=$(gh pr view ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --json headRefOid --jq '.headRefOid')
+          echo "ref=$PR_REF" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout PR branch
+        # Pinned to v4.3.1 for supply chain security
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.get-branch.outputs.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "claude[bot]"
+          git config user.email "claude[bot]@users.noreply.github.com"
+
+      - name: Process @claude mention
+        # Pinned to v1.0.26 for supply chain security
+        uses: anthropics/claude-code-action@0d1933529914177075d5bc3558ae3d047f188146
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: |
+            --max-turns 3
+          prompt: |
+            You've been mentioned in a PR comment by @${{ github.event.comment.user.login }}.
+
+            ## Comment Context
+            **PR**: #${{ github.event.issue.number }}
+            **Comment**: ${{ github.event.comment.body }}
+            **Comment URL**: ${{ github.event.comment.html_url }}
+
+            ## Your Task
+
+            1. **Understand the request**: Read the comment carefully and understand what the user is asking for
+
+            2. **Take action** based on the request type:
+
+               **Code fixes/changes:**
+               - Make the requested changes to the code
+               - Run quality checks: `npm run build && npm run lint && npm run test:run`
+               - If checks pass, commit: `git add . && git commit -m "[skip ci] fix: <description>" && git push`
+               - Reply to the comment with what you did
+
+               **Code review/explanation:**
+               - Read the relevant code files
+               - Provide a clear, helpful explanation
+               - Reply to the comment with your analysis
+
+               **Questions/help:**
+               - Provide helpful guidance
+               - Link to relevant documentation if applicable
+               - Reply to the comment with your answer
+
+            3. **Reply to the user**: Always post a comment on the PR explaining:
+               - What you understood from their request
+               - What actions you took (commits, analysis, etc.)
+               - Any issues or limitations you encountered
+               - Next steps if applicable
+
+            ## Important Guidelines
+
+            - Be helpful and friendly
+            - If the request is unclear, ask for clarification
+            - Only commit code if tests pass
+            - Follow project code style from .claude/CLAUDE.md
+            - Use [skip ci] in commit messages
+            - If you can't fulfill the request, explain why
+            - Keep responses concise but complete
+
+            ## Reply Format
+
+            When posting your reply, use this format:
+
+            ```
+            Hi @username! 👋
+
+            [What you understood]
+
+            [What you did / found]
+
+            [Any issues or next steps]
+
+            ---
+            🤖 Claude Code Bot
+            ```
+
+            Now process the request and help the user!
