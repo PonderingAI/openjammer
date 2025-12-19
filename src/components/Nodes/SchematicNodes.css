@@ -75,7 +75,7 @@
 
 /* Hover state when dragging connections over speaker node */
 .speaker-node.hover-connecting {
-    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 12px rgba(91, 127, 214, 0.3);
+    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 /* Speaker input port - inside top left corner */
@@ -195,7 +195,7 @@
 
 .device-item.selected {
     background: var(--accent-primary);
-    color: white;
+    color: var(--text-on-accent);
 }
 
 /* ============================================
@@ -209,7 +209,7 @@
 .keyboard-node.active {
     border-width: 4px;
     border-color: var(--accent-success);
-    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px rgba(95, 173, 101, 0.4), var(--shadow-sketch);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px color-mix(in srgb, var(--accent-success) 40%, transparent), var(--shadow-sketch);
 }
 
 .keyboard-node .schematic-header {
@@ -224,6 +224,8 @@
     border: 1px solid var(--sketch-light);
     border-radius: var(--radius-sm);
     padding: 2px var(--space-sm);
+    user-select: none;
+    pointer-events: none;
 }
 
 .keyboard-schematic-body {
@@ -263,7 +265,7 @@
 
 .row-number.active {
     background: var(--accent-primary);
-    color: white;
+    color: var(--text-on-accent);
     border-color: var(--accent-primary);
 }
 
@@ -306,7 +308,7 @@
 
 /* Hover state when dragging connections over instrument node */
 .instrument-node.hover-connecting {
-    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 12px rgba(91, 127, 214, 0.3);
+    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 .instrument-node .schematic-header {
@@ -341,7 +343,7 @@
 /* Ghost ports - temporary ports shown when hovering with connections */
 .note-row.ghost-port {
     opacity: 0.6;
-    background: rgba(91, 127, 214, 0.05);
+    background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
     animation: ghost-fade-in 0.15s ease-out;
 }
 
@@ -504,6 +506,41 @@
     gap: var(--space-sm);
 }
 
+/* Grouped instrument layout */
+.instrument-grid-grouped {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.instrument-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.instrument-group-separator {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: var(--space-sm) 0;
+}
+
+.instrument-group-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-xs);
+    padding-left: var(--space-xs);
+}
+
+.instrument-group-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: var(--space-sm);
+}
+
 /* Keyboard shortcut hint */
 .category-nav-hint {
     font-family: var(--font-sketch);
@@ -577,6 +614,8 @@
 /* Clickable instrument name in header */
 .instrument-name-clickable {
     cursor: pointer;
+    display: inline-block;
+    width: fit-content;
 }
 
 .instrument-name-clickable:hover {
@@ -644,7 +683,7 @@
 .minimal-settings-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.3);
+    background: color-mix(in srgb, var(--sketch-black) 30%, transparent);
     backdrop-filter: blur(4px);
     display: flex;
     justify-content: center;
@@ -1024,8 +1063,8 @@
 }
 
 .looper-record-btn:hover:not(:disabled) {
-    background: #c94444;
-    box-shadow: 0 2px 8px rgba(212, 85, 85, 0.4);
+    background: color-mix(in srgb, var(--accent-danger) 80%, white);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-danger) 40%, transparent);
 }
 
 .looper-record-btn:disabled {
@@ -1050,8 +1089,8 @@
 }
 
 @keyframes looper-record-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(212, 85, 85, 0.4); }
-    50% { box-shadow: 0 0 0 8px rgba(212, 85, 85, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-danger) 40%, transparent); }
+    50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent-danger) 0%, transparent); }
 }
 
 @keyframes looper-armed-blink {

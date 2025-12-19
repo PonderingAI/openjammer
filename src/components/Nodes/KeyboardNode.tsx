@@ -100,20 +100,6 @@ export function KeyboardNode({
 
             {/* Body */}
             <div className="keyboard-schematic-body">
-                {/* Row selector buttons: 1 2 3 */}
-                <div className="keyboard-row-numbers">
-                    {[1, 2, 3].map((row) => (
-                        <button
-                            key={row}
-                            className={`row-number ${activeRow === row ? 'active' : ''}`}
-                            onClick={() => handleRowClick(row)}
-                            title={`Row ${row} (Octave ${row + 2})`}
-                        >
-                            {row}
-                        </button>
-                    ))}
-                </div>
-
                 {/* Output port circles */}
                 <div className="keyboard-row-ports-marker">
                     {outputPorts.map((port) => (

@@ -18,7 +18,7 @@
 
 .node.selected {
     border-color: var(--accent-primary);
-    box-shadow: var(--shadow-node), 0 0 0 3px rgba(91, 127, 214, 0.25);
+    box-shadow: var(--shadow-node), 0 0 0 3px color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
 .node.dragging {

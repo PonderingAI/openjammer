@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useAudioStore } from '../../store/audioStore';
 
 export function HelpPanel() {
-    const [isVisible, setIsVisible] = useState(true);
+    const [isVisible, setIsVisible] = useState(false);
 
     const currentMode = useAudioStore((s) => s.currentMode);
     const isModeUnassigned = useAudioStore((s) => s.isModeUnassigned);

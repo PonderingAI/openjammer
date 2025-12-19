@@ -3,51 +3,20 @@
    * Hand-Drawn / Sketch Theme
    * ============================================ */
 
-  /* Primary Colors - Warm Paper Aesthetic */
-  --bg-canvas: #F5F0E8;           /* Cream/beige paper */
-  --bg-canvas-alt: #EDE8E0;       /* Slightly darker cream */
-  --bg-node: #F5F0E8;             /* Node background - same as canvas */
-  --bg-node-header: #EDE8E0;      /* Subtle header distinction */
-  --bg-tertiary: #E5E0D8;         /* Input fields, controls */
+  /* Theme-Aware Colors - Set dynamically by applyTheme() */
+  /* --bg-canvas, --bg-canvas-alt, --bg-node, --bg-node-header, --bg-primary, --bg-secondary, --bg-tertiary */
+  /* --text-primary, --text-secondary, --text-muted, --text-on-accent */
+  /* --sketch-black, --sketch-gray, --sketch-light */
 
-  /* Text Colors */
-  --text-primary: #1a1a1a;        /* Near black */
-  --text-secondary: #4a4a4a;      /* Dark gray */
-  --text-muted: #7a7a7a;          /* Medium gray */
+  /* --audio-input, --audio-output, --audio-connection, --audio-connected */
+  /* --technical-input, --technical-output, --technical-connection, --technical-connected */
+  /* --accent-primary, --accent-secondary, --accent-success, --accent-warning, --accent-danger */
+  /* --border-sketch, --border-subtle, --border-strong */
 
-  /* Sketch Colors */
-  --sketch-black: #1a1a1a;        /* Primary sketch color */
-  --sketch-gray: #4a4a4a;         /* Secondary lines */
-  --sketch-light: #8a8a8a;        /* Subtle lines */
-
-  /* Connection Colors - Audio (Blue, Directional) */
-  --audio-input: #7EB3D8;         /* Light blue - audio input ports */
-  --audio-output: #2C5F88;        /* Dark blue - audio output ports */
-  --audio-connection: #4A90C2;    /* Medium blue - audio connection lines */
-  --audio-connected: #5B9FD4;     /* Bright blue - connected audio ports */
-
-  /* Connection Colors - Technical (Grey, Bidirectional) */
-  --technical-input: #606060;     /* Dark grey - technical input ports */
-  --technical-output: #A0A0A0;    /* Light grey - technical output ports */
-  --technical-connection: #808080; /* Medium grey - technical connection lines */
-  --technical-connected: #909090; /* Grey - connected technical ports */
-
-  /* Accent Colors - Warmer tones */
-  --accent-primary: #5B7FD6;      /* Soft indigo */
-  --accent-secondary: #7B6BC6;    /* Soft purple */
-  --accent-success: #5FAD65;      /* Soft green */
-  --accent-warning: #D4A050;      /* Warm amber */
-  --accent-danger: #D65B5B;       /* Soft red */
-
-  /* Border Colors */
-  --border-sketch: #1a1a1a;       /* Main sketch border */
-  --border-subtle: #c0b8a8;       /* Subtle dividers */
-  --border-active: #5B7FD6;       /* Active/focused state */
-
-  /* Shadows - Softer, more natural */
+  /* Shadows - Keep these as they use theme-aware colors via CSS variables */
   --shadow-node: 2px 3px 0 rgba(0, 0, 0, 0.1);
   --shadow-menu: 3px 4px 0 rgba(0, 0, 0, 0.15);
-  --shadow-sketch: 2px 2px 0 #1a1a1a;   /* Hard sketch shadow */
+  --shadow-sketch: 2px 2px 0 var(--sketch-black);
 
   /* ============================================
    * Spacing

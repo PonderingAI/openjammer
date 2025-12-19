@@ -78,7 +78,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                             <KeybindingsPanel />
                         )}
                         {activeTab !== 'graphics' && activeTab !== 'keybindings' && (
-                            <div style={{ color: '#888', fontStyle: 'italic' }}>
+                            <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} settings coming soon.
                             </div>
                         )}

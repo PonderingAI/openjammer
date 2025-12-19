@@ -175,6 +175,23 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         defaultData: { offsets: { 'input-1': 0 } }
     },
 
+    // Generic instrument node (uses instrumentId in data)
+    instrument: {
+        type: 'instrument',
+        category: 'instruments',
+        name: 'Instrument',
+        description: 'Generic sampled instrument',
+        defaultPorts: [
+            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            audioOutput
+        ],
+        defaultData: {
+            offsets: { 'input-1': 0 },
+            activeInputs: ['input-1'],
+            instrumentId: 'salamander-piano' // Default instrument
+        }
+    },
+
     // Effects & Processing
     looper: {
         type: 'looper',

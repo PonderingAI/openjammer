@@ -49,6 +49,7 @@ export type NodeType =
     | 'strings'
     | 'keys'
     | 'winds'
+    | 'instrument' // Generic instrument node (uses instrumentId in data)
     | 'looper'
     | 'effect'
     | 'amplifier'
@@ -66,11 +67,12 @@ export interface NodeData {
 }
 
 export interface InstrumentNodeData extends NodeData {
-    // Instrument type is now implicit from NodeType
+    instrumentId?: string; // ID from InstrumentDefinitions (optional, falls back to legacy type mapping)
     offsets: { [portId: string]: number }; // Per-input pitch offset (semitones)
     octaveOffsets?: { [portId: string]: number }; // Per-input octave adjustment
     noteOffsets?: { [portId: string]: number }; // Per-input note adjustment (0-6 for C-B)
     activeInputs: string[]; // List of active input port IDs
+    isLoading?: boolean; // For UI loading indicator
 }
 
 export interface KeyboardNodeData extends NodeData {

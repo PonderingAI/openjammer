@@ -91,7 +91,7 @@
 .toolbar.toolbar-focused {
     border-width: 3px;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px rgba(91, 127, 214, 0.4), var(--shadow-menu);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 12px color-mix(in srgb, var(--accent-primary) 40%, transparent), var(--shadow-menu);
 }
 
 /* ============================================
@@ -183,7 +183,7 @@
 /* Warning state when no keyboard assigned */
 .help-panel.help-panel-warning {
     border-color: var(--accent-warning);
-    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 8px rgba(212, 160, 80, 0.3), var(--shadow-menu);
+    box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 8px color-mix(in srgb, var(--accent-warning) 30%, transparent), var(--shadow-menu);
 }
 
 .help-mode-warning {
@@ -192,7 +192,7 @@
     gap: var(--space-sm);
     padding: var(--space-sm);
     margin-bottom: var(--space-sm);
-    background: rgba(212, 160, 80, 0.15);
+    background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
     border: 1px solid var(--accent-warning);
     border-radius: var(--radius-md);
     font-size: var(--text-xs);
@@ -205,5 +205,5 @@
 
 .help-btn-minimized.warning {
     border-color: var(--accent-warning);
-    background: rgba(212, 160, 80, 0.15);
+    background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
 }

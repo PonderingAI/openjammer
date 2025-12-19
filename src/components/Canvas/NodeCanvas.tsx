@@ -228,15 +228,22 @@ export function NodeCanvas() {
         }
     }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting]);
 
-    // Handle wheel for zoom
+    // Handle wheel for zoom and two-finger trackpad pan
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
 
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        const newZoom = zoom * delta;
+        // Pinch-to-zoom gesture (ctrlKey is set by browser for pinch gestures)
+        if (e.ctrlKey) {
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            const newZoom = zoom * delta;
+            zoomTo(newZoom, { x: e.clientX, y: e.clientY });
+            return;
+        }
 
-        zoomTo(newZoom, { x: e.clientX, y: e.clientY });
-    }, [zoom, zoomTo]);
+        // Two-finger trackpad pan - pans in all directions (horizontal, vertical, diagonal)
+        // This allows natural panning with two fingers on laptop trackpads
+        panBy({ x: -e.deltaX, y: -e.deltaY });
+    }, [zoom, zoomTo, panBy]);
 
     // Keyboard row key mappings
     const ROW_KEYS: Record<number, string[]> = {

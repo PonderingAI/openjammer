@@ -6,8 +6,9 @@
  */
 
 import { getAudioContext } from './AudioEngine';
-import { createInstrument, Instrument, getNoteName } from './Instruments';
-import type { InstrumentType } from './Instruments';
+import { getNoteName, getLegacyInstrumentId } from './Instruments';
+import type { SampledInstrument } from './Instruments';
+import { InstrumentLoader } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
@@ -47,7 +48,7 @@ export interface AudioNodeInstance {
     type: NodeType;
     inputNode: AudioNode | null;
     outputNode: AudioNode | null;
-    instance: Instrument | Effect | Looper | Recorder | GainNode | MediaStreamAudioSourceNode | null;
+    instance: SampledInstrument | Effect | Looper | Recorder | GainNode | MediaStreamAudioSourceNode | null;
     gainEnvelope: GainNode | null; // For smooth connect/disconnect
 }
 
@@ -200,13 +201,21 @@ class AudioGraphManager {
             // Instruments - output only
             case 'piano':
             case 'cello':
+            case 'electricCello':
             case 'violin':
             case 'saxophone':
             case 'strings':
             case 'keys':
             case 'winds': {
-                const instrumentType = this.mapToInstrumentType(graphNode.type);
-                const instrument = createInstrument(instrumentType);
+                const instrumentId = this.getInstrumentIdForNode(graphNode);
+                const instrument = InstrumentLoader.create(instrumentId);
+
+                // Set loading state callback for UI updates
+                instrument.setOnLoadingStateChange((state) => {
+                    console.debug(`Instrument ${instrumentId} loading state: ${state}`);
+                    // TODO: Could emit event or update store for UI here
+                });
+
                 const output = instrument.getOutput();
                 if (output) {
                     output.disconnect(); // Disconnect from master
@@ -334,15 +343,7 @@ class AudioGraphManager {
         }
 
         // Cleanup specific instance types
-        if (audioNode.instance instanceof Instrument) {
-            audioNode.instance.disconnect();
-        } else if (audioNode.instance instanceof Effect) {
-            audioNode.instance.disconnect();
-        } else if (audioNode.instance instanceof Looper) {
-            audioNode.instance.disconnect();
-        } else if (audioNode.instance instanceof Recorder) {
-            audioNode.instance.disconnect();
-        } else if (audioNode.instance instanceof GainNode) {
+        if (audioNode.instance && 'disconnect' in audioNode.instance && typeof audioNode.instance.disconnect === 'function') {
             audioNode.instance.disconnect();
         }
 
@@ -360,24 +361,16 @@ class AudioGraphManager {
     }
 
     /**
-     * Map node type to instrument type
+     * Get instrument ID for a node, supporting both new instrumentId field and legacy type mapping
      */
-    private mapToInstrumentType(nodeType: NodeType): InstrumentType {
-        switch (nodeType) {
-            case 'piano':
-            case 'keys':
-                return 'piano';
-            case 'cello':
-            case 'strings':
-                return 'cello';
-            case 'violin':
-                return 'violin';
-            case 'saxophone':
-            case 'winds':
-                return 'saxophone';
-            default:
-                return 'piano';
+    private getInstrumentIdForNode(node: GraphNode): string {
+        // Check if node has explicit instrumentId in data
+        const nodeData = node.data as InstrumentNodeData;
+        if (nodeData.instrumentId) {
+            return nodeData.instrumentId;
         }
+        // Fall back to legacy type mapping
+        return getLegacyInstrumentId(node.type);
     }
 
     // ============================================================================
@@ -545,10 +538,14 @@ class AudioGraphManager {
     /**
      * Get instrument instance for a node
      */
-    getInstrument(nodeId: string): Instrument | null {
+    getInstrument(nodeId: string): SampledInstrument | null {
         const audioNode = this.audioNodes.get(nodeId);
-        if (audioNode?.instance instanceof Instrument) {
-            return audioNode.instance;
+        // Check if instance has required instrument methods
+        if (audioNode?.instance &&
+            'playNote' in audioNode.instance &&
+            'stopNote' in audioNode.instance &&
+            'stopAllNotes' in audioNode.instance) {
+            return audioNode.instance as SampledInstrument;
         }
         return null;
     }

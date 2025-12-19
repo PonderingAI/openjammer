@@ -11,15 +11,25 @@ export interface Theme {
         bgSecondary: string;
         bgNode: string;
         bgTertiary: string;
+        bgCanvas: string;          // Main canvas background
+        bgCanvasAlt: string;       // Alternative canvas shade
+        bgNodeHeader: string;      // Node header background
 
         // Text colors
         textPrimary: string;
         textSecondary: string;
         textMuted: string;
+        textOnAccent: string;      // Text color on primary/success/warning buttons
 
         // Border colors
         borderSubtle: string;
         borderStrong: string;
+        borderSketch: string;      // Primary border color for sketch elements
+
+        // Sketch/Drawing colors
+        sketchBlack: string;       // Primary lines/borders
+        sketchGray: string;        // Secondary lines
+        sketchLight: string;       // Subtle lines
 
         // Accent colors
         accentPrimary: string;
@@ -45,17 +55,25 @@ export interface Theme {
 export const themes: Theme[] = [
     {
         id: 'cream',
-        name: 'Cream (Lycatra)',
+        name: 'Cream',
         colors: {
             bgPrimary: '#F5F0E8',
             bgSecondary: '#EDE8DF',
             bgNode: '#FFFFFF',
             bgTertiary: '#E8E3DA',
+            bgCanvas: '#F5F0E8',
+            bgCanvasAlt: '#EDE8E0',
+            bgNodeHeader: '#EDE8E0',
             textPrimary: '#1A1A1A',
             textSecondary: '#4A4A4A',
             textMuted: '#8A8A8A',
+            textOnAccent: '#FFFFFF',
             borderSubtle: '#D4CFC6',
             borderStrong: '#1A1A1A',
+            borderSketch: '#1A1A1A',
+            sketchBlack: '#1A1A1A',
+            sketchGray: '#4A4A4A',
+            sketchLight: '#8A8A8A',
             accentPrimary: '#1A1A1A',
             accentSecondary: '#6B5B4F',
             accentSuccess: '#4A7C59',
@@ -72,46 +90,26 @@ export const themes: Theme[] = [
         }
     },
     {
-        id: 'dark',
-        name: 'Dark Mode',
-        colors: {
-            bgPrimary: '#0D1117',
-            bgSecondary: '#161B22',
-            bgNode: '#21262D',
-            bgTertiary: '#30363D',
-            textPrimary: '#F0F6FC',
-            textSecondary: '#C9D1D9',
-            textMuted: '#8B949E',
-            borderSubtle: '#30363D',
-            borderStrong: '#F0F6FC',
-            accentPrimary: '#58A6FF',
-            accentSecondary: '#8B5CF6',
-            accentSuccess: '#3FB950',
-            accentWarning: '#D29922',
-            accentDanger: '#F85149',
-            audioInput: '#79C0FF',
-            audioOutput: '#3B6FA5',
-            audioConnection: '#58A6FF',
-            audioConnected: '#6CB6FF',
-            technicalInput: '#505050',
-            technicalOutput: '#909090',
-            technicalConnection: '#707070',
-            technicalConnected: '#808080'
-        }
-    },
-    {
         id: 'cyberpunk',
         name: 'Cyberpunk',
         colors: {
             bgPrimary: '#0A0A0F',
             bgSecondary: '#12121A',
-            bgNode: '#1A1A25',
+            bgNode: '#12121A',
             bgTertiary: '#252532',
+            bgCanvas: '#0A0A0F',
+            bgCanvasAlt: '#12121A',
+            bgNodeHeader: '#12121A',
             textPrimary: '#00FFFF',
             textSecondary: '#FF00FF',
             textMuted: '#666680',
+            textOnAccent: '#0A0A0F',
             borderSubtle: '#333345',
             borderStrong: '#00FFFF',
+            borderSketch: '#00FFFF',
+            sketchBlack: '#00FFFF',
+            sketchGray: '#666680',
+            sketchLight: '#333345',
             accentPrimary: '#FF00FF',
             accentSecondary: '#00FFFF',
             accentSuccess: '#00FF88',
@@ -133,13 +131,21 @@ export const themes: Theme[] = [
         colors: {
             bgPrimary: '#0F172A',
             bgSecondary: '#1E293B',
-            bgNode: '#334155',
+            bgNode: '#1E293B',
             bgTertiary: '#475569',
+            bgCanvas: '#0F172A',
+            bgCanvasAlt: '#1E293B',
+            bgNodeHeader: '#1E293B',
             textPrimary: '#F8FAFC',
             textSecondary: '#CBD5E1',
             textMuted: '#94A3B8',
+            textOnAccent: '#FFFFFF',
             borderSubtle: '#475569',
             borderStrong: '#F8FAFC',
+            borderSketch: '#F8FAFC',
+            sketchBlack: '#F8FAFC',
+            sketchGray: '#94A3B8',
+            sketchLight: '#475569',
             accentPrimary: '#3B82F6',
             accentSecondary: '#8B5CF6',
             accentSuccess: '#22C55E',
@@ -164,13 +170,22 @@ export function applyTheme(theme: Theme): void {
     root.style.setProperty('--bg-secondary', theme.colors.bgSecondary);
     root.style.setProperty('--bg-node', theme.colors.bgNode);
     root.style.setProperty('--bg-tertiary', theme.colors.bgTertiary);
+    root.style.setProperty('--bg-canvas', theme.colors.bgCanvas);
+    root.style.setProperty('--bg-canvas-alt', theme.colors.bgCanvasAlt);
+    root.style.setProperty('--bg-node-header', theme.colors.bgNodeHeader);
 
     root.style.setProperty('--text-primary', theme.colors.textPrimary);
     root.style.setProperty('--text-secondary', theme.colors.textSecondary);
     root.style.setProperty('--text-muted', theme.colors.textMuted);
+    root.style.setProperty('--text-on-accent', theme.colors.textOnAccent);
 
     root.style.setProperty('--border-subtle', theme.colors.borderSubtle);
     root.style.setProperty('--border-strong', theme.colors.borderStrong);
+    root.style.setProperty('--border-sketch', theme.colors.borderSketch);
+
+    root.style.setProperty('--sketch-black', theme.colors.sketchBlack);
+    root.style.setProperty('--sketch-gray', theme.colors.sketchGray);
+    root.style.setProperty('--sketch-light', theme.colors.sketchLight);
 
     root.style.setProperty('--accent-primary', theme.colors.accentPrimary);
     root.style.setProperty('--accent-secondary', theme.colors.accentSecondary);
