@@ -9,6 +9,116 @@ bun install
 bun dev
 ```
 
+## Audio Setup & USB Interfaces
+
+### Latency Optimization
+
+OpenJammer includes comprehensive latency optimizations that work immediately:
+
+- **Web Audio API latency tuning**: Interactive mode for lowest latency
+- **Low-latency microphone input**: Disable processing for 20-50ms improvement
+- **Direct output device routing**: Select specific audio interfaces (Chrome 110+)
+- **Real-time latency monitoring**: View actual latency metrics in settings
+
+**Access audio settings**: Open Settings (gear icon) → Audio tab
+
+### Recommended USB Audio Interfaces
+
+For the best jamming experience, use a USB audio interface instead of built-in audio:
+
+| Tier | Model | Price | Latency | Inputs | Notes |
+|------|-------|-------|---------|--------|-------|
+| **Budget** | PreSonus AudioBox USB 96 | ~$100 | 5-8ms | 2 | Great starter interface, MIDI I/O |
+| **Budget+** | Behringer UMC404HD | ~$170 | 6-10ms | 4 | 4 inputs, MIDAS preamps |
+| **Mid-Range** | MOTU M4 | ~$250 | **2.4ms** | 4 | Best value: ESS Sabre32 DAC, class-compliant |
+| **Mid-Range** | Focusrite Scarlett 4i4 | ~$280 | 4ms | 4 | Industry standard, excellent preamps |
+| **Guitar/Bass** | Audient iD4 MKII | ~$200 | 4ms | 2 | Class-A JFET instrument input |
+| **Professional** | RME Babyface Pro FS | ~$850 | **3ms** | 4 | Reference-quality, TotalMix FX routing |
+| **Professional** | Universal Audio Apollo Twin | ~$900 | 3-5ms | 2 | Built-in DSP for effects processing |
+
+**Recommendation**: The **MOTU M4** offers exceptional value with 2.4ms round-trip latency, professional-grade converters, and class-compliant USB (works without drivers on all platforms).
+
+### Browser Limitations
+
+**Important**: Web browsers cannot access ASIO drivers. They use:
+- **Windows**: WASAPI (10-30ms typical latency)
+- **macOS**: Core Audio (3-5ms typical latency)
+- **Linux**: ALSA/JACK (varies by configuration)
+
+This is a browser limitation, not an OpenJammer limitation. USB audio interfaces significantly reduce latency by providing better hardware buffering and drivers optimized for low-latency operation.
+
+### Setup Instructions
+
+#### 1. Connect Your USB Audio Interface
+
+- **USB 2.0/3.0**: Most interfaces work with standard USB ports
+- **USB-C**: Direct connection to modern laptops (no adapter needed for USB-C interfaces)
+- **Power**: Most bus-powered interfaces work without external power
+
+#### 2. Configure Browser Permissions
+
+1. Open OpenJammer
+2. Click "Start Audio" when prompted
+3. Grant microphone permissions when browser asks
+4. Open Settings → Audio tab
+5. Select your USB interface from the device dropdown
+
+#### 3. Enable Optimizations
+
+In Settings → Audio:
+
+1. **Low Latency Mode**: Enable (disables echo cancellation - safe with USB interface in quiet room)
+2. **Sample Rate**: 48 kHz (recommended) or 96 kHz if your interface supports it
+3. **Latency Mode**: Interactive (lowest latency)
+
+**Expected Latency**:
+- Built-in audio: 30-80ms
+- USB interface (basic): 10-20ms
+- USB interface (optimized): 3-10ms
+
+You can see your actual latency in the Audio Settings panel.
+
+### Troubleshooting
+
+**Device not detected**:
+- Ensure interface is powered on and connected
+- Refresh the browser page
+- Check that interface drivers are installed (Windows may need manual drivers)
+- Try a different USB port
+
+**Audio crackling/dropouts**:
+- Increase browser buffer size (Settings → Audio → Latency Mode → Balanced)
+- Close other audio applications
+- Reduce CPU load (fewer effects/instruments)
+- Check USB cable quality (use shorter, high-quality cable)
+
+**High latency despite USB interface**:
+- Verify "Low Latency Mode" is enabled
+- Check that you selected the correct input/output devices
+- Some interfaces require configuration software (check manufacturer docs)
+- Windows: Ensure exclusive mode is enabled in Windows Sound settings
+
+**Microphone sounds echoey with Low Latency Mode**:
+- Low Latency Mode disables echo cancellation
+- Use headphones instead of speakers for monitoring
+- Or disable Low Latency Mode if jamming in acoustically treated room
+
+### OS-Specific Notes
+
+**macOS**: Generally provides the best latency performance due to Core Audio. Most interfaces work class-compliant (no drivers needed).
+
+**Windows**: WASAPI adds latency vs ASIO. USB interfaces help significantly. Some interfaces require manufacturer drivers - check support page.
+
+**Linux**: Audio setup varies by distro. JACK provides best latency but requires configuration. PulseAudio works but has higher latency. PipeWire offers good balance.
+
+### Verification
+
+After setup, check Audio Settings to verify:
+- ✅ USB interface detected (banner appears)
+- ✅ Total latency < 15ms (excellent)
+- ✅ Low Latency Mode enabled (if in quiet room)
+- ✅ Correct input/output devices selected
+
 ## Vision
 
 Openjammer is a visual node-based audio workstation inspired by ComfyUI's interface paradigm. Right-click on empty canvas space to open the context menu with all node categories. The tool prioritizes screen real estate (laptop-first design) and live editability—all parameters remain editable while audio plays without dropouts. Every transformation is lossless.

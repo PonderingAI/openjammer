@@ -13,8 +13,10 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@tonejs/piano": "^0.2.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "rollup-plugin-node-polyfills": "^0.2.1",
     "smplr": "^0.16.3",
     "tone": "^15.1.22",
     "vite-plugin-pwa": "^1.2.0",

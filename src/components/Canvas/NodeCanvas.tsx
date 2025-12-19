@@ -343,6 +343,14 @@ export function NodeCanvas() {
             if (currentMode > 1) {
                 const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
                 if (activeKeyboardId) {
+                    // Handle spacebar for pedal (prevent repeat)
+                    if (e.code === 'Space' && !e.repeat) {
+                        e.preventDefault();
+                        const emitPedalDown = useAudioStore.getState().emitPedalDown;
+                        emitPedalDown(activeKeyboardId);
+                        return;
+                    }
+
                     // Check all three rows for the pressed key
                     const key = e.key.toLowerCase();
                     for (let row = 1; row <= 3; row++) {
@@ -365,10 +373,18 @@ export function NodeCanvas() {
 
             const currentMode = useAudioStore.getState().currentMode;
 
-            // Keyboard input mode (modes 2-9) - release notes
+            // Keyboard input mode (modes 2-9) - release notes and pedal
             if (currentMode > 1) {
                 const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
                 if (activeKeyboardId) {
+                    // Handle spacebar for pedal
+                    if (e.code === 'Space') {
+                        e.preventDefault();
+                        const emitPedalUp = useAudioStore.getState().emitPedalUp;
+                        emitPedalUp(activeKeyboardId);
+                        return;
+                    }
+
                     // Check all three rows for the released key
                     const key = e.key.toLowerCase();
                     for (let row = 1; row <= 3; row++) {

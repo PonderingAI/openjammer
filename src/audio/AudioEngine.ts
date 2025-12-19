@@ -5,10 +5,29 @@
 let audioContext: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface AudioContextConfig {
+    sampleRate?: number;
+    latencyHint?: AudioContextLatencyCategory | number;
+}
+
+export interface LatencyMetrics {
+    baseLatency: number; // ms
+    outputLatency: number; // ms
+    totalLatency: number; // ms
+}
+
+// ============================================================================
+// Audio Context Initialization
+// ============================================================================
+
 /**
  * Initialize the audio context (must be called after user gesture)
  */
-export async function initAudioContext(): Promise<AudioContext> {
+export async function initAudioContext(config?: AudioContextConfig): Promise<AudioContext> {
     if (audioContext && audioContext.state !== 'closed') {
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
@@ -16,12 +35,32 @@ export async function initAudioContext(): Promise<AudioContext> {
         return audioContext;
     }
 
-    audioContext = new AudioContext();
+    audioContext = new AudioContext({
+        sampleRate: config?.sampleRate || 48000,
+        latencyHint: config?.latencyHint !== undefined ? config.latencyHint : 'interactive'
+    });
     masterGain = audioContext.createGain();
     masterGain.connect(audioContext.destination);
     masterGain.gain.value = 0.8;
 
     return audioContext;
+}
+
+/**
+ * Reinitialize AudioContext with new configuration
+ * Must be called after user gesture
+ */
+export async function reinitAudioContext(config: AudioContextConfig): Promise<AudioContext> {
+    // Close existing context
+    if (audioContext && audioContext.state !== 'closed') {
+        await audioContext.close();
+    }
+
+    audioContext = null;
+    masterGain = null;
+
+    // Create new context with config
+    return initAudioContext(config);
 }
 
 /**
@@ -83,4 +122,44 @@ export function createGainNode(gain: number = 1): GainNode | null {
     gainNode.connect(masterGain);
 
     return gainNode;
+}
+
+// ============================================================================
+// Latency Monitoring
+// ============================================================================
+
+/**
+ * Get current latency metrics from AudioContext
+ */
+export function getLatencyMetrics(): LatencyMetrics | null {
+    if (!audioContext) return null;
+
+    const baseLatency = audioContext.baseLatency * 1000; // Convert to ms
+    const outputLatency = audioContext.outputLatency * 1000;
+
+    return {
+        baseLatency,
+        outputLatency,
+        totalLatency: baseLatency + outputLatency
+    };
+}
+
+/**
+ * Start periodic latency monitoring
+ * @param callback Function to call with latency metrics
+ * @param intervalMs Update interval in milliseconds (default 1000ms)
+ * @returns Cleanup function to stop monitoring
+ */
+export function startLatencyMonitoring(
+    callback: (metrics: LatencyMetrics) => void,
+    intervalMs: number = 1000
+): () => void {
+    const intervalId = setInterval(() => {
+        const metrics = getLatencyMetrics();
+        if (metrics) {
+            callback(metrics);
+        }
+    }, intervalMs);
+
+    return () => clearInterval(intervalId);
 }

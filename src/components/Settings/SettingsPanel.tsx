@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { themes, applyTheme, getThemeById, getSavedThemeId, saveThemeId } from '../../styles/themes';
 import { KeybindingsPanel } from './KeybindingsPanel';
+import { AudioSettingsPanel } from './AudioSettingsPanel';
 import '../Nodes/SchematicNodes.css';
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
@@ -77,7 +78,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                         {activeTab === 'keybindings' && (
                             <KeybindingsPanel />
                         )}
-                        {activeTab !== 'graphics' && activeTab !== 'keybindings' && (
+                        {activeTab === 'audio' && (
+                            <AudioSettingsPanel />
+                        )}
+                        {activeTab !== 'graphics' && activeTab !== 'keybindings' && activeTab !== 'audio' && (
                             <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} settings coming soon.
                             </div>

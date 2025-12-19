@@ -1,0 +1,194 @@
+/**
+ * Audio Settings Panel Styles
+ */
+
+.audio-settings-panel {
+    padding: 0;
+}
+
+.audio-info-banner {
+    padding: 16px;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border-color, #ccc);
+    margin-bottom: 24px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.audio-info-banner.usb-detected {
+    background: rgba(76, 175, 80, 0.1);
+    border-color: rgba(76, 175, 80, 0.3);
+}
+
+.audio-info-banner svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.audio-info-banner strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 1rem;
+}
+
+.audio-info-banner p {
+    margin: 4px 0;
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+
+.audio-info-banner .suggestion {
+    margin-top: 8px;
+    font-style: italic;
+    color: var(--accent-primary, #2196f3);
+}
+
+.audio-metrics-section {
+    margin-bottom: 32px;
+}
+
+.audio-metrics-section h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.metric-card {
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 2px solid var(--border-color, #ccc);
+    text-align: center;
+}
+
+.metric-card.total {
+    background: rgba(33, 150, 243, 0.1);
+    border-color: rgba(33, 150, 243, 0.3);
+}
+
+.metric-label {
+    display: block;
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin-bottom: 8px;
+}
+
+.metric-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+}
+
+.audio-config-section {
+    margin-bottom: 32px;
+}
+
+.audio-config-section h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+.setting-group {
+    margin-bottom: 24px;
+}
+
+.setting-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.setting-group select,
+.setting-group input[type="number"] {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid var(--border-color, #ccc);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: inherit;
+}
+
+.setting-group select:focus,
+.setting-group input:focus {
+    outline: none;
+    border-color: var(--accent-primary, #2196f3);
+}
+
+.setting-description {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    opacity: 0.7;
+    line-height: 1.4;
+}
+
+.setting-description strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--accent-primary, #2196f3);
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.apply-config-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent-primary, #2196f3);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.apply-config-btn:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+.apply-config-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.audio-info-section h3 {
+    margin-top: 0;
+    margin-bottom: 12px;
+}
+
+.info-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.info-list li {
+    padding: 8px 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.info-list strong {
+    color: var(--accent-primary, #2196f3);
+}

@@ -43,7 +43,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         defaultPorts: [
             { id: 'row-1', name: 'Row 1 (Q-P)', type: 'technical', direction: 'output' },
             { id: 'row-2', name: 'Row 2 (A-L)', type: 'technical', direction: 'output' },
-            { id: 'row-3', name: 'Row 3 (Z-/)', type: 'technical', direction: 'output' }
+            { id: 'row-3', name: 'Row 3 (Z-/)', type: 'technical', direction: 'output' },
+            { id: 'pedal', name: 'Pedal (Space)', type: 'technical', direction: 'output' }
         ],
         defaultData: {
             assignedKey: 2,

@@ -85,6 +85,7 @@ export interface MicrophoneNodeData extends NodeData {
     isMuted: boolean;
     isActive: boolean;
     deviceId?: string;
+    lowLatencyMode?: boolean; // Override global setting per node
 }
 
 export interface LooperNodeData extends NodeData {
@@ -116,6 +117,7 @@ export interface SpeakerNodeData extends NodeData {
     volume: number; // 0-1
     isMuted: boolean;
     deviceId: string; // ID of selected output device
+    sinkIdApplied?: boolean; // Track if setSinkId succeeded
 }
 
 export interface RecorderNodeData extends NodeData {

@@ -23,6 +23,7 @@ function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
     return typeof offsets === 'object' && offsets !== null;
 }
 import { useGraphStore } from '../store/graphStore';
+import { TonePianoInstrument } from './samplers/TonePianoAdapter';
 
 // ============================================================================
 // Constants
@@ -294,10 +295,31 @@ class AudioGraphManager {
                 const speakerGain = ctx.createGain();
                 speakerGain.gain.value = speakerData.isMuted ? 0 : (speakerData.volume ?? 1);
 
-                // Connect to audio destination (or selected device)
-                speakerGain.connect(ctx.destination);
+                // Create MediaStreamDestination for device routing
+                const destination = ctx.createMediaStreamDestination();
+                speakerGain.connect(destination);
 
-                baseInstance.instance = speakerGain;
+                // Create hidden audio element for setSinkId
+                const audioElement = new Audio();
+                audioElement.srcObject = destination.stream;
+                audioElement.play().catch(e => {
+                    console.warn('Failed to start audio element:', e);
+                });
+
+                // Apply device selection if supported
+                if (this.supportsSetSinkId() && speakerData.deviceId !== 'default') {
+                    (audioElement as any).setSinkId(speakerData.deviceId)
+                        .catch((err: Error) => {
+                            console.error('Failed to set output device:', err);
+                        });
+                }
+
+                // Store audio element for later device switching
+                baseInstance.instance = {
+                    gainNode: speakerGain,
+                    audioElement: audioElement,
+                    destination: destination
+                };
                 baseInstance.inputNode = speakerGain;
                 baseInstance.outputNode = speakerGain; // Also output for chaining to recorder
                 break;
@@ -345,6 +367,19 @@ class AudioGraphManager {
         // Cleanup specific instance types
         if (audioNode.instance && 'disconnect' in audioNode.instance && typeof audioNode.instance.disconnect === 'function') {
             audioNode.instance.disconnect();
+        }
+
+        // Cleanup speaker audio element
+        if (audioNode.instance && typeof audioNode.instance === 'object' && 'audioElement' in audioNode.instance) {
+            const speakerInstance = audioNode.instance as {
+                audioElement: HTMLAudioElement;
+                destination: MediaStreamDestinationNode;
+                gainNode: GainNode;
+            };
+            speakerInstance.audioElement.pause();
+            speakerInstance.audioElement.srcObject = null;
+            speakerInstance.gainNode.disconnect();
+            speakerInstance.destination.disconnect();
         }
 
         // Disconnect nodes (may throw if already disconnected)
@@ -603,14 +638,53 @@ class AudioGraphManager {
      */
     updateSpeakerVolume(nodeId: string, volume: number, isMuted: boolean): void {
         const audioNode = this.audioNodes.get(nodeId);
-        if (audioNode?.instance instanceof GainNode) {
-            const ctx = getAudioContext();
-            if (ctx) {
-                const targetGain = isMuted ? 0 : volume;
-                const now = ctx.currentTime;
-                audioNode.instance.gain.setValueAtTime(audioNode.instance.gain.value, now);
-                audioNode.instance.gain.linearRampToValueAtTime(targetGain, now + this.RAMP_TIME);
-            }
+        if (!audioNode) return;
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const targetGain = isMuted ? 0 : volume;
+        const now = ctx.currentTime;
+
+        // Handle both old GainNode instances and new speaker instance structure
+        if (audioNode.instance instanceof GainNode) {
+            audioNode.instance.gain.setValueAtTime(audioNode.instance.gain.value, now);
+            audioNode.instance.gain.linearRampToValueAtTime(targetGain, now + this.RAMP_TIME);
+        } else if (audioNode.instance && typeof audioNode.instance === 'object' && 'gainNode' in audioNode.instance) {
+            const speakerInstance = audioNode.instance as { gainNode: GainNode };
+            speakerInstance.gainNode.gain.setValueAtTime(speakerInstance.gainNode.gain.value, now);
+            speakerInstance.gainNode.gain.linearRampToValueAtTime(targetGain, now + this.RAMP_TIME);
+        }
+    }
+
+    /**
+     * Check if browser supports setSinkId for output device selection
+     */
+    private supportsSetSinkId(): boolean {
+        const audio = document.createElement('audio');
+        return typeof (audio as any).setSinkId === 'function';
+    }
+
+    /**
+     * Update speaker output device
+     */
+    updateSpeakerDevice(nodeId: string, deviceId: string): void {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (!audioNode?.instance || !('audioElement' in audioNode.instance)) {
+            return;
+        }
+
+        const instance = audioNode.instance as {
+            audioElement: HTMLAudioElement;
+            gainNode: GainNode;
+            destination: MediaStreamDestinationNode;
+        };
+
+        if (this.supportsSetSinkId()) {
+            (instance.audioElement as any).setSinkId(deviceId)
+                .catch((err: Error) => {
+                    console.error('Failed to switch output device:', err);
+                });
         }
     }
 
@@ -842,6 +916,84 @@ class AudioGraphManager {
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument) {
                     instrument.stopNote(noteName);
+                }
+            }
+        }
+    }
+
+    /**
+     * Trigger pedal down from keyboard input
+     * @param keyboardId - The keyboard node ID
+     */
+    triggerPedalDown(keyboardId: string): void {
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the pedal port
+        const pedalPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.id === 'pedal'
+        )?.id;
+
+        if (!pedalPortId) return;
+
+        // Find all connections from the pedal port
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === pedalPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is a piano instrument
+                if (targetNode.type !== 'piano') continue;
+
+                // Get the instrument and activate pedal
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument && 'setPedal' in instrument) {
+                    (instrument as TonePianoInstrument).setPedal(true);
+                }
+            }
+        }
+    }
+
+    /**
+     * Trigger pedal up from keyboard input
+     * @param keyboardId - The keyboard node ID
+     */
+    triggerPedalUp(keyboardId: string): void {
+        const graphConnections = useGraphStore.getState().connections;
+        const graphNodes = useGraphStore.getState().nodes;
+
+        // Get the keyboard node
+        const keyboardNode = graphNodes.get(keyboardId);
+        if (!keyboardNode) return;
+
+        // Find the pedal port
+        const pedalPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.id === 'pedal'
+        )?.id;
+
+        if (!pedalPortId) return;
+
+        // Find all connections from the pedal port
+        for (const [, connection] of graphConnections) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === pedalPortId) {
+                const targetNodeId = connection.targetNodeId;
+                const targetNode = graphNodes.get(targetNodeId);
+
+                if (!targetNode) continue;
+
+                // Check if target is a piano instrument
+                if (targetNode.type !== 'piano') continue;
+
+                // Get the instrument and deactivate pedal
+                const instrument = this.getInstrument(targetNodeId);
+                if (instrument && 'setPedal' in instrument) {
+                    (instrument as TonePianoInstrument).setPedal(false);
                 }
             }
         }

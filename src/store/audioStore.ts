@@ -6,6 +6,29 @@ import { create } from 'zustand';
 import { audioGraphManager } from '../audio/AudioGraphManager';
 
 // ============================================================================
+// Audio Configuration Types
+// ============================================================================
+
+export interface AudioConfig {
+    sampleRate: number; // 44100, 48000, 96000
+    latencyHint: AudioContextLatencyCategory | number;
+    lowLatencyMode: boolean; // Disables echo cancellation, noise suppression, AGC
+}
+
+export interface AudioMetrics {
+    baseLatency: number; // From AudioContext.baseLatency (ms)
+    outputLatency: number; // From AudioContext.outputLatency (ms)
+    totalLatency: number; // baseLatency + outputLatency (ms)
+    lastUpdated: number; // Timestamp
+}
+
+export interface DeviceInfo {
+    isUSBAudioInterface: boolean;
+    deviceLabel: string;
+    sampleRate: number | null;
+}
+
+// ============================================================================
 // Store Interface
 // ============================================================================
 
@@ -13,6 +36,28 @@ interface AudioStore {
     // Audio Context State
     isAudioContextReady: boolean;
     setAudioContextReady: (ready: boolean) => void;
+
+    // Audio Configuration
+    audioConfig: AudioConfig;
+    setAudioConfig: (config: Partial<AudioConfig>) => void;
+
+    // Audio Metrics
+    audioMetrics: AudioMetrics;
+    updateAudioMetrics: (metrics: Partial<AudioMetrics>) => void;
+
+    // Device Detection
+    deviceInfo: DeviceInfo;
+    setDeviceInfo: (info: Partial<DeviceInfo>) => void;
+
+    // Selected devices
+    selectedInputDevice: string | null;
+    selectedOutputDevice: string | null;
+    setSelectedInputDevice: (deviceId: string | null) => void;
+    setSelectedOutputDevice: (deviceId: string | null) => void;
+
+    // Sustain Pedal State
+    pedalDown: boolean;
+    setPedalDown: (down: boolean) => void;
 
     // Mode Switching (key 1 = config mode, 2-9 = keyboard nodes)
     currentMode: number; // 1 = config, 2-9 = keyboard node modes
@@ -41,6 +86,10 @@ interface AudioStore {
     emitKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
     releaseKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
 
+    // Pedal signal emission (triggers pedal down/up on connected instruments)
+    emitPedalDown: (keyboardId: string) => void;
+    emitPedalUp: (keyboardId: string) => void;
+
     // Used keyboard numbers tracking (for auto-assignment)
     usedKeyboardNumbers: Set<number>;
     claimKeyboardNumber: (num: number) => void;
@@ -52,6 +101,47 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
     // Audio Context State
     isAudioContextReady: false,
     setAudioContextReady: (ready) => set({ isAudioContextReady: ready }),
+
+    // Audio Configuration
+    audioConfig: {
+        sampleRate: 48000,
+        latencyHint: 'interactive',
+        lowLatencyMode: false
+    },
+    setAudioConfig: (config) => set((state) => ({
+        audioConfig: { ...state.audioConfig, ...config }
+    })),
+
+    // Audio Metrics
+    audioMetrics: {
+        baseLatency: 0,
+        outputLatency: 0,
+        totalLatency: 0,
+        lastUpdated: 0
+    },
+    updateAudioMetrics: (metrics) => set((state) => ({
+        audioMetrics: { ...state.audioMetrics, ...metrics }
+    })),
+
+    // Device Info
+    deviceInfo: {
+        isUSBAudioInterface: false,
+        deviceLabel: '',
+        sampleRate: null
+    },
+    setDeviceInfo: (info) => set((state) => ({
+        deviceInfo: { ...state.deviceInfo, ...info }
+    })),
+
+    // Selected Devices
+    selectedInputDevice: null,
+    selectedOutputDevice: null,
+    setSelectedInputDevice: (deviceId) => set({ selectedInputDevice: deviceId }),
+    setSelectedOutputDevice: (deviceId) => set({ selectedOutputDevice: deviceId }),
+
+    // Sustain Pedal State
+    pedalDown: false,
+    setPedalDown: (down) => set({ pedalDown: down }),
 
     // Mode Switching
     currentMode: 1, // Start in config mode
@@ -140,6 +230,17 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
 
         // Release note on connected instruments
         audioGraphManager.releaseKeyboardNote(keyboardId, row, keyIndex);
+    },
+
+    // Pedal signal emission
+    emitPedalDown: (keyboardId) => {
+        set({ pedalDown: true });
+        audioGraphManager.triggerPedalDown(keyboardId);
+    },
+
+    emitPedalUp: (keyboardId) => {
+        set({ pedalDown: false });
+        audioGraphManager.triggerPedalUp(keyboardId);
     },
 
     // Keyboard Number Management

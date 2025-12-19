@@ -119,20 +119,26 @@ export class KarplusStrongInstrument extends SampledInstrument {
 
     const noteData = this.activeNotes.get(note) as KarplusNote | undefined;
     if (noteData) {
-      // Fast decay
       const now = ctx.currentTime;
+
+      // Use setTargetAtTime for natural plucked string release
+      // Time constant of 0.08s (appropriate for acoustic guitar)
+      const timeConstant = 0.08;
+
       noteData.feedbackGain.gain.setValueAtTime(noteData.feedbackGain.gain.value, now);
-      noteData.feedbackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      noteData.feedbackGain.gain.setTargetAtTime(0, now, timeConstant);
 
       noteData.outputGain.gain.setValueAtTime(noteData.outputGain.gain.value, now);
-      noteData.outputGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      noteData.outputGain.gain.setTargetAtTime(0, now, timeConstant);
 
+      // Cleanup after 5x time constant (99% decay)
+      const cleanupTime = timeConstant * 5 * 1000; // Convert to ms
       setTimeout(() => {
         noteData.delayNode.disconnect();
         noteData.filterNode.disconnect();
         noteData.feedbackGain.disconnect();
         noteData.outputGain.disconnect();
-      }, 300);
+      }, cleanupTime);
 
       this.activeNotes.delete(note);
     }

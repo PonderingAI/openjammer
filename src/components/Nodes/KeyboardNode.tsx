@@ -10,7 +10,6 @@
 
 import { useEffect, useState } from 'react';
 import { useAudioStore } from '../../store/audioStore';
-import { useGraphStore } from '../../store/graphStore';
 
 interface KeyboardNodeProps {
     node: import('../../engine/types').GraphNode;
@@ -51,7 +50,7 @@ export function KeyboardNode({
 }: KeyboardNodeProps) {
     const data = node.data as unknown as KeyboardNodeData;
     const activeKeyboardId = useAudioStore((s) => s.activeKeyboardId);
-    const updateNodeData = useGraphStore((s) => s.updateNodeData);
+    const pedalDown = useAudioStore((s) => s.pedalDown);
 
     const registerKeyboard = useAudioStore((s) => s.registerKeyboard);
     const unregisterKeyboard = useAudioStore((s) => s.unregisterKeyboard);
@@ -72,12 +71,6 @@ export function KeyboardNode({
             setActiveRow(data.activeRow);
         }
     }, [data.activeRow]);
-
-    // Handle row switching
-    const handleRowClick = (row: number) => {
-        setActiveRow(row);
-        updateNodeData(node.id, { activeRow: row });
-    };
 
     // Output ports (should match default ports in registry)
     const outputPorts = node.ports.filter(p => p.direction === 'output');
@@ -105,7 +98,7 @@ export function KeyboardNode({
                     {outputPorts.map((port) => (
                         <div
                             key={port.id}
-                            className={`port-circle-marker ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            className={`port-circle-marker ${hasConnection?.(port.id) ? 'connected' : ''} ${port.id === 'pedal' && isActive && pedalDown ? 'pedal-active' : ''}`}
                             data-node-id={node.id}
                             data-port-id={port.id}
                             onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
@@ -115,8 +108,8 @@ export function KeyboardNode({
                             title={port.name}
                         />
                     ))}
-                    {/* Ensure we always show 3 ports visually */}
-                    {outputPorts.length < 3 && Array(3 - outputPorts.length).fill(null).map((_, i) => (
+                    {/* Ensure we always show 4 ports visually */}
+                    {outputPorts.length < 4 && Array(4 - outputPorts.length).fill(null).map((_, i) => (
                         <div
                             key={`placeholder-${i}`}
                             className="port-circle-marker disabled"

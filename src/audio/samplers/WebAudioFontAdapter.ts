@@ -68,7 +68,7 @@ export class WebAudioFontInstrument extends SampledInstrument {
     });
   }
 
-  private noteToMidi(note: string): number {
+  protected noteToMidi(note: string): number {
     const noteMap: Record<string, number> = {
       'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
       'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
@@ -108,16 +108,20 @@ export class WebAudioFontInstrument extends SampledInstrument {
 
     const handle = this.noteHandles.get(note);
     if (handle) {
-      // Fade out then cancel
       const now = ctx.currentTime;
-      handle.gainNode.gain.setValueAtTime(handle.gainNode.gain.value, now);
-      handle.gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
 
-      // Cancel after fade
+      // Use setTargetAtTime for natural exponential decay
+      // Time constant of 0.04s for winds (quick release)
+      const timeConstant = 0.04;
+      handle.gainNode.gain.setValueAtTime(handle.gainNode.gain.value, now);
+      handle.gainNode.gain.setTargetAtTime(0, now, timeConstant);
+
+      // Cancel after 5x time constant (99% decay)
+      const cleanupTime = timeConstant * 5 * 1000; // Convert to ms
       setTimeout(() => {
         handle.cancel();
         handle.gainNode.disconnect();
-      }, 150);
+      }, cleanupTime);
 
       this.noteHandles.delete(note);
     }

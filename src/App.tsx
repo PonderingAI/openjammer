@@ -7,7 +7,7 @@ import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
-import { initAudioContext, isAudioReady } from './audio/AudioEngine';
+import { initAudioContext, isAudioReady, getLatencyMetrics } from './audio/AudioEngine';
 import { audioGraphManager } from './audio/AudioGraphManager';
 import { useAudioStore } from './store/audioStore';
 import { useGraphStore } from './store/graphStore';
@@ -18,6 +18,8 @@ function App() {
   const [showActivation, setShowActivation] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const setAudioContextReady = useAudioStore((s) => s.setAudioContextReady);
+  const audioConfig = useAudioStore((s) => s.audioConfig);
+  const updateAudioMetrics = useAudioStore((s) => s.updateAudioMetrics);
 
   // Initialize theme
   useEffect(() => {
@@ -86,14 +88,26 @@ function App() {
   // Initialize audio context on user gesture
   const handleActivate = useCallback(async () => {
     try {
-      await initAudioContext();
+      await initAudioContext({
+        sampleRate: audioConfig.sampleRate,
+        latencyHint: audioConfig.latencyHint
+      });
       setAudioContextReady(true);
       setShowActivation(false);
+
+      // Get initial latency metrics
+      const metrics = getLatencyMetrics();
+      if (metrics) {
+        updateAudioMetrics({
+          ...metrics,
+          lastUpdated: Date.now()
+        });
+      }
     } catch (err) {
       console.error('Failed to initialize audio:', err);
       // alert('Failed to initialize audio. Please check your browser settings.');
     }
-  }, [setAudioContextReady]);
+  }, [setAudioContextReady, audioConfig, updateAudioMetrics]);
 
   return (
     <>

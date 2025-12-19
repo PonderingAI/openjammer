@@ -6,6 +6,7 @@ import type { InstrumentDefinition, InstrumentCategory } from './types';
 import { SampledInstrument } from './SampledInstrument';
 import { SmplrInstrument } from './SmplrAdapter';
 import { ToneSamplerInstrument, createSalamanderPiano } from './ToneSamplerAdapter';
+import { TonePianoInstrument } from './TonePianoAdapter';
 import { WebAudioFontInstrument } from './WebAudioFontAdapter';
 import { KarplusStrongInstrument } from './KarplusStrong';
 import { INSTRUMENT_DEFINITIONS } from './InstrumentDefinitions';
@@ -55,6 +56,13 @@ class InstrumentLoaderClass {
     switch (def.library) {
       case 'smplr':
         instrument = new SmplrInstrument(def.config.instrument as 'cello' | 'violin' | 'viola' | 'double-bass');
+        break;
+
+      case 'tonejs-piano':
+        instrument = new TonePianoInstrument({
+          velocities: (def.config.velocities as 1 | 4 | 5 | 16) ?? 5,
+          envelope: def.envelope
+        });
         break;
 
       case 'tone':

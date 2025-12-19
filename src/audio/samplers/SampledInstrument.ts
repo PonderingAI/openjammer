@@ -6,7 +6,7 @@
  */
 
 import { getAudioContext, getMasterGain } from '../AudioEngine';
-import type { LoadingState } from './types';
+import type { LoadingState, VelocityCurve, EnvelopeConfig } from './types';
 
 export abstract class SampledInstrument {
   protected loadingState: LoadingState = 'idle';
@@ -86,6 +86,7 @@ export abstract class SampledInstrument {
     if (this.activeNotes.has(note)) return;
 
     if (this.loadingState === 'loaded') {
+      this.triggerHaptic(velocity);
       this.playNoteImpl(note, velocity);
     } else if (this.loadingState === 'idle' || this.loadingState === 'loading') {
       // Queue note and trigger load
@@ -102,6 +103,7 @@ export abstract class SampledInstrument {
     this.pendingNotes = this.pendingNotes.filter(p => p.note !== note);
 
     if (this.activeNotes.has(note)) {
+      this.triggerReleaseHaptic();
       this.stopNoteImpl(note);
     }
   }
@@ -113,6 +115,73 @@ export abstract class SampledInstrument {
 
   getOutput(): GainNode | null {
     return this.outputNode;
+  }
+
+  // Helper methods for realistic instrument behavior
+
+  protected applyVelocityCurve(velocity: number, curve: VelocityCurve = 'linear'): number {
+    switch (curve) {
+      case 'exponential':
+        return Math.pow(velocity, 2); // More dynamic range
+      case 'logarithmic':
+        return Math.sqrt(velocity); // Compressed dynamics
+      case 'linear':
+      default:
+        return velocity;
+    }
+  }
+
+  protected getTimeConstantForNote(note: string, config?: EnvelopeConfig): number {
+    if (!config) return 0.08; // Default medium release
+
+    // Check if note falls within any defined range
+    if (config.releaseTimeConstantByRange) {
+      for (const range of config.releaseTimeConstantByRange) {
+        if (this.isNoteInRange(note, range.minNote, range.maxNote)) {
+          return range.timeConstant;
+        }
+      }
+    }
+
+    // Fall back to single time constant or default
+    return config.releaseTimeConstant ?? 0.08;
+  }
+
+  private isNoteInRange(note: string, min: string, max: string): boolean {
+    const midi = this.noteToMidi(note);
+    const minMidi = this.noteToMidi(min);
+    const maxMidi = this.noteToMidi(max);
+    return midi >= minMidi && midi <= maxMidi;
+  }
+
+  protected noteToMidi(note: string): number {
+    const noteMap: Record<string, number> = {
+      'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+      'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+      'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
+    };
+
+    const match = note.match(/^([A-G][#b]?)(\d+)$/i);
+    if (!match) return 60; // Middle C fallback
+
+    const [, noteName, octave] = match;
+    return noteMap[noteName.toUpperCase()] + (parseInt(octave, 10) + 1) * 12;
+  }
+
+  // Haptic feedback for mobile devices
+  private triggerHaptic(velocity: number): void {
+    if (!('vibrate' in navigator)) return;
+
+    // Intensity based on velocity (10-30ms)
+    const duration = Math.floor(10 + velocity * 20);
+    navigator.vibrate(duration);
+  }
+
+  private triggerReleaseHaptic(): void {
+    if (!('vibrate' in navigator)) return;
+
+    // Short tap-pause-tap for damper feel
+    navigator.vibrate([3, 10, 3]);
   }
 
   disconnect(): void {
