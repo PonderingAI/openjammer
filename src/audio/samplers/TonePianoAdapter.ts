@@ -7,8 +7,17 @@ import { getAudioContext } from '../AudioEngine';
 import { ConvolutionReverb } from '../ConvolutionReverb';
 import type { EnvelopeConfig } from './types';
 
-// Dynamic import to avoid loading @tonejs/piano unless actually used
-type Piano = any; // Type will be determined at runtime
+// Interface for @tonejs/piano (dynamically imported)
+interface PianoInstance {
+  load(): Promise<void>;
+  keyDown(options: { note: string; velocity?: number }): void;
+  keyUp(options: { note: string }): void;
+  pedalDown(): void;
+  pedalUp(): void;
+  connect(dest: AudioNode): void;
+  disconnect(): void;
+  dispose(): void;
+}
 
 interface TonePianoConfig {
   velocities?: 1 | 4 | 5 | 16;
@@ -16,7 +25,7 @@ interface TonePianoConfig {
 }
 
 export class TonePianoInstrument extends SampledInstrument {
-  private piano: Piano | null = null;
+  private piano: PianoInstance | null = null;
   private config: TonePianoConfig;
   private pianoOutput: GainNode | null = null;
   private resonance: ConvolutionReverb | null = null;
@@ -35,19 +44,19 @@ export class TonePianoInstrument extends SampledInstrument {
     if (!ctx) throw new Error('AudioContext not available');
 
     try {
-      console.log('[TonePiano] Starting to load piano samples...');
-
       // Dynamic import to avoid module loading errors
-      const { Piano } = await import('@tonejs/piano');
+      const { Piano } = await import('@tonejs/piano').catch((importErr) => {
+        console.error('[TonePiano] Failed to load @tonejs/piano module:', importErr);
+        throw new Error('Piano library failed to load. Check network connection or dependencies.');
+      });
 
       // Create Piano instance
       this.piano = new Piano({
         velocities: this.config.velocities
-      });
+      }) as PianoInstance;
 
       // Wait for samples to load
       await this.piano.load();
-      console.log('[TonePiano] Piano samples loaded successfully');
 
       // Create intermediate gain node to route piano output
       this.pianoOutput = ctx.createGain();
@@ -55,7 +64,6 @@ export class TonePianoInstrument extends SampledInstrument {
 
       // Create convolution reverb for sympathetic resonance
       this.resonance = new ConvolutionReverb(ctx);
-      console.log('[TonePiano] ConvolutionReverb created');
 
       // Connect piano to our chain
       // Route: piano → pianoOutput → resonance → outputNode
@@ -64,7 +72,6 @@ export class TonePianoInstrument extends SampledInstrument {
         this.piano.connect(this.pianoOutput);
         this.pianoOutput.connect(this.resonance.getInput());
         this.resonance.getOutput().connect(this.outputNode);
-        console.log('[TonePiano] Audio routing complete');
       }
     } catch (error) {
       console.error('[TonePiano] Error during initialization:', error);
@@ -76,11 +83,10 @@ export class TonePianoInstrument extends SampledInstrument {
     const ctx = getAudioContext();
     if (!this.piano || !ctx) return;
 
-    // Trigger piano note
+    // Trigger piano note (time omitted for immediate playback)
     this.piano.keyDown({
       note,
-      velocity,
-      time: ctx.currentTime
+      velocity
     });
 
     this.activeNotes.set(note, true);
@@ -90,11 +96,10 @@ export class TonePianoInstrument extends SampledInstrument {
     const ctx = getAudioContext();
     if (!this.piano || !ctx) return;
 
-    // Trigger piano key up
+    // Trigger piano key up (time omitted for immediate release)
     // @tonejs/piano has built-in release handling
     this.piano.keyUp({
-      note,
-      time: ctx.currentTime
+      note
     });
 
     this.activeNotes.delete(note);

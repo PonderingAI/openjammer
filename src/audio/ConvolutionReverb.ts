@@ -6,6 +6,12 @@
  */
 
 export class ConvolutionReverb {
+  // Constants for impulse response generation
+  private static readonly IMPULSE_DURATION_SECONDS = 4;
+  private static readonly DECAY_TIME_CONSTANT = 1.5;
+  private static readonly LOW_PASS_COEFFICIENT = 0.7;
+  private static readonly IMPULSE_LEVEL = 0.2;
+
   private ctx: AudioContext;
   private convolver: ConvolverNode;
   private wet: GainNode;
@@ -13,10 +19,10 @@ export class ConvolutionReverb {
   private input: GainNode;
   private output: GainNode;
   private isPedalDown: boolean = false;
+  private isDisposed: boolean = false;
 
   constructor(ctx: AudioContext, impulseUrl?: string) {
     try {
-      console.log('[ConvolutionReverb] Initializing...');
       this.ctx = ctx;
 
       // Create nodes
@@ -46,8 +52,6 @@ export class ConvolutionReverb {
       } else {
         this.generateSyntheticImpulse();
       }
-
-      console.log('[ConvolutionReverb] Initialized successfully');
     } catch (error) {
       console.error('[ConvolutionReverb] Error during initialization:', error);
       throw error;
@@ -57,7 +61,12 @@ export class ConvolutionReverb {
   private async loadImpulse(url: string): Promise<void> {
     const response = await fetch(url);
     const arrayBuffer = await response.arrayBuffer();
-    this.convolver.buffer = await this.ctx.decodeAudioData(arrayBuffer);
+    const buffer = await this.ctx.decodeAudioData(arrayBuffer);
+
+    // Don't set buffer if already disposed
+    if (this.isDisposed) return;
+
+    this.convolver.buffer = buffer;
   }
 
   /**
@@ -66,7 +75,7 @@ export class ConvolutionReverb {
    */
   private generateSyntheticImpulse(): void {
     const sampleRate = this.ctx.sampleRate;
-    const length = sampleRate * 4; // 4 seconds of resonance
+    const length = sampleRate * ConvolutionReverb.IMPULSE_DURATION_SECONDS;
     const buffer = this.ctx.createBuffer(2, length, sampleRate);
 
     for (let channel = 0; channel < 2; channel++) {
@@ -77,15 +86,16 @@ export class ConvolutionReverb {
         let sample = (Math.random() * 2 - 1);
 
         // Apply exponential decay envelope (simulates string damping)
-        const decay = Math.exp(-i / (sampleRate * 1.5)); // 1.5s decay constant
+        const decay = Math.exp(-i / (sampleRate * ConvolutionReverb.DECAY_TIME_CONSTANT));
 
         // Add some low-frequency emphasis (piano body resonance)
         // Simple rolling average for low-pass effect
         if (i > 10) {
-          sample = (sample + channelData[i - 1] * 0.7) / 1.7;
+          sample = (sample + channelData[i - 1] * ConvolutionReverb.LOW_PASS_COEFFICIENT) /
+                   (1 + ConvolutionReverb.LOW_PASS_COEFFICIENT);
         }
 
-        channelData[i] = sample * decay * 0.2; // 0.2 = overall wet level
+        channelData[i] = sample * decay * ConvolutionReverb.IMPULSE_LEVEL;
       }
     }
 
@@ -139,6 +149,7 @@ export class ConvolutionReverb {
    * Disconnect and cleanup
    */
   disconnect(): void {
+    this.isDisposed = true;
     this.input.disconnect();
     this.dry.disconnect();
     this.convolver.disconnect();

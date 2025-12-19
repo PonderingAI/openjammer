@@ -1,13 +1,90 @@
-# Openjammer
+<div align="center">
 
-A browser-based, node-driven live music generation tool for performing with other musicians. Built entirely client-side with offline capability after first visit.
+# OpenJammer
+
+**Browser-based node-driven music creation tool for live performance**
+
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)](package.json)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Made with React](https://img.shields.io/badge/Made%20with-React-61dafb.svg)](https://reactjs.org/)
+[![Web Audio API](https://img.shields.io/badge/Web%20Audio%20API-ready-purple.svg)](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Browser Compatibility](#browser-compatibility)
+- [Audio Setup & USB Interfaces](#audio-setup--usb-interfaces)
+- [Vision](#vision)
+- [Node System](#node-system)
+- [Node Categories](#node-categories)
+- [Ghost Mode](#ghost-mode-w-key)
+- [Technical Details](#technical-details)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Features
+
+🎹 **Real-time Keyboard Routing** - Bank switching (1-9) for controlling multiple instruments simultaneously
+
+🔁 **Layer-Based Looping** - Stack loops as layers instead of overdubbing, with individual mute/delete/effects per layer
+
+🎛️ **Node-Based Interface** - Visual audio routing inspired by ComfyUI with right-click context menu
+
+🔌 **USB Audio Interface Support** - Professional low-latency audio (3-10ms with optimized setup)
+
+🎨 **Hand-Drawn Aesthetic** - Scribble/organic style with customizable theming (inspired by Cyberpunk 2077 UI)
+
+⚡ **Zero-Latency Editing** - Modify parameters, add effects, and reroute nodes without audio dropouts
+
+📴 **Offline Capability** - Full PWA support, works offline after first visit
+
+🎚️ **Live Performance Focused** - Ghost mode (W key), laptop-first design, screen real estate optimization
+
+---
 
 ## Quick Start
 
 ```bash
+# Install dependencies
 bun install
+
+# Start development server
 bun dev
 ```
+
+Open `http://localhost:3000` and click "Start Audio" to begin.
+
+**First workflow:**
+1. Right-click canvas → Keyboard → Add Keyboard Node
+2. Right-click canvas → Instruments → Keyboard → Classic Piano
+3. Connect Keyboard output to Piano input
+4. Press keys (Q-P row) to play!
+
+---
+
+## Browser Compatibility
+
+| Browser | Version | Status | Notes |
+|---------|---------|--------|-------|
+| Chrome | 110+ | ✅ **Recommended** | Full support, `setSinkId()` for device selection |
+| Edge | 110+ | ✅ **Recommended** | Chromium-based, same as Chrome |
+| Firefox | Latest | ⚠️ Partial | Web Audio API supported, no device selection |
+| Safari | 15+ | ⚠️ Limited | macOS Core Audio excellent, iOS limited |
+
+**Required APIs:**
+- Web Audio API (all modern browsers)
+- AudioWorklet (custom audio processing)
+- Service Workers (offline functionality)
+
+---
 
 ## Audio Setup & USB Interfaces
 
@@ -119,13 +196,17 @@ After setup, check Audio Settings to verify:
 - ✅ Low Latency Mode enabled (if in quiet room)
 - ✅ Correct input/output devices selected
 
+---
+
 ## Vision
 
-Openjammer is a visual node-based audio workstation inspired by ComfyUI's interface paradigm. Right-click on empty canvas space to open the context menu with all node categories. The tool prioritizes screen real estate (laptop-first design) and live editability—all parameters remain editable while audio plays without dropouts. Every transformation is lossless.
+OpenJammer is a visual node-based audio workstation inspired by ComfyUI's interface paradigm. Right-click on empty canvas space to open the context menu with all node categories. The tool prioritizes screen real estate (laptop-first design) and live editability—all parameters remain editable while audio plays without dropouts. Every transformation is lossless.
 
 ## Design Aesthetic
 
 **Scribble/hand-drawn style** with cream/beige backgrounds, black hand-drawn outlines, and rounded organic shapes (see design mockups). Theming is user-customizable via a settings panel inspired by Cyberpunk 2077's in-game menu.
+
+---
 
 ## Node System
 
@@ -215,22 +296,24 @@ Toggle for live performance view:
 
 ---
 
-## Technical
+## Technical Details
 
-- **Runtime**: Bun 
-- **Audio**: Web Audio API
+- **Runtime**: Bun
+- **Framework**: React 19 with TypeScript
+- **Audio**: Web Audio API with AudioWorklet
+- **State Management**: Zustand
 - **Storage**: Local browser storage + JSON import/export
-- **Hosting**: Vercel (cost-minimized, fully static)
-- **Offline**: Full functionality after first visit (PWA/Service Worker)
+- **Hosting**: Vercel (static deployment)
+- **Offline**: Full PWA functionality with Service Workers
 
-## Architecture Goals
+### Architecture Goals
 
 - Clean, well-documented codebase
 - Easy community contributions
 - Scalable for future MIDI and custom node integration
 - Theming system for user-created themes
 
-## Export/Import
+### Export/Import
 
 Workflows saved as JSON files for sharing and backup.
 
@@ -238,8 +321,29 @@ Workflows saved as JSON files for sharing and backup.
 
 ## Contributing
 
-See [AGENTS.md](./AGENTS.md) for development guidelines.
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup
+- Code guidelines
+- Pull request process
+- Testing requirements
+
+---
 
 ## License
 
-Open source—details TBD.
+OpenJammer is licensed under the [AGPL-3.0 License](LICENSE).
+
+This means:
+- ✅ Free to use, modify, and distribute
+- ✅ Open source, community-driven
+- ⚠️ If you run a modified version as a web service, you must share your source code
+
+---
+
+<div align="center">
+
+**Made with ❤️ for musicians who code and coders who make music**
+
+[Report Bug](https://github.com/PonderingBGI/openjammer/issues) · [Request Feature](https://github.com/PonderingBGI/openjammer/issues) · [Discussions](https://github.com/PonderingBGI/openjammer/discussions)
+
+</div>

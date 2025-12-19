@@ -1,7 +1,23 @@
 {
   "name": "openjammer",
+  "version": "0.1.0-alpha",
+  "description": "Browser-based node-driven music creation tool for live performance",
+  "license": "AGPL-3.0",
+  "author": "OpenJammer Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PonderingBGI/openjammer.git"
+  },
+  "keywords": [
+    "music",
+    "audio",
+    "web-audio",
+    "live-performance",
+    "node-based",
+    "looper",
+    "pwa"
+  ],
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

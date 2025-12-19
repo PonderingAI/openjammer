@@ -3,11 +3,12 @@
  */
 
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
-import type { Position, NodeType, Connection } from '../../engine/types';
+import type { Position, NodeType, Connection, GraphNode } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useAudioStore } from '../../store/audioStore';
 import { useKeybindingsStore } from '../../store/keybindingsStore';
+import { useCanvasNavigationStore } from '../../store/canvasNavigationStore';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
 import './NodeCanvas.css';
@@ -29,9 +30,39 @@ export function NodeCanvas() {
     const rightClickMoved = useRef(false);
     const rightClickOnCanvas = useRef(false);
 
-    // Graph store
-    const nodes = useGraphStore((s) => s.nodes);
-    const connections = useGraphStore((s) => s.connections);
+    // Canvas navigation store
+    const currentLevel = useCanvasNavigationStore((s) => s.currentLevel);
+    const currentParentNode = useCanvasNavigationStore((s) => s.currentParentNode);
+    const diveInto = useCanvasNavigationStore((s) => s.diveInto);
+    const goBackUp = useCanvasNavigationStore((s) => s.goBackUp);
+
+    // Graph store - get nodes/connections based on current level
+    const rootNodes = useGraphStore((s) => s.nodes);
+    const rootConnections = useGraphStore((s) => s.connections);
+
+    // Determine which nodes/connections to render based on level
+    const nodes = useMemo(() => {
+        if (currentLevel === 0) {
+            return rootNodes;
+        } else if (currentParentNode?.internalNodes) {
+            return currentParentNode.internalNodes;
+        }
+        return new Map<string, GraphNode>();
+    }, [currentLevel, currentParentNode, rootNodes]);
+
+    const connections = useMemo(() => {
+        if (currentLevel === 0) {
+            return rootConnections;
+        } else if (currentParentNode?.internalConnections) {
+            // Convert array to Map for consistency
+            const connMap = new Map<string, Connection>();
+            currentParentNode.internalConnections.forEach(conn => {
+                connMap.set(conn.id, conn);
+            });
+            return connMap;
+        }
+        return new Map<string, Connection>();
+    }, [currentLevel, currentParentNode, rootConnections]);
     const addNode = useGraphStore((s) => s.addNode);
     const selectedConnectionIds = useGraphStore((s) => s.selectedConnectionIds);
     const selectConnection = useGraphStore((s) => s.selectConnection);
@@ -279,6 +310,15 @@ export function NodeCanvas() {
                 return;
             }
 
+            // Q key - Go back up one level in hierarchical canvas
+            if (e.key === 'q' || e.key === 'Q') {
+                if (currentLevel > 0) {
+                    e.preventDefault();
+                    goBackUp();
+                }
+                return;
+            }
+
             // Mode 1 only shortcuts (config mode)
             if (currentMode === 1) {
                 if (matchesAction(e, 'view.ghostMode')) {
@@ -337,17 +377,30 @@ export function NodeCanvas() {
                     }
                     return;
                 }
+
+                // E key - Dive into selected node's internal canvas
+                if (e.key === 'e' || e.key === 'E') {
+                    const selectedIds = Array.from(useGraphStore.getState().selectedNodeIds);
+                    if (selectedIds.length === 1) {
+                        const selectedNode = nodes.get(selectedIds[0]);
+                        if (selectedNode) {
+                            e.preventDefault();
+                            diveInto(selectedNode.id);
+                        }
+                    }
+                    return;
+                }
             }
 
             // Keyboard input mode (modes 2-9)
             if (currentMode > 1) {
                 const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
                 if (activeKeyboardId) {
-                    // Handle spacebar for pedal (prevent repeat)
+                    // Handle spacebar for control signal (prevent repeat)
                     if (e.code === 'Space' && !e.repeat) {
                         e.preventDefault();
-                        const emitPedalDown = useAudioStore.getState().emitPedalDown;
-                        emitPedalDown(activeKeyboardId);
+                        const emitControlDown = useAudioStore.getState().emitControlDown;
+                        emitControlDown(activeKeyboardId);
                         return;
                     }
 
@@ -373,15 +426,15 @@ export function NodeCanvas() {
 
             const currentMode = useAudioStore.getState().currentMode;
 
-            // Keyboard input mode (modes 2-9) - release notes and pedal
+            // Keyboard input mode (modes 2-9) - release notes and control
             if (currentMode > 1) {
                 const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
                 if (activeKeyboardId) {
-                    // Handle spacebar for pedal
+                    // Handle spacebar for control signal
                     if (e.code === 'Space') {
                         e.preventDefault();
-                        const emitPedalUp = useAudioStore.getState().emitPedalUp;
-                        emitPedalUp(activeKeyboardId);
+                        const emitControlUp = useAudioStore.getState().emitControlUp;
+                        emitControlUp(activeKeyboardId);
                         return;
                     }
 
@@ -407,7 +460,7 @@ export function NodeCanvas() {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, diveInto, goBackUp, nodes, currentLevel]);
 
     // Get port position for connection rendering using DOM measurement
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
@@ -472,23 +525,28 @@ export function NodeCanvas() {
         const dx = endPos.x - startPos.x;
         const controlOffset = Math.min(Math.abs(dx) / 2, 100);
 
-        const path = `M ${startPos.x} ${startPos.y} 
+        const path = `M ${startPos.x} ${startPos.y}
                   C ${startPos.x + controlOffset} ${startPos.y},
                     ${endPos.x - controlOffset} ${endPos.y},
                     ${endPos.x} ${endPos.y}`;
 
         const isSelected = selectedConnectionIds.has(conn.id);
+        const isBundled = conn.isBundled ?? false;
 
         return (
-            <path
-                key={conn.id}
-                d={path}
-                className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''}`}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    selectConnection(conn.id);
-                }}
-            />
+            <g key={conn.id}>
+                <path
+                    d={path}
+                    className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''} ${isBundled ? 'bundled' : ''}`}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        selectConnection(conn.id);
+                    }}
+                />
+                {isBundled && (
+                    <title>Bundle (30 keys)</title>
+                )}
+            </g>
         );
     }, [getPortPosition, selectedConnectionIds, selectConnection]);
 
@@ -668,6 +726,7 @@ export function NodeCanvas() {
                     <span className="back-to-action-label">Back to nodes</span>
                 </button>
             )}
+
         </div>
     );
 }

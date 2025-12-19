@@ -827,8 +827,8 @@ export function InstrumentNode({
         return () => window.removeEventListener('mouseup', handleMouseUp);
     }, [dragStartPos]);
 
-    // Get persisted input ports
-    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+    // Get persisted input ports (exclude control-in port)
+    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical' && p.id !== 'control-in');
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
 
     // Count connected ports
@@ -1177,6 +1177,30 @@ export function InstrumentNode({
                         );
                     })}
                 </div>
+
+                {/* Control input section */}
+                {(() => {
+                    const controlPort = node.ports.find(p => p.id === 'control-in' && p.direction === 'input');
+                    if (!controlPort) return null;
+
+                    const isConnected = hasConnection?.(controlPort.id);
+
+                    return (
+                        <div className="instrument-control-input">
+                            <span className="control-label">Control</span>
+                            <div
+                                className={`control-input-port ${isConnected ? 'connected' : ''}`}
+                                data-node-id={node.id}
+                                data-port-id={controlPort.id}
+                                onMouseDown={(e) => handlePortMouseDown?.(controlPort.id, e)}
+                                onMouseUp={(e) => handlePortMouseUp?.(controlPort.id, e)}
+                                onMouseEnter={() => handlePortMouseEnter?.(controlPort.id)}
+                                onMouseLeave={handlePortMouseLeave}
+                                title={controlPort.name}
+                            />
+                        </div>
+                    );
+                })()}
 
                 {/* Output port */}
                 {outputPort && (

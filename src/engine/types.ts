@@ -16,6 +16,15 @@ export interface PortDefinition {
     name: string;
     type: ConnectionType;
     direction: 'input' | 'output';
+    isBundled?: boolean; // True if this port represents multiple bundled signals
+}
+
+export interface KeyMapping {
+    keyId: string;             // 'key-q', 'key-w', etc.
+    sourcePort: string;        // which key port it comes from
+    note?: string;             // 'C4', 'D4', etc. (for custom mapping)
+    targetChannel?: number;    // which channel in the bundle (0-29)
+    enabled: boolean;          // can disable individual keys
 }
 
 export interface Connection {
@@ -25,6 +34,11 @@ export interface Connection {
     targetNodeId: string;
     targetPortId: string;
     type: ConnectionType;
+
+    // Bundled connection support
+    isBundled?: boolean;        // true if this represents multiple signals
+    bundleMapping?: KeyMapping[]; // only if isBundled=true
+    signalValue?: number;       // 0-1 normalized value
 }
 
 // ============================================================================
@@ -54,7 +68,9 @@ export type NodeType =
     | 'effect'
     | 'amplifier'
     | 'speaker'
-    | 'recorder';
+    | 'recorder'
+    | 'canvas-input'   // Input node (receives from parent level)
+    | 'canvas-output';  // Output node (sends to parent level)
 
 export interface Position {
     x: number;
@@ -64,6 +80,9 @@ export interface Position {
 export interface NodeData {
     // Common fields
     [key: string]: unknown;
+
+    // Bundle configuration (for advanced mode modal)
+    bundleConfig?: BundleConfig;
 }
 
 export interface InstrumentNodeData extends NodeData {
@@ -75,10 +94,46 @@ export interface InstrumentNodeData extends NodeData {
     isLoading?: boolean; // For UI loading indicator
 }
 
+export interface KeyConfig {
+    keyCode: string;           // 'q', 'w', 'KeyA', etc.
+    note?: string;             // 'C4', 'D4', etc. (for custom mapping)
+    octaveOffset?: number;     // octave adjustment
+    velocity?: number;         // fixed velocity (0-1) for this key
+    enabled: boolean;          // can disable individual keys
+}
+
+// ============================================================================
+// Bundle Configuration (Advanced Mode Modal)
+// ============================================================================
+
+export interface BundlePort {
+    id: string;              // 'bundle-0', 'bundle-1', ...
+    name: string;            // User-defined name or default "Bundle 1"
+    type: 'input' | 'output';
+    portIds: string[];       // Internal port IDs connected to this bundle
+}
+
+export interface BundleConfig {
+    inputBundles: BundlePort[];   // Bundles that receive from main canvas
+    outputBundles: BundlePort[];  // Bundles that send to main canvas
+
+    // Mapping from internal ports to bundles
+    internalToBundle: Record<string, string>;  // 'key-q' → 'bundle-0'
+    bundleToInternal: Record<string, string[]>; // 'bundle-0' → ['key-q', 'key-w', 'key-e']
+}
+
 export interface KeyboardNodeData extends NodeData {
     assignedKey: number; // 2-9
     activeRow: number | null;
     rowOctaves: [number, number, number];
+
+    // New bundled connection support
+    viewMode?: 'simple' | 'advanced'; // toggle between bundled vs individual ports
+    keyConfigs?: Record<string, KeyConfig>; // 'q' → KeyConfig (for advanced mode)
+    bundleDefaults?: {
+        velocity: number;        // default velocity for computer keyboard (0-1)
+        noteMapping: 'chromatic' | 'custom';
+    };
 }
 
 export interface MicrophoneNodeData extends NodeData {
@@ -143,6 +198,11 @@ export interface GraphNode {
     position: Position;
     data: NodeData;
     ports: PortDefinition[];
+
+    // Hierarchical canvas support
+    internalNodes?: Map<string, GraphNode>;       // Nodes inside this node
+    internalConnections?: Connection[];           // Connections inside this node
+    specialNodes?: string[];                      // IDs of undeletable nodes (keyboard viz, default I/O)
 }
 
 // ============================================================================
@@ -195,6 +255,11 @@ export interface SerializedConnection {
     targetNodeId: string;
     targetPortId: string;
     type: ConnectionType;
+
+    // Bundled connection support (for serialization)
+    isBundled?: boolean;
+    bundleMapping?: KeyMapping[];
+    signalValue?: number;
 }
 
 // ============================================================================

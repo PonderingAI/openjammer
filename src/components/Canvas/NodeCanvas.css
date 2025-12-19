@@ -61,6 +61,28 @@
     filter: drop-shadow(0 0 4px currentColor);
 }
 
+/* Bundled connections - thicker, with glow and animation */
+.connection-line.bundled {
+    stroke-width: 6;
+    filter: drop-shadow(0 0 3px var(--technical-glow));
+    animation: bundle-pulse 2s ease-in-out infinite;
+}
+
+.connection-line.bundled:hover {
+    stroke-width: 8;
+    filter: drop-shadow(0 0 6px var(--technical-glow));
+}
+
+.connection-line.bundled.selected {
+    stroke-width: 7;
+    filter: drop-shadow(0 0 8px currentColor);
+}
+
+@keyframes bundle-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+
 .connection-temp {
     pointer-events: none;
     stroke-dasharray: 5 5;

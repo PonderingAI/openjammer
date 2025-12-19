@@ -40,6 +40,25 @@ const MAX_KEYBOARD_ROW = 3;
 const MIN_KEY_INDEX = 0;
 const MAX_KEY_INDEX = 11; // 12 keys per row (chromatic octave)
 
+/** Keyboard row key mappings - matches NodeCanvas.tsx */
+const ROW_KEYS: Record<number, string[]> = {
+    1: ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+    2: ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+    3: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
+};
+
+/**
+ * Convert row and keyIndex to actual key character
+ * @param row - Keyboard row (1-3)
+ * @param keyIndex - Index within the row (0-based)
+ * @returns The key character (e.g., 'q', 'w', 'e') or null if invalid
+ */
+function getKeyFromRowIndex(row: number, keyIndex: number): string | null {
+    const keys = ROW_KEYS[row];
+    if (!keys || keyIndex < 0 || keyIndex >= keys.length) return null;
+    return keys[keyIndex];
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -49,7 +68,8 @@ export interface AudioNodeInstance {
     type: NodeType;
     inputNode: AudioNode | null;
     outputNode: AudioNode | null;
-    instance: SampledInstrument | Effect | Looper | Recorder | GainNode | MediaStreamAudioSourceNode | null;
+    instance: SampledInstrument | Effect | Looper | Recorder | GainNode | MediaStreamAudioSourceNode |
+        { audioElement: HTMLAudioElement; gainNode: GainNode; destination: MediaStreamAudioDestinationNode } | null;
     gainEnvelope: GainNode | null; // For smooth connect/disconnect
 }
 
@@ -373,7 +393,7 @@ class AudioGraphManager {
         if (audioNode.instance && typeof audioNode.instance === 'object' && 'audioElement' in audioNode.instance) {
             const speakerInstance = audioNode.instance as {
                 audioElement: HTMLAudioElement;
-                destination: MediaStreamDestinationNode;
+                destination: MediaStreamAudioDestinationNode;
                 gainNode: GainNode;
             };
             speakerInstance.audioElement.pause();
@@ -677,7 +697,7 @@ class AudioGraphManager {
         const instance = audioNode.instance as {
             audioElement: HTMLAudioElement;
             gainNode: GainNode;
-            destination: MediaStreamDestinationNode;
+            destination: MediaStreamAudioDestinationNode;
         };
 
         if (this.supportsSetSinkId()) {
@@ -791,8 +811,9 @@ class AudioGraphManager {
      * @param keyboardId - The keyboard node ID
      * @param row - The active row (1, 2, or 3)
      * @param keyIndex - The key index within the row (0-11 for chromatic octave)
+     * @param velocity - Normalized velocity (0-1), defaults to 0.8
      */
-    triggerKeyboardNote(keyboardId: string, row: number, keyIndex: number): void {
+    triggerKeyboardNote(keyboardId: string, row: number, keyIndex: number, velocity: number = 0.8): void {
         // Validate input bounds to prevent array access errors
         if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
         if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
@@ -804,52 +825,110 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the output port for this row (e.g., "row-1", "row-2", "row-3")
-        const rowPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
-        )?.id;
-
-        if (!rowPortId) return;
-
         // Get keyboard's row octave settings
-        const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
+        const keyboardData = keyboardNode.data as { rowOctaves?: number[]; bundleConfig?: import('../engine/types').BundleConfig };
         const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2]; // Default octaves for rows 1, 2, 3
         const baseOctave = rowOctaves[row - 1] ?? 4;
 
-        // Find all connections from this port (technical connections to instruments)
-        for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
-                const targetNodeId = connection.targetNodeId;
-                const targetNode = graphNodes.get(targetNodeId);
+        // NEW: Check if keyboard uses bundle configuration
+        const bundleConfig = keyboardData.bundleConfig;
 
-                if (!targetNode) continue;
+        if (bundleConfig) {
+            // Bundle-based routing: Determine which key was pressed
+            const keyChar = getKeyFromRowIndex(row, keyIndex);
+            if (!keyChar) return;
 
-                // Check if target is an instrument
-                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+            const internalPortId = `key-${keyChar}`;
 
-                // Validate instrument data with type guard
-                if (!isInstrumentNodeData(targetNode.data)) continue;
-                const instrumentData = targetNode.data;
+            // Find which bundle this key is mapped to
+            const bundleId = bundleConfig.internalToBundle[internalPortId];
+            if (!bundleId) return; // Key not mapped to any bundle
 
-                const targetPortId = connection.targetPortId;
-                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
-                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
-                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+            // Find all connections from this bundle port
+            for (const [, connection] of graphConnections) {
+                if (connection.sourceNodeId === keyboardId && connection.sourcePortId === bundleId) {
+                    const targetNodeId = connection.targetNodeId;
+                    const targetNode = graphNodes.get(targetNodeId);
 
-                // Calculate final note
-                // keyIndex is 0-11, maps to chromatic notes
-                // baseOctave is the octave from the keyboard row
-                // Add instrument's offsets
-                const finalOctave = baseOctave + octaveOffset;
-                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+                    if (!targetNode) continue;
 
-                // Convert to note name string (e.g., "C4", "D#4")
-                const noteName = getNoteName(finalNoteIndex, finalOctave);
+                    // Check if target is an instrument
+                    if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
-                // Get the instrument and play the note
-                const instrument = this.getInstrument(targetNodeId);
-                if (instrument) {
-                    instrument.playNote(noteName);
+                    // Validate instrument data with type guard
+                    if (!isInstrumentNodeData(targetNode.data)) continue;
+                    const instrumentData = targetNode.data;
+
+                    const targetPortId = connection.targetPortId;
+                    const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
+                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                    // Calculate final note
+                    const finalOctave = baseOctave + octaveOffset;
+                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                    // Convert to note name string (e.g., "C4", "D#4")
+                    const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                    // Get the instrument and play the note with normalized velocity
+                    const instrument = this.getInstrument(targetNodeId);
+                    if (instrument) {
+                        instrument.playNote(noteName, velocity);
+                    }
+                }
+            }
+        } else {
+            // LEGACY: Old routing logic for backwards compatibility
+            // Check if keyboard is using bundled output (simple mode) or individual ports (advanced mode)
+            const bundlePort = keyboardNode.ports.find(p => p.id === 'bundle-out');
+
+            let sourcePortId: string | undefined;
+
+            if (bundlePort) {
+                // Simple mode: use bundle port
+                sourcePortId = 'bundle-out';
+            } else {
+                // Advanced mode or legacy: find the specific row port
+                sourcePortId = keyboardNode.ports.find(
+                    p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+                )?.id;
+            }
+
+            if (!sourcePortId) return;
+
+            // Find all connections from this port (technical connections to instruments)
+            for (const [, connection] of graphConnections) {
+                if (connection.sourceNodeId === keyboardId && connection.sourcePortId === sourcePortId) {
+                    const targetNodeId = connection.targetNodeId;
+                    const targetNode = graphNodes.get(targetNodeId);
+
+                    if (!targetNode) continue;
+
+                    // Check if target is an instrument
+                    if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+
+                    // Validate instrument data with type guard
+                    if (!isInstrumentNodeData(targetNode.data)) continue;
+                    const instrumentData = targetNode.data;
+
+                    const targetPortId = connection.targetPortId;
+                    const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
+                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                    // Calculate final note
+                    const finalOctave = baseOctave + octaveOffset;
+                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                    // Convert to note name string (e.g., "C4", "D#4")
+                    const noteName = getNoteName(finalNoteIndex, finalOctave);
+
+                    // Get the instrument and play the note with normalized velocity
+                    const instrument = this.getInstrument(targetNodeId);
+                    if (instrument) {
+                        instrument.playNote(noteName, velocity);
+                    }
                 }
             }
         }
@@ -873,12 +952,22 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the output port for this row
-        const rowPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
-        )?.id;
+        // Check if keyboard is using bundled output (simple mode) or individual ports (advanced mode)
+        const bundlePort = keyboardNode.ports.find(p => p.id === 'bundle-out');
 
-        if (!rowPortId) return;
+        let sourcePortId: string | undefined;
+
+        if (bundlePort) {
+            // Simple mode: use bundle port
+            sourcePortId = 'bundle-out';
+        } else {
+            // Advanced mode or legacy: find the specific row port
+            sourcePortId = keyboardNode.ports.find(
+                p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+            )?.id;
+        }
+
+        if (!sourcePortId) return;
 
         // Get keyboard's row octave settings
         const keyboardData = keyboardNode.data as { rowOctaves?: number[] };
@@ -887,7 +976,7 @@ class AudioGraphManager {
 
         // Find all connections from this port
         for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === rowPortId) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === sourcePortId) {
                 const targetNodeId = connection.targetNodeId;
                 const targetNode = graphNodes.get(targetNodeId);
 
@@ -922,10 +1011,11 @@ class AudioGraphManager {
     }
 
     /**
-     * Trigger pedal down from keyboard input
+     * Trigger control signal on (e.g., sustain pedal down, switch on)
+     * Routes control signal from keyboard to connected instruments
      * @param keyboardId - The keyboard node ID
      */
-    triggerPedalDown(keyboardId: string): void {
+    triggerControlDown(keyboardId: string): void {
         const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
@@ -933,16 +1023,16 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the pedal port
-        const pedalPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.id === 'pedal'
+        // Find the control port
+        const controlPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.id === 'control'
         )?.id;
 
-        if (!pedalPortId) return;
+        if (!controlPortId) return;
 
-        // Find all connections from the pedal port
+        // Find all connections from the control port
         for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === pedalPortId) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === controlPortId) {
                 const targetNodeId = connection.targetNodeId;
                 const targetNode = graphNodes.get(targetNodeId);
 
@@ -951,7 +1041,7 @@ class AudioGraphManager {
                 // Check if target is a piano instrument
                 if (targetNode.type !== 'piano') continue;
 
-                // Get the instrument and activate pedal
+                // Get the instrument and activate control (pedal)
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument && 'setPedal' in instrument) {
                     (instrument as TonePianoInstrument).setPedal(true);
@@ -961,10 +1051,11 @@ class AudioGraphManager {
     }
 
     /**
-     * Trigger pedal up from keyboard input
+     * Trigger control signal off (e.g., sustain pedal up, switch off)
+     * Routes control signal from keyboard to connected instruments
      * @param keyboardId - The keyboard node ID
      */
-    triggerPedalUp(keyboardId: string): void {
+    triggerControlUp(keyboardId: string): void {
         const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
@@ -972,16 +1063,16 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the pedal port
-        const pedalPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.id === 'pedal'
+        // Find the control port
+        const controlPortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.id === 'control'
         )?.id;
 
-        if (!pedalPortId) return;
+        if (!controlPortId) return;
 
-        // Find all connections from the pedal port
+        // Find all connections from the control port
         for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === pedalPortId) {
+            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === controlPortId) {
                 const targetNodeId = connection.targetNodeId;
                 const targetNode = graphNodes.get(targetNodeId);
 
@@ -990,7 +1081,7 @@ class AudioGraphManager {
                 // Check if target is a piano instrument
                 if (targetNode.type !== 'piano') continue;
 
-                // Get the instrument and deactivate pedal
+                // Get the instrument and deactivate control (pedal)
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument && 'setPedal' in instrument) {
                     (instrument as TonePianoInstrument).setPedal(false);

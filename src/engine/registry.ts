@@ -41,15 +41,19 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Keyboard',
         description: 'Virtual keyboard controller (auto-assigned key)',
         defaultPorts: [
-            { id: 'row-1', name: 'Row 1 (Q-P)', type: 'technical', direction: 'output' },
-            { id: 'row-2', name: 'Row 2 (A-L)', type: 'technical', direction: 'output' },
-            { id: 'row-3', name: 'Row 3 (Z-/)', type: 'technical', direction: 'output' },
-            { id: 'pedal', name: 'Pedal (Space)', type: 'technical', direction: 'output' }
+            { id: 'bundle-out', name: 'Keys Bundle', type: 'technical', direction: 'output', isBundled: true },
+            { id: 'control', name: 'Control (Space)', type: 'technical', direction: 'output' }
         ],
         defaultData: {
             assignedKey: 2,
+            viewMode: 'simple',
             activeRow: null,
-            rowOctaves: [4, 4, 4]
+            rowOctaves: [4, 4, 4],
+            keyConfigs: {},
+            bundleDefaults: {
+                velocity: 0.8,
+                noteMapping: 'chromatic'
+            }
         }
     },
 
@@ -72,7 +76,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Classic Piano',
         description: 'Grand piano instrument',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -87,7 +93,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Cello',
         description: 'Orchestral cello',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -102,7 +110,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Electric Cello',
         description: 'Modern electric cello with saturation and chorus',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -117,7 +127,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Violin',
         description: 'Orchestral violin',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -132,7 +144,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Saxophone',
         description: 'Jazz saxophone',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -148,10 +162,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Strings',
         description: 'String Ensemble',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
-        defaultData: { offsets: { 'input-1': -12 } }
+        defaultData: {
+            offsets: { 'input-1': -12 },
+            activeInputs: ['input-1']
+        }
     },
     keys: {
         type: 'piano', // Default key instrument
@@ -159,10 +178,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Keys',
         description: 'Keyboards',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
-        defaultData: { offsets: { 'input-1': 0 } }
+        defaultData: {
+            offsets: { 'input-1': 0 },
+            activeInputs: ['input-1']
+        }
     },
     winds: {
         type: 'saxophone', // Default wind instrument
@@ -170,10 +194,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Winds',
         description: 'Wind Instruments',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
-        defaultData: { offsets: { 'input-1': 0 } }
+        defaultData: {
+            offsets: { 'input-1': 0 },
+            activeInputs: ['input-1']
+        }
     },
 
     // Generic instrument node (uses instrumentId in data)
@@ -183,7 +212,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Instrument',
         description: 'Generic sampled instrument',
         defaultPorts: [
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
             { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
+            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
             audioOutput
         ],
         defaultData: {
@@ -258,6 +289,33 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         defaultData: {
             isRecording: false,
             recordings: []
+        }
+    },
+
+    // Hierarchical Canvas I/O Nodes
+    'canvas-input': {
+        type: 'canvas-input',
+        category: 'routing',
+        name: 'Input',
+        description: 'Receives signal from parent canvas',
+        defaultPorts: [
+            { id: 'out', name: 'Out', type: 'technical', direction: 'output' }
+        ],
+        defaultData: {
+            portName: '' // User-defined name for this input port
+        }
+    },
+
+    'canvas-output': {
+        type: 'canvas-output',
+        category: 'routing',
+        name: 'Output',
+        description: 'Sends signal to parent canvas',
+        defaultPorts: [
+            { id: 'in', name: 'In', type: 'technical', direction: 'input' }
+        ],
+        defaultData: {
+            portName: '' // User-defined name for this output port
         }
     }
 };

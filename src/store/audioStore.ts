@@ -55,9 +55,13 @@ interface AudioStore {
     setSelectedInputDevice: (deviceId: string | null) => void;
     setSelectedOutputDevice: (deviceId: string | null) => void;
 
-    // Sustain Pedal State
-    pedalDown: boolean;
-    setPedalDown: (down: boolean) => void;
+    // Control State (sustain pedal, switches, triggers)
+    controlDown: boolean;
+    setControlDown: (down: boolean) => void;
+
+    // Keyboard Velocity (0-1 normalized for computer keyboard)
+    defaultVelocity: number; // 0-1, default 0.8
+    setDefaultVelocity: (velocity: number) => void;
 
     // Mode Switching (key 1 = config mode, 2-9 = keyboard nodes)
     currentMode: number; // 1 = config, 2-9 = keyboard node modes
@@ -86,9 +90,9 @@ interface AudioStore {
     emitKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
     releaseKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
 
-    // Pedal signal emission (triggers pedal down/up on connected instruments)
-    emitPedalDown: (keyboardId: string) => void;
-    emitPedalUp: (keyboardId: string) => void;
+    // Control signal emission (triggers control down/up on connected instruments)
+    emitControlDown: (keyboardId: string) => void;
+    emitControlUp: (keyboardId: string) => void;
 
     // Used keyboard numbers tracking (for auto-assignment)
     usedKeyboardNumbers: Set<number>;
@@ -139,9 +143,13 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
     setSelectedInputDevice: (deviceId) => set({ selectedInputDevice: deviceId }),
     setSelectedOutputDevice: (deviceId) => set({ selectedOutputDevice: deviceId }),
 
-    // Sustain Pedal State
-    pedalDown: false,
-    setPedalDown: (down) => set({ pedalDown: down }),
+    // Control State (sustain pedal, switches, triggers)
+    controlDown: false,
+    setControlDown: (down) => set({ controlDown: down }),
+
+    // Keyboard Velocity
+    defaultVelocity: 0.8,
+    setDefaultVelocity: (velocity) => set({ defaultVelocity: Math.max(0, Math.min(1, velocity)) }),
 
     // Mode Switching
     currentMode: 1, // Start in config mode
@@ -215,8 +223,9 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
             activeKeys: new Set(state.activeKeys).add(keyId)
         }));
 
-        // Trigger note on connected instruments via AudioGraphManager
-        audioGraphManager.triggerKeyboardNote(keyboardId, row, keyIndex);
+        // Trigger note on connected instruments via AudioGraphManager with normalized velocity
+        const velocity = get().defaultVelocity;
+        audioGraphManager.triggerKeyboardNote(keyboardId, row, keyIndex, velocity);
     },
 
     releaseKeyboardSignal: (keyboardId, row, keyIndex) => {
@@ -232,15 +241,15 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
         audioGraphManager.releaseKeyboardNote(keyboardId, row, keyIndex);
     },
 
-    // Pedal signal emission
-    emitPedalDown: (keyboardId) => {
-        set({ pedalDown: true });
-        audioGraphManager.triggerPedalDown(keyboardId);
+    // Control signal emission
+    emitControlDown: (keyboardId) => {
+        set({ controlDown: true });
+        audioGraphManager.triggerControlDown(keyboardId);
     },
 
-    emitPedalUp: (keyboardId) => {
-        set({ pedalDown: false });
-        audioGraphManager.triggerPedalUp(keyboardId);
+    emitControlUp: (keyboardId) => {
+        set({ controlDown: false });
+        audioGraphManager.triggerControlUp(keyboardId);
     },
 
     // Keyboard Number Management

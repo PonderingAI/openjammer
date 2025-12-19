@@ -15,6 +15,7 @@ import { EffectNode } from './EffectNode';
 import { AmplifierNode } from './AmplifierNode';
 import { SpeakerNode } from './SpeakerNode';
 import { RecorderNode } from './RecorderNode';
+import { CanvasIONode } from './CanvasIONode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -27,7 +28,9 @@ const SCHEMATIC_TYPES = [
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
-    'microphone'
+    'microphone',
+    'canvas-input',
+    'canvas-output'
 ];
 
 export function NodeWrapper({ node }: NodeWrapperProps) {
@@ -297,6 +300,9 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <LooperNode {...schematicProps} />;
             case 'microphone':
                 return <MicrophoneNode {...schematicProps} />;
+            case 'canvas-input':
+            case 'canvas-output':
+                return <CanvasIONode node={node} />;
         }
     }
 

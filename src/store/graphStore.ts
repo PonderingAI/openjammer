@@ -128,6 +128,15 @@ interface GraphStore {
     // Subscription helpers for AudioGraphManager
     getNodes: () => Map<string, GraphNode>;
     getConnections: () => Map<string, Connection>;
+
+    // Hierarchical canvas operations
+    addInternalNode: (parentId: string, node: GraphNode) => void;
+    removeInternalNode: (parentId: string, nodeId: string) => void;
+    addInternalConnection: (parentId: string, connection: Connection) => void;
+    removeInternalConnection: (parentId: string, connectionId: string) => void;
+    getInternalNodes: (parentId: string) => Map<string, GraphNode>;
+    getInternalConnections: (parentId: string) => Connection[];
+    updateInternalNodePosition: (parentId: string, nodeId: string, position: Position) => void;
 }
 
 // ============================================================================
@@ -355,13 +364,15 @@ export const useGraphStore = create<GraphStore>()(
                 }
 
                 const id = generateId();
+                const isBundled = sourcePort.isBundled || targetPort.isBundled || false;
                 const connection: Connection = {
                     id,
                     sourceNodeId,
                     sourcePortId,
                     targetNodeId,
                     targetPortId,
-                    type: sourcePort.type
+                    type: sourcePort.type,
+                    isBundled
                 };
 
                 set((state) => {
@@ -562,7 +573,120 @@ export const useGraphStore = create<GraphStore>()(
 
             // Subscription helpers for AudioGraphManager
             getNodes: () => get().nodes,
-            getConnections: () => get().connections
+            getConnections: () => get().connections,
+
+            // Hierarchical canvas operations
+            addInternalNode: (parentId, node) => {
+                set((state) => {
+                    const parentNode = state.nodes.get(parentId);
+                    if (!parentNode) return state;
+
+                    const internalNodes = parentNode.internalNodes || new Map();
+                    const newInternalNodes = new Map(internalNodes);
+                    newInternalNodes.set(node.id, node);
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(parentId, {
+                        ...parentNode,
+                        internalNodes: newInternalNodes
+                    });
+
+                    return { nodes: newNodes };
+                });
+            },
+
+            removeInternalNode: (parentId, nodeId) => {
+                set((state) => {
+                    const parentNode = state.nodes.get(parentId);
+                    if (!parentNode?.internalNodes) return state;
+
+                    const newInternalNodes = new Map(parentNode.internalNodes);
+                    newInternalNodes.delete(nodeId);
+
+                    // Remove connections to/from this internal node
+                    const internalConnections = parentNode.internalConnections || [];
+                    const newInternalConnections = internalConnections.filter(
+                        conn => conn.sourceNodeId !== nodeId && conn.targetNodeId !== nodeId
+                    );
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(parentId, {
+                        ...parentNode,
+                        internalNodes: newInternalNodes,
+                        internalConnections: newInternalConnections
+                    });
+
+                    return { nodes: newNodes };
+                });
+            },
+
+            addInternalConnection: (parentId, connection) => {
+                set((state) => {
+                    const parentNode = state.nodes.get(parentId);
+                    if (!parentNode) return state;
+
+                    const internalConnections = parentNode.internalConnections || [];
+                    const newInternalConnections = [...internalConnections, connection];
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(parentId, {
+                        ...parentNode,
+                        internalConnections: newInternalConnections
+                    });
+
+                    return { nodes: newNodes };
+                });
+            },
+
+            removeInternalConnection: (parentId, connectionId) => {
+                set((state) => {
+                    const parentNode = state.nodes.get(parentId);
+                    if (!parentNode?.internalConnections) return state;
+
+                    const newInternalConnections = parentNode.internalConnections.filter(
+                        conn => conn.id !== connectionId
+                    );
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(parentId, {
+                        ...parentNode,
+                        internalConnections: newInternalConnections
+                    });
+
+                    return { nodes: newNodes };
+                });
+            },
+
+            getInternalNodes: (parentId) => {
+                const parentNode = get().nodes.get(parentId);
+                return parentNode?.internalNodes || new Map();
+            },
+
+            getInternalConnections: (parentId) => {
+                const parentNode = get().nodes.get(parentId);
+                return parentNode?.internalConnections || [];
+            },
+
+            updateInternalNodePosition: (parentId, nodeId, position) => {
+                set((state) => {
+                    const parentNode = state.nodes.get(parentId);
+                    if (!parentNode?.internalNodes) return state;
+
+                    const internalNode = parentNode.internalNodes.get(nodeId);
+                    if (!internalNode) return state;
+
+                    const newInternalNodes = new Map(parentNode.internalNodes);
+                    newInternalNodes.set(nodeId, { ...internalNode, position });
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(parentId, {
+                        ...parentNode,
+                        internalNodes: newInternalNodes
+                    });
+
+                    return { nodes: newNodes };
+                });
+            }
         }),
         {
             name: 'openjammer-graph',
