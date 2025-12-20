@@ -11,17 +11,22 @@ const gmInstrument = (
   category: 'piano' | 'strings' | 'guitar' | 'bass' | 'woodwinds' | 'brass' | 'synth' | 'percussion' | 'world',
   programNum: number,
   defaultOctave: number = 4
-): InstrumentDefinition => ({
-  id,
-  name,
-  category,
-  library: 'webaudiofont',
-  config: {
-    presetUrl: `https://surikov.github.io/webaudiofontdata/sound/${String(programNum).padStart(4, '0')}_FluidR3_GM_sf2_file.js`,
-    presetVar: `_tone_${String(programNum).padStart(4, '0')}_FluidR3_GM_sf2_file`
-  },
-  defaultOctave
-});
+): InstrumentDefinition => {
+  // WebAudioFont uses format: program * 10, padded to 4 digits
+  // e.g., program 0 = "0000", program 42 = "0420"
+  const presetCode = String(programNum * 10).padStart(4, '0');
+  return {
+    id,
+    name,
+    category,
+    library: 'webaudiofont',
+    config: {
+      presetUrl: `https://surikov.github.io/webaudiofontdata/sound/${presetCode}_FluidR3_GM_sf2_file.js`,
+      presetVar: `_tone_${presetCode}_FluidR3_GM_sf2_file`
+    },
+    defaultOctave
+  };
+};
 
 export const GM_INSTRUMENTS: InstrumentDefinition[] = [
   // ============= PIANOS (0-7) =============

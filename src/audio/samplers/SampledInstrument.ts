@@ -8,15 +8,23 @@
 import { getAudioContext } from '../AudioEngine';
 import type { LoadingState, VelocityCurve, EnvelopeConfig } from './types';
 
-export abstract class SampledInstrument {
+export interface SampledInstrumentOptions {
+  /** Enable haptic feedback on mobile devices (default: false) */
+  enableHaptic?: boolean;
+}
+
+export abstract class SampledInstrument<TNoteHandle = unknown> {
   protected loadingState: LoadingState = 'idle';
   protected outputNode: GainNode | null = null;
   protected pendingNotes: Array<{ note: string; velocity?: number }> = [];
-  protected activeNotes: Map<string, unknown> = new Map();
+  protected activeNotes: Map<string, TNoteHandle> = new Map();
   protected loadPromise: Promise<void> | null = null;
   protected onLoadingStateChange: ((state: LoadingState) => void) | null = null;
+  protected pendingCleanups: Set<number> = new Set();
+  protected enableHaptic: boolean;
 
-  constructor() {
+  constructor(options: SampledInstrumentOptions = {}) {
+    this.enableHaptic = options.enableHaptic ?? false;
     this.initOutput();
   }
 
@@ -173,9 +181,9 @@ export abstract class SampledInstrument {
     return noteMap[noteName.toUpperCase()] + (parseInt(octave, 10) + 1) * 12;
   }
 
-  // Haptic feedback for mobile devices
+  // Haptic feedback for mobile devices (opt-in)
   private triggerHaptic(velocity: number): void {
-    if (!('vibrate' in navigator)) return;
+    if (!this.enableHaptic || !('vibrate' in navigator)) return;
 
     // Intensity based on velocity (10-30ms)
     const duration = Math.floor(10 + velocity * 20);
@@ -183,13 +191,28 @@ export abstract class SampledInstrument {
   }
 
   private triggerReleaseHaptic(): void {
-    if (!('vibrate' in navigator)) return;
+    if (!this.enableHaptic || !('vibrate' in navigator)) return;
 
     // Short tap-pause-tap for damper feel
     navigator.vibrate([3, 10, 3]);
   }
 
+  // Cleanup helper methods for consistent timeout management across adapters
+  protected scheduleCleanup(fn: () => void, delay: number): void {
+    const id = window.setTimeout(() => {
+      this.pendingCleanups.delete(id);
+      fn();
+    }, delay);
+    this.pendingCleanups.add(id);
+  }
+
+  protected clearAllCleanups(): void {
+    this.pendingCleanups.forEach(id => clearTimeout(id));
+    this.pendingCleanups.clear();
+  }
+
   disconnect(): void {
+    this.clearAllCleanups();
     this.stopAllNotes();
     if (this.outputNode) {
       this.outputNode.disconnect();

@@ -4,11 +4,13 @@
 
 import { SampledInstrument } from './SampledInstrument';
 import { getAudioContext } from '../AudioEngine';
+import type { EnvelopeConfig } from './types';
 
 // WebAudioFont types (from npm package)
 interface WebAudioFontLoader {
   startLoad: (ctx: AudioContext, url: string, name: string) => void;
   waitLoad: (cb: () => void) => void;
+  decodeAfterLoading: (ctx: AudioContext, name: string) => void;
 }
 
 declare class WebAudioFontPlayer {
@@ -29,6 +31,7 @@ declare class WebAudioFontPlayer {
 interface WebAudioFontConfig {
   presetUrl: string;
   presetVar: string;
+  envelope?: EnvelopeConfig;
 }
 
 export class WebAudioFontInstrument extends SampledInstrument {
@@ -36,7 +39,7 @@ export class WebAudioFontInstrument extends SampledInstrument {
   private preset: unknown = null;
   private config: WebAudioFontConfig;
   private noteHandles: Map<string, { cancel: () => void; gainNode: GainNode }> = new Map();
-  private pendingCleanups: Set<number> = new Set(); // Track cleanup timeouts to cancel on disconnect
+  // pendingCleanups is inherited from SampledInstrument base class
 
   constructor(config: WebAudioFontConfig) {
     super();
@@ -96,36 +99,57 @@ export class WebAudioFontInstrument extends SampledInstrument {
         return;
       }
 
+      // Add loading timeout to prevent hanging forever
+      let loadResolved = false;
+      const timeoutId = window.setTimeout(() => {
+        if (!loadResolved) {
+          loadResolved = true;
+          reject(new Error('WebAudioFont preset loading timeout (30s)'));
+        }
+      }, 30000);
+
       try {
         this.player.loader.startLoad(ctx, this.config.presetUrl, this.config.presetVar);
         this.player.loader.waitLoad(() => {
+          if (loadResolved) return;
+
           // Access the loaded preset from window (WebAudioFont pattern)
           this.preset = (window as unknown as Record<string, unknown>)[this.config.presetVar];
           if (!this.preset) {
+            loadResolved = true;
+            clearTimeout(timeoutId);
             reject(new Error(`Preset ${this.config.presetVar} not found`));
-          } else {
-            resolve();
+            return;
           }
+
+          // CRITICAL: Decode the preset after loading to ensure buffers are ready
+          // Without this, first notes may be silent (empty buffer issue)
+          this.player!.loader.decodeAfterLoading(ctx, this.config.presetVar);
+
+          // Verify preset has zones (samples)
+          const presetObj = this.preset as { zones?: unknown[] };
+          if (!presetObj.zones || presetObj.zones.length === 0) {
+            loadResolved = true;
+            clearTimeout(timeoutId);
+            reject(new Error(`Preset ${this.config.presetVar} has no zones/samples`));
+            return;
+          }
+
+          loadResolved = true;
+          clearTimeout(timeoutId);
+          resolve();
         });
       } catch (err) {
-        reject(err);
+        if (!loadResolved) {
+          loadResolved = true;
+          clearTimeout(timeoutId);
+          reject(err);
+        }
       }
     });
   }
 
-  protected noteToMidi(note: string): number {
-    const noteMap: Record<string, number> = {
-      'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
-      'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
-      'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
-    };
-
-    const match = note.match(/^([A-G][#b]?)(\d+)$/i);
-    if (!match) return 60; // Middle C fallback
-
-    const [, noteName, octave] = match;
-    return noteMap[noteName.toUpperCase()] + (parseInt(octave, 10) + 1) * 12;
-  }
+  // noteToMidi is inherited from SampledInstrument base class
 
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
     const ctx = getAudioContext();
@@ -156,8 +180,8 @@ export class WebAudioFontInstrument extends SampledInstrument {
       const now = ctx.currentTime;
 
       // Use setTargetAtTime for natural exponential decay
-      // Time constant of 0.04s for winds (quick release)
-      const timeConstant = 0.04;
+      // Time constant varies by note range (bass = longer, treble = shorter)
+      const timeConstant = this.getTimeConstantForNote(note, this.config.envelope);
       handle.gainNode.gain.setValueAtTime(handle.gainNode.gain.value, now);
       handle.gainNode.gain.setTargetAtTime(0, now, timeConstant);
 
@@ -176,16 +200,13 @@ export class WebAudioFontInstrument extends SampledInstrument {
   }
 
   disconnect(): void {
-    // Cancel pending cleanup timeouts to prevent operations on disconnected nodes
-    this.pendingCleanups.forEach(timeoutId => clearTimeout(timeoutId));
-    this.pendingCleanups.clear();
-
     // Cancel all queued notes
     this.noteHandles.forEach(handle => {
       handle.cancel();
       handle.gainNode.disconnect();
     });
     this.noteHandles.clear();
+    // Base class handles pendingCleanups cleanup via clearAllCleanups()
     super.disconnect();
   }
 }

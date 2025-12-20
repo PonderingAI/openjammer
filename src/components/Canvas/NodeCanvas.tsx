@@ -456,6 +456,62 @@ export function NodeCanvas() {
                         return;
                     }
 
+                    // If already dragging a connection, expand to include all empty ports of same type/direction
+                    const { isConnecting, connectingFrom } = useCanvasStore.getState();
+                    if (isConnecting && connectingFrom && connectingFrom.length > 0) {
+                        e.preventDefault();
+
+                        const graphNodes = useGraphStore.getState().nodes;
+                        const graphConnections = useGraphStore.getState().connections;
+
+                        // Build set of already-connected port keys
+                        const existingKeys = new Set(connectingFrom.map(s => `${s.nodeId}:${s.portId}`));
+
+                        // Get unique source nodes and their port types from current selection
+                        const nodePortInfo = new Map<string, { type: string; direction: string }>();
+                        for (const source of connectingFrom) {
+                            const node = graphNodes.get(source.nodeId);
+                            if (!node) continue;
+                            const port = node.ports.find(p => p.id === source.portId);
+                            if (port) {
+                                nodePortInfo.set(source.nodeId, { type: port.type, direction: port.direction });
+                            }
+                        }
+
+                        // Expand: add all other empty ports of same type/direction from those nodes
+                        const expandedSources = [...connectingFrom];
+                        for (const [nodeId, portInfo] of nodePortInfo) {
+                            const node = graphNodes.get(nodeId);
+                            if (!node) continue;
+
+                            const matchingPorts = node.ports.filter(
+                                p => p.type === portInfo.type && p.direction === portInfo.direction
+                            );
+
+                            for (const port of matchingPorts) {
+                                const key = `${nodeId}:${port.id}`;
+                                if (existingKeys.has(key)) continue; // Already included
+
+                                // Check if port is empty (not connected)
+                                const hasConnection = Array.from(graphConnections.values()).some(conn =>
+                                    (portInfo.direction === 'output'
+                                        ? conn.sourceNodeId === nodeId && conn.sourcePortId === port.id
+                                        : conn.targetNodeId === nodeId && conn.targetPortId === port.id)
+                                );
+
+                                if (!hasConnection) {
+                                    expandedSources.push({ nodeId, portId: port.id });
+                                    existingKeys.add(key);
+                                }
+                            }
+                        }
+
+                        if (expandedSources.length > connectingFrom.length) {
+                            startConnecting(expandedSources);
+                        }
+                        return;
+                    }
+
                     // Fallback: Get all selected nodes (original behavior)
                     const selectedIds = useGraphStore.getState().selectedNodeIds;
                     const graphNodes = useGraphStore.getState().nodes;

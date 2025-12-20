@@ -1,5 +1,11 @@
 /**
  * ToneSamplerAdapter - Adapter for Tone.js Sampler (Salamander piano, tonejs-instruments)
+ *
+ * CRITICAL: Must use Tone.js patterns correctly:
+ * 1. Call Tone.setContext() with our AudioContext BEFORE creating Sampler
+ * 2. Call Tone.start() on user gesture before playback
+ * 3. Use Tone.connect() to bridge to native Web Audio nodes
+ * 4. Wait for Tone.loaded() after creating Sampler
  */
 
 import * as Tone from 'tone';
@@ -16,10 +22,24 @@ interface ToneSamplerConfig {
   release?: number;
 }
 
+// Module-level flag for Tone.js context initialization (global state)
+let toneContextInitialized = false;
+
+async function ensureToneContext(ctx: AudioContext): Promise<void> {
+  if (!toneContextInitialized) {
+    Tone.setContext(ctx);
+    toneContextInitialized = true;
+  }
+
+  // Ensure Tone.js is started (requires user gesture)
+  if (Tone.context.state !== 'running') {
+    await Tone.start();
+  }
+}
+
 export class ToneSamplerInstrument extends SampledInstrument {
   private sampler: Tone.Sampler | null = null;
   private config: ToneSamplerConfig;
-  private isContextSet: boolean = false;
 
   constructor(config: ToneSamplerConfig) {
     super();
@@ -30,29 +50,44 @@ export class ToneSamplerInstrument extends SampledInstrument {
     const ctx = getAudioContext();
     if (!ctx) throw new Error('AudioContext not available');
 
-    // Set Tone.js to use our existing context (only once)
-    if (!this.isContextSet) {
-      Tone.setContext(ctx);
-      this.isContextSet = true;
-    }
+    // CRITICAL: Ensure Tone.js is using our context BEFORE creating Sampler
+    await ensureToneContext(ctx);
 
-    // Create sampler with onload callback for promise resolution
+    // Create sampler with onload callback
     return new Promise((resolve, reject) => {
       try {
+        let loadResolved = false;
+
         this.sampler = new Tone.Sampler({
           urls: this.config.urls,
           baseUrl: this.config.baseUrl,
           release: this.config.release ?? 1,
           onload: () => {
-            // Connect to our output node
+            if (loadResolved) return;
+            loadResolved = true;
+
+            // Connect to our output node using Tone.connect() for native nodes
             if (this.outputNode && this.sampler) {
-              this.sampler.disconnect();
-              this.sampler.connect(this.outputNode);
+              // Use Tone.connect() to bridge Tone.js node to native GainNode
+              Tone.connect(this.sampler, this.outputNode);
             }
             resolve();
           },
-          onerror: (err) => reject(err)
+          onerror: (err) => {
+            if (loadResolved) return;
+            loadResolved = true;
+            reject(err);
+          }
         });
+
+        // Add timeout to prevent hanging forever
+        setTimeout(() => {
+          if (!loadResolved) {
+            loadResolved = true;
+            reject(new Error('Sampler loading timeout (30s)'));
+          }
+        }, 30000);
+
       } catch (err) {
         reject(err);
       }
@@ -71,6 +106,15 @@ export class ToneSamplerInstrument extends SampledInstrument {
 
     this.sampler.triggerRelease(note, Tone.now());
     this.activeNotes.delete(note);
+  }
+
+  disconnect(): void {
+    if (this.sampler) {
+      this.sampler.releaseAll();
+      this.sampler.dispose();
+      this.sampler = null;
+    }
+    super.disconnect();
   }
 }
 

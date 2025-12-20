@@ -7,10 +7,16 @@
 
 export class ConvolutionReverb {
   // Constants for impulse response generation
-  private static readonly IMPULSE_DURATION_SECONDS = 4;
+  private static readonly IMPULSE_DURATION_SECONDS = 2; // Reduced from 4s - sufficient for piano resonance
   private static readonly DECAY_TIME_CONSTANT = 1.5;
   private static readonly LOW_PASS_COEFFICIENT = 0.7;
   private static readonly IMPULSE_LEVEL = 0.2;
+
+  // Pedal wet/dry mix levels
+  private static readonly PEDAL_DOWN_WET_LEVEL = 0.3;
+  private static readonly PEDAL_DOWN_DRY_LEVEL = 0.7;
+  private static readonly PEDAL_UP_WET_LEVEL = 0;
+  private static readonly PEDAL_UP_DRY_LEVEL = 1;
 
   private ctx: AudioContext;
   private convolver: ConvolverNode;
@@ -115,12 +121,12 @@ export class ConvolutionReverb {
 
     if (down) {
       // Pedal down: blend in wet signal (sympathetic resonance)
-      this.wet.gain.setTargetAtTime(0.3, now, rampTime);
-      this.dry.gain.setTargetAtTime(0.7, now, rampTime);
+      this.wet.gain.setTargetAtTime(ConvolutionReverb.PEDAL_DOWN_WET_LEVEL, now, rampTime);
+      this.dry.gain.setTargetAtTime(ConvolutionReverb.PEDAL_DOWN_DRY_LEVEL, now, rampTime);
     } else {
       // Pedal up: back to dry only
-      this.wet.gain.setTargetAtTime(0, now, rampTime);
-      this.dry.gain.setTargetAtTime(1, now, rampTime);
+      this.wet.gain.setTargetAtTime(ConvolutionReverb.PEDAL_UP_WET_LEVEL, now, rampTime);
+      this.dry.gain.setTargetAtTime(ConvolutionReverb.PEDAL_UP_DRY_LEVEL, now, rampTime);
     }
   }
 

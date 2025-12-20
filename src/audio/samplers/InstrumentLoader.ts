@@ -12,7 +12,6 @@ import { KarplusStrongInstrument } from './KarplusStrong';
 import { INSTRUMENT_DEFINITIONS } from './InstrumentDefinitions';
 
 class InstrumentLoaderClass {
-  private cache: Map<string, SampledInstrument> = new Map();
   private definitions: Map<string, InstrumentDefinition> = new Map();
 
   constructor() {
@@ -81,7 +80,10 @@ class InstrumentLoaderClass {
         break;
 
       case 'webaudiofont':
-        instrument = new WebAudioFontInstrument(def.config as { presetUrl: string; presetVar: string });
+        instrument = new WebAudioFontInstrument({
+          ...(def.config as { presetUrl: string; presetVar: string }),
+          envelope: def.envelope
+        });
         break;
 
       case 'karplus':
@@ -102,21 +104,6 @@ class InstrumentLoaderClass {
   async preload(instrumentId: string): Promise<void> {
     const instrument = this.create(instrumentId);
     await instrument.load();
-  }
-
-  // Clear cache (memory management)
-  clearCache(): void {
-    this.cache.forEach(inst => inst.disconnect());
-    this.cache.clear();
-  }
-
-  // Remove specific instrument from cache
-  removeFromCache(instrumentId: string): void {
-    const inst = this.cache.get(instrumentId);
-    if (inst) {
-      inst.disconnect();
-      this.cache.delete(instrumentId);
-    }
   }
 }
 

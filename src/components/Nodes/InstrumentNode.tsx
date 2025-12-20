@@ -271,12 +271,11 @@ export function InstrumentNode({
         const resizeObserver = new ResizeObserver(() => updateDropdownPosition());
         resizeObserver.observe(nodeRef.current);
 
-        const intervalId = window.setInterval(updateDropdownPosition, 100);
+        // ResizeObserver and resize listener are sufficient - no polling needed
 
         return () => {
             window.removeEventListener('resize', updateDropdownPosition);
             resizeObserver.disconnect();
-            clearInterval(intervalId);
         };
     }, [showPopup]);
 
@@ -413,7 +412,7 @@ export function InstrumentNode({
     // Handle wheel on row control
     const handleRowWheel = (rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
         e.stopPropagation();
-        e.preventDefault();
+        // Note: preventDefault() removed - React wheel events are passive by default
         const row = rows.find(r => r.rowId === rowId);
         if (!row) return;
 

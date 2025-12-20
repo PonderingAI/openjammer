@@ -72,6 +72,10 @@ class AudioGraphManager {
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
+    // Store getters for accessing graph state when syncing
+    private getNodesRef: (() => Map<string, GraphNode>) | null = null;
+    private getConnectionsRef: (() => Map<string, Connection>) | null = null;
+
     // Signal level visualization (audio connections)
     private connectionAnalysers: Map<string, AnalyserNode> = new Map(); // connectionKey -> AnalyserNode
     private signalLevels: Map<string, number> = new Map(); // connectionKey -> 0-1 RMS level
@@ -109,6 +113,10 @@ class AudioGraphManager {
         getConnections: () => Map<string, Connection>
     ): void {
         if (this.isInitialized) return;
+
+        // Store references for later use
+        this.getNodesRef = getNodes;
+        this.getConnectionsRef = getConnections;
 
         // Subscribe to node changes
         const unsubNodes = subscribeToNodes((nodes) => {
@@ -461,6 +469,12 @@ class AudioGraphManager {
                     const newAudioNode = this.createAudioNode(graphNode);
                     if (newAudioNode) {
                         this.audioNodes.set(nodeId, newAudioNode);
+
+                        // CRITICAL: Re-sync connections after instrument recreation
+                        // Without this, the new instrument won't be connected to the audio graph
+                        if (this.getConnectionsRef && this.getNodesRef) {
+                            this.syncConnections(this.getConnectionsRef(), this.getNodesRef());
+                        }
                     }
                 }
             }
@@ -711,6 +725,17 @@ class AudioGraphManager {
     private destroyAudioNode(audioNode: AudioNodeInstance): void {
         const ctx = getAudioContext();
         if (!ctx) return;
+
+        // CRITICAL: Remove this node's connections from activeAudioConnections
+        // Without this, syncConnections will think connections still exist and skip reconnecting
+        const nodeId = audioNode.nodeId;
+        const keysToRemove: string[] = [];
+        this.activeAudioConnections.forEach(key => {
+            if (key.startsWith(`${nodeId}->`) || key.endsWith(`->${nodeId}`)) {
+                keysToRemove.push(key);
+            }
+        });
+        keysToRemove.forEach(key => this.activeAudioConnections.delete(key));
 
         // Fade out before disconnecting
         if (audioNode.gainEnvelope) {

@@ -2,8 +2,11 @@
  * Audio Engine - Singleton managing Web Audio API
  */
 
+import * as Tone from 'tone';
+
 let audioContext: AudioContext | null = null;
 let masterGain: GainNode | null = null;
+let toneInitialized = false;
 
 // ============================================================================
 // Types
@@ -32,6 +35,8 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
         }
+        // Ensure Tone.js is also started
+        await ensureToneStarted();
         return audioContext;
     }
 
@@ -43,7 +48,29 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
     masterGain.connect(audioContext.destination);
     masterGain.gain.value = 0.8;
 
+    // Initialize Tone.js with our AudioContext
+    await ensureToneStarted();
+
     return audioContext;
+}
+
+/**
+ * Ensure Tone.js is initialized and started
+ * MUST be called after user gesture for audio to work
+ */
+async function ensureToneStarted(): Promise<void> {
+    if (!audioContext) return;
+
+    // Set Tone.js to use our context (only once)
+    if (!toneInitialized) {
+        Tone.setContext(audioContext);
+        toneInitialized = true;
+    }
+
+    // Start Tone.js if not running
+    if (Tone.context.state !== 'running') {
+        await Tone.start();
+    }
 }
 
 /**
@@ -100,6 +127,34 @@ export async function resumeAudio(): Promise<void> {
     if (audioContext && audioContext.state === 'suspended') {
         await audioContext.resume();
     }
+    // Also ensure Tone.js is started
+    await ensureToneStarted();
+}
+
+/**
+ * Ensure audio is ready for playback
+ * Call this before any audio operations to guarantee context is running
+ * Returns true if audio is ready, false if no context exists
+ */
+export async function ensureAudioReady(): Promise<boolean> {
+    if (!audioContext) {
+        return false;
+    }
+
+    // Resume if suspended
+    if (audioContext.state === 'suspended') {
+        try {
+            await audioContext.resume();
+        } catch (err) {
+            console.error('[AudioEngine] Failed to resume context:', err);
+            return false;
+        }
+    }
+
+    // Ensure Tone.js is started
+    await ensureToneStarted();
+
+    return audioContext.state === 'running';
 }
 
 /**

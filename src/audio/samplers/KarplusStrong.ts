@@ -107,12 +107,12 @@ export class KarplusStrongInstrument extends SampledInstrument {
     const noteData: KarplusNote = { delayNode, feedbackGain, filterNode, outputGain };
     this.activeNotes.set(note, noteData);
 
-    // Natural decay (8 seconds) - store timeout so it can be canceled
+    // Natural decay (4 seconds for realistic plucked string behavior)
     noteData.decayTimeout = setTimeout(() => {
       if (this.activeNotes.get(note) === noteData) {
         this.stopNoteImpl(note);
       }
-    }, 8000);
+    }, 4000);
   }
 
   // Override: already loaded (no samples)

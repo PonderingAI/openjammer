@@ -1,22 +1,45 @@
 /**
  * TonePianoAdapter - Adapter for @tonejs/piano (professional piano with 16 velocity layers)
+ *
+ * CRITICAL: @tonejs/piano uses Tone.js internally. We MUST:
+ * 1. Call Tone.setContext() with our AudioContext BEFORE creating Piano
+ * 2. Use Tone.js nodes for connections (not native GainNode)
+ * 3. Use Tone.connect() to bridge to native Web Audio nodes
  */
 
+import * as Tone from 'tone';
 import { SampledInstrument } from './SampledInstrument';
 import { getAudioContext } from '../AudioEngine';
 import { ConvolutionReverb } from '../ConvolutionReverb';
 import type { EnvelopeConfig } from './types';
 
+// Module-level flag to ensure Tone context is set only once
+let toneContextInitialized = false;
+
+async function ensureToneContext(ctx: AudioContext): Promise<void> {
+  if (toneContextInitialized) return;
+
+  // Set Tone.js to use our AudioContext
+  Tone.setContext(ctx);
+  toneContextInitialized = true;
+
+  // Ensure Tone.js is started (requires user gesture)
+  if (Tone.context.state !== 'running') {
+    await Tone.start();
+  }
+}
+
 // Interface for @tonejs/piano (dynamically imported)
 interface PianoInstance {
   load(): Promise<void>;
-  keyDown(options: { note: string; velocity?: number }): void;
-  keyUp(options: { note: string }): void;
-  pedalDown(): void;
-  pedalUp(): void;
-  connect(dest: AudioNode): void;
-  disconnect(): void;
+  keyDown(options: { note: string; velocity?: number; time?: number }): void;
+  keyUp(options: { note: string; time?: number }): void;
+  pedalDown(time?: number): void;
+  pedalUp(time?: number): void;
+  connect(dest: Tone.ToneAudioNode): this;
+  disconnect(): this;
   dispose(): void;
+  toDestination(): this;
 }
 
 interface TonePianoConfig {
@@ -27,9 +50,9 @@ interface TonePianoConfig {
 export class TonePianoInstrument extends SampledInstrument {
   private piano: PianoInstance | null = null;
   private config: TonePianoConfig;
-  private pianoOutput: GainNode | null = null;
+  private toneGain: Tone.Gain | null = null; // Use Tone.Gain instead of native GainNode
   private resonance: ConvolutionReverb | null = null;
-  private pedalDown: boolean = false;
+  private isPedalDown: boolean = false;
 
   constructor(config: TonePianoConfig = {}) {
     super();
@@ -44,33 +67,44 @@ export class TonePianoInstrument extends SampledInstrument {
     if (!ctx) throw new Error('AudioContext not available');
 
     try {
+      // CRITICAL: Set Tone.js context BEFORE creating Piano
+      await ensureToneContext(ctx);
+
       // Dynamic import to avoid module loading errors
       const { Piano } = await import('@tonejs/piano').catch((importErr) => {
         console.error('[TonePiano] Failed to load @tonejs/piano module:', importErr);
         throw new Error('Piano library failed to load. Check network connection or dependencies.');
       });
 
-      // Create Piano instance
+      // Create Piano instance (now uses our AudioContext via Tone.setContext)
       this.piano = new Piano({
         velocities: this.config.velocities
       }) as PianoInstance;
 
-      // Wait for samples to load
-      await this.piano.load();
+      // Wait for samples to load with timeout
+      const loadPromise = this.piano.load();
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Piano sample loading timeout (30s)')), 30000)
+      );
+      await Promise.race([loadPromise, timeoutPromise]);
 
-      // Create intermediate gain node to route piano output
-      this.pianoOutput = ctx.createGain();
-      this.pianoOutput.gain.value = 1;
+      // Create Tone.Gain for piano output (Tone.js nodes work with Piano)
+      this.toneGain = new Tone.Gain(1);
 
       // Create convolution reverb for sympathetic resonance
       this.resonance = new ConvolutionReverb(ctx);
 
-      // Connect piano to our chain
-      // Route: piano → pianoOutput → resonance → outputNode
+      // Connect piano to our chain using Tone.js patterns
+      // Route: piano → toneGain → resonance → outputNode
       if (this.outputNode) {
-        // Connect piano output to our intermediate gain node
-        this.piano.connect(this.pianoOutput);
-        this.pianoOutput.connect(this.resonance.getInput());
+        // Connect Piano to Tone.Gain
+        this.piano.connect(this.toneGain);
+
+        // Bridge from Tone.js to native Web Audio using Tone.connect()
+        // toneGain → resonance input (native GainNode)
+        Tone.connect(this.toneGain, this.resonance.getInput());
+
+        // resonance output → our outputNode (native GainNode)
         this.resonance.getOutput().connect(this.outputNode);
       }
     } catch (error) {
@@ -109,7 +143,7 @@ export class TonePianoInstrument extends SampledInstrument {
   setPedal(down: boolean): void {
     if (!this.piano) return;
 
-    this.pedalDown = down;
+    this.isPedalDown = down;
 
     // Use @tonejs/piano's built-in pedal support
     if (down) {
@@ -122,27 +156,31 @@ export class TonePianoInstrument extends SampledInstrument {
     this.resonance?.setPedalDown(down);
   }
 
-  isPedalDown(): boolean {
-    return this.pedalDown;
+  getPedalState(): boolean {
+    return this.isPedalDown;
   }
 
   disconnect(): void {
+    // Release all playing notes first
+    this.stopAllNotes();
+
     // Disconnect resonance
     if (this.resonance) {
       this.resonance.disconnect();
       this.resonance = null;
     }
 
-    // Disconnect piano
+    // Disconnect and dispose Tone.Gain
+    if (this.toneGain) {
+      this.toneGain.dispose();
+      this.toneGain = null;
+    }
+
+    // Disconnect and dispose piano
     if (this.piano) {
       this.piano.disconnect();
       this.piano.dispose();
       this.piano = null;
-    }
-
-    if (this.pianoOutput) {
-      this.pianoOutput.disconnect();
-      this.pianoOutput = null;
     }
 
     super.disconnect();

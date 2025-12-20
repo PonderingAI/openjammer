@@ -63,7 +63,7 @@ export class SmplrInstrument extends SampledInstrument {
   }
 
   protected stopNoteImpl(note: string): void {
-    if (!this.sampler) return;
+    if (!this.sampler || this.isDisconnected) return;
 
     const handle = this.noteHandles.get(note);
     if (!handle) {
