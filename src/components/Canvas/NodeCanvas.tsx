@@ -311,31 +311,46 @@ export function NodeCanvas() {
         // Cancel connection if mouseup happens on empty canvas (not on a valid port)
         // This runs after port mouseup handlers, so if isConnecting is still true,
         // it means the connection wasn't completed on a port
+        // Note: We use requestAnimationFrame instead of setTimeout(0) for more reliable
+        // timing with React's synthetic events
         if (isConnecting) {
-            // Small delay to allow port mouseup to fire first
-            setTimeout(() => {
+            requestAnimationFrame(() => {
                 if (useCanvasStore.getState().isConnecting) {
                     stopConnecting();
                 }
-            }, 0);
+            });
         }
     }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting, nodes, startConnecting, getPortCanvasPositionForSelection]);
 
     // Handle wheel for zoom and two-finger trackpad pan
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-        e.preventDefault();
+    // Note: This uses a native event listener with { passive: false } to allow preventDefault()
+    // React's onWheel uses passive listeners by default which prevents preventDefault()
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
-        // Pinch-to-zoom gesture (ctrlKey is set by browser for pinch gestures)
-        if (e.ctrlKey) {
-            const delta = e.deltaY > 0 ? 0.9 : 1.1;
-            const newZoom = zoom * delta;
-            zoomTo(newZoom, { x: e.clientX, y: e.clientY });
-            return;
-        }
+        const handleWheel = (e: WheelEvent) => {
+            e.preventDefault();
 
-        // Two-finger trackpad pan - pans in all directions (horizontal, vertical, diagonal)
-        // This allows natural panning with two fingers on laptop trackpads
-        panBy({ x: -e.deltaX, y: -e.deltaY });
+            // Pinch-to-zoom gesture (ctrlKey is set by browser for pinch gestures)
+            if (e.ctrlKey) {
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newZoom = zoom * delta;
+                zoomTo(newZoom, { x: e.clientX, y: e.clientY });
+                return;
+            }
+
+            // Two-finger trackpad pan - pans in all directions (horizontal, vertical, diagonal)
+            // This allows natural panning with two fingers on laptop trackpads
+            panBy({ x: -e.deltaX, y: -e.deltaY });
+        };
+
+        // Add with { passive: false } to allow preventDefault()
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+        return () => {
+            canvas.removeEventListener('wheel', handleWheel);
+        };
     }, [zoom, zoomTo, panBy]);
 
     // Keyboard row key mappings
@@ -625,19 +640,22 @@ export function NodeCanvas() {
         const bundleCount = getConnectionBundleCount(conn, allNodes, allConnections);
         const isBundled = bundleCount > 1;
 
-        // Get signal level for audio connections (for visualization)
-        const connectionKey = `${conn.sourceNodeId}->${conn.targetNodeId}`;
-        const signalLevel = conn.type === 'audio' ? (signalLevels.get(connectionKey) ?? 0) : 0;
+        // Get signal level for visualization (works for all connection types)
+        // Audio: uses "sourceNodeId->targetNodeId" key from RMS analyzer
+        // Control: uses connection ID directly from control signal tracking
+        const audioConnectionKey = `${conn.sourceNodeId}->${conn.targetNodeId}`;
+        const signalLevel = signalLevels.get(audioConnectionKey) ?? signalLevels.get(conn.id) ?? 0;
 
-        // Apply signal-based styling for audio connections
-        const signalStyle = conn.type === 'audio' ? {
-            '--signal-strength': signalLevel.toFixed(3)
-        } as React.CSSProperties : undefined;
+        // Apply unified signal-based styling for all connection types
+        const signalStyle = {
+            '--signal-level': signalLevel.toFixed(3)
+        } as React.CSSProperties;
 
         return (
             <g key={conn.id}>
                 <path
                     d={path}
+                    data-connection-id={conn.id}
                     className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''} ${isBundled ? 'bundled' : ''}`}
                     style={signalStyle}
                     onClick={(e) => {
@@ -800,7 +818,6 @@ export function NodeCanvas() {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
             style={{ cursor: isPanning || (rightClickStart && rightClickMoved.current) ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
         >
             <div className="node-canvas-grid" style={{

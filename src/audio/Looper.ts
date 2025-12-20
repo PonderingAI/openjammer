@@ -63,6 +63,10 @@ export class Looper {
     private readonly WAVEFORM_SAMPLE_INTERVAL = 50; // ms between samples
     private readonly MAX_WAVEFORM_SAMPLES = 2000; // Cap waveform data to prevent memory issues
 
+    // Reusable buffers for analyser data (avoids allocation in animation loop)
+    private timeDomainBuffer: Uint8Array<ArrayBuffer> | null = null;
+    private frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
+
     // Callbacks
     private onLoopAdded: ((loop: Loop) => void) | null = null;
     private onTimeUpdate: ((time: number) => void) | null = null;
@@ -367,8 +371,13 @@ export class Looper {
         if (this.isRecording && this.analyser) {
             // Sample at fixed intervals
             if (now - this.lastWaveformSampleTime >= this.WAVEFORM_SAMPLE_INTERVAL) {
-                const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-                this.analyser.getByteTimeDomainData(dataArray);
+                // Reuse buffer to avoid allocation in hot path
+                const binCount = this.analyser.frequencyBinCount;
+                if (!this.timeDomainBuffer || this.timeDomainBuffer.length !== binCount) {
+                    this.timeDomainBuffer = new Uint8Array(binCount) as Uint8Array<ArrayBuffer>;
+                }
+                this.analyser.getByteTimeDomainData(this.timeDomainBuffer);
+                const dataArray = this.timeDomainBuffer;
 
                 // Calculate peak amplitude
                 let peak = 0;
@@ -401,8 +410,13 @@ export class Looper {
         // Extract real-time waveform data from analyser (for live display)
         // Skip when document is hidden (performance optimization)
         if (this.analyser && this.onWaveformUpdate && !document.hidden) {
-            const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-            this.analyser.getByteFrequencyData(dataArray);
+            // Reuse buffer to avoid allocation in hot path
+            const binCount = this.analyser.frequencyBinCount;
+            if (!this.frequencyBuffer || this.frequencyBuffer.length !== binCount) {
+                this.frequencyBuffer = new Uint8Array(binCount) as Uint8Array<ArrayBuffer>;
+            }
+            this.analyser.getByteFrequencyData(this.frequencyBuffer);
+            const dataArray = this.frequencyBuffer;
 
             const NUM_BARS = 32;
             const bars: number[] = [];

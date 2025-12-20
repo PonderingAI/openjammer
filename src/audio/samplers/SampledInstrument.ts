@@ -5,7 +5,7 @@
  * until samples are loaded.
  */
 
-import { getAudioContext, getMasterGain } from '../AudioEngine';
+import { getAudioContext } from '../AudioEngine';
 import type { LoadingState, VelocityCurve, EnvelopeConfig } from './types';
 
 export abstract class SampledInstrument {
@@ -22,12 +22,12 @@ export abstract class SampledInstrument {
 
   protected initOutput(): void {
     const ctx = getAudioContext();
-    const master = getMasterGain();
-    if (!ctx || !master) return;
+    if (!ctx) return;
 
+    // Create output node but DON'T connect to master
+    // AudioGraphManager will connect to its routing chain
     this.outputNode = ctx.createGain();
-    this.outputNode.gain.value = 0.3;
-    this.outputNode.connect(master);
+    this.outputNode.gain.value = 0.8; // Increased from 0.3 for better audibility
   }
 
   // State accessors
@@ -61,6 +61,11 @@ export abstract class SampledInstrument {
   async load(): Promise<void> {
     if (this.loadingState === 'loaded') return;
     if (this.loadPromise) return this.loadPromise;
+
+    // Reinitialize output if it wasn't created (AudioContext wasn't ready in constructor)
+    if (!this.outputNode) {
+      this.initOutput();
+    }
 
     this.setLoadingState('loading');
     this.loadPromise = this.loadSamples()

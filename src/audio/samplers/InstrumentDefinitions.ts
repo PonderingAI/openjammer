@@ -42,62 +42,9 @@ export const INSTRUMENT_DEFINITIONS: InstrumentDefinition[] = [
   },
 
   // ============= STRINGS (smplr Versilian) =============
-  {
-    id: 'versilian-cello',
-    name: 'Cello',
-    category: 'strings',
-    subCategory: 'Orchestral',
-    library: 'smplr',
-    config: { instrument: 'cello' },
-    defaultOctave: 3,
-    noteRange: { min: 'C2', max: 'A5' },
-    envelope: {
-      releaseTimeConstant: 0.12 // Bowed string release
-    },
-    velocityCurve: 'linear'
-  },
-  {
-    id: 'versilian-violin',
-    name: 'Violin',
-    category: 'strings',
-    subCategory: 'Orchestral',
-    library: 'smplr',
-    config: { instrument: 'violin' },
-    defaultOctave: 4,
-    noteRange: { min: 'G3', max: 'E7' },
-    envelope: {
-      releaseTimeConstant: 0.10 // Medium bow release
-    },
-    velocityCurve: 'linear'
-  },
-  {
-    id: 'versilian-viola',
-    name: 'Viola',
-    category: 'strings',
-    subCategory: 'Orchestral',
-    library: 'smplr',
-    config: { instrument: 'viola' },
-    defaultOctave: 3,
-    noteRange: { min: 'C3', max: 'E6' },
-    envelope: {
-      releaseTimeConstant: 0.10 // Medium bow release
-    },
-    velocityCurve: 'linear'
-  },
-  {
-    id: 'versilian-double-bass',
-    name: 'Double Bass',
-    category: 'strings',
-    subCategory: 'Orchestral',
-    library: 'smplr',
-    config: { instrument: 'double-bass' },
-    defaultOctave: 2,
-    noteRange: { min: 'E1', max: 'G4' },
-    envelope: {
-      releaseTimeConstant: 0.12 // Bowed bass release
-    },
-    velocityCurve: 'linear'
-  },
+  // NOTE: Versilian samples are no longer available (404)
+  // These instruments are disabled until alternative sample sources are found
+  // Use GM strings (gm-cello, gm-violin, etc.) from WebAudioFont instead
 
   // ============= GUITAR (Karplus-Strong + WebAudioFont) =============
   {

@@ -77,6 +77,6 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    exclude: ['@tonejs/piano']
+    exclude: ['@tonejs/piano', 'webaudiofont']
   }
 })

@@ -586,7 +586,10 @@ export function InstrumentNode({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
                     />
-                    <div className="instrument-grid-container">
+                    <div
+                        className="instrument-grid-container"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
                         <div className="instrument-grid-grouped">
                             {groupedInstruments.map((group, groupIndex) => (
                                 <div key={group.baseName} className="instrument-group">

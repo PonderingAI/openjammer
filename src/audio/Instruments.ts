@@ -103,15 +103,16 @@ export { InstrumentLoader };
 export type InstrumentType = string;
 
 // Legacy type mapping for backwards compatibility
+// Updated to use GM instruments (WebAudioFont) since smplr samples are 404
 const LEGACY_TYPE_MAP: Record<string, string> = {
     'piano': 'salamander-piano',
-    'cello': 'versilian-cello',
-    'electricCello': 'versilian-cello',
-    'violin': 'versilian-violin',
-    'saxophone': 'waf-saxophone',
-    'strings': 'versilian-cello',
+    'cello': 'gm-cello',
+    'electricCello': 'gm-cello',
+    'violin': 'gm-violin',
+    'saxophone': 'gm-alto-sax',
+    'strings': 'gm-cello',
     'keys': 'salamander-piano',
-    'winds': 'waf-saxophone'
+    'winds': 'gm-alto-sax'
 };
 
 /**

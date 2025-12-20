@@ -149,7 +149,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
             isMuted: false,
             isActive: true
         },
-        dimensions: { width: 140, height: 100 }
+        dimensions: { width: 140, height: 100 },
+        canEnter: false  // Atomic node - no internal structure
     },
 
     // Instruments - all share similar layout: inputs on left, audio out on right
@@ -392,7 +393,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
             isMuted: false,
             deviceId: 'default'
         },
-        dimensions: { width: 140, height: 160 }
+        dimensions: { width: 140, height: 160 },
+        canEnter: false  // Atomic node - no internal structure
     },
 
     recorder: {

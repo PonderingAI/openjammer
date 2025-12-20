@@ -39,16 +39,23 @@ class InstrumentLoaderClass {
     return Array.from(categories);
   }
 
+  /**
+   * Create a new instrument instance (uses cache for sample data, not routing)
+   * Each node should have its own instance for independent audio routing
+   */
   create(instrumentId: string): SampledInstrument {
-    // Check cache first
-    if (this.cache.has(instrumentId)) {
-      return this.cache.get(instrumentId)!;
-    }
+    // Always create a new instance for each node (routing must be independent)
+    return this.createNew(instrumentId);
+  }
 
+  /**
+   * Create a fresh instrument instance (no caching)
+   */
+  createNew(instrumentId: string): SampledInstrument {
     const def = this.definitions.get(instrumentId);
     if (!def) {
       console.warn(`Unknown instrument: ${instrumentId}, falling back to piano`);
-      return this.create('salamander-piano');
+      return this.createNew('salamander-piano');
     }
 
     let instrument: SampledInstrument;
@@ -88,7 +95,6 @@ class InstrumentLoaderClass {
         instrument = createSalamanderPiano(); // Fallback
     }
 
-    this.cache.set(instrumentId, instrument);
     return instrument;
   }
 

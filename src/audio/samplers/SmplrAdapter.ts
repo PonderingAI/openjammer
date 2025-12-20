@@ -9,8 +9,7 @@ import { getAudioContext } from '../AudioEngine';
 type VersilianInstrumentName = 'cello' | 'violin' | 'viola' | 'double-bass';
 
 interface NoteHandle {
-  gainNode: GainNode;
-  scheduledStop?: number;
+  stopTimeout?: number;
 }
 
 export class SmplrInstrument extends SampledInstrument {
@@ -18,6 +17,7 @@ export class SmplrInstrument extends SampledInstrument {
   private instrumentName: VersilianInstrumentName;
   private noteHandles: Map<string, NoteHandle> = new Map();
   private smplrOutput: GainNode | null = null;
+  private isDisconnected: boolean = false; // Prevent operations after disconnect
 
   constructor(instrument: VersilianInstrumentName) {
     super();
@@ -44,61 +44,63 @@ export class SmplrInstrument extends SampledInstrument {
   }
 
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
-    const ctx = getAudioContext();
-    if (!this.sampler || !ctx || !this.smplrOutput) return;
+    if (!this.sampler || !this.smplrOutput) return;
 
     // Stop existing note if playing
-    if (this.noteHandles.has(note)) {
-      this.stopNoteImpl(note);
+    const existingHandle = this.noteHandles.get(note);
+    if (existingHandle?.stopTimeout) {
+      clearTimeout(existingHandle.stopTimeout);
     }
-
-    // Create per-note gain envelope for manual release control
-    const noteGain = ctx.createGain();
-    noteGain.gain.value = 1;
-    noteGain.connect(this.smplrOutput);
+    this.sampler.stop(note);
 
     // Start the note through smplr
+    // smplr routes audio internally to smplrOutput (set in constructor)
     this.sampler.start({ note, velocity });
 
-    // Store handle for release
-    this.noteHandles.set(note, { gainNode: noteGain });
+    // Store handle for release tracking
+    this.noteHandles.set(note, {});
     this.activeNotes.set(note, true);
   }
 
   protected stopNoteImpl(note: string): void {
-    const ctx = getAudioContext();
-    if (!this.sampler || !ctx) return;
+    if (!this.sampler) return;
 
     const handle = this.noteHandles.get(note);
-
-    if (handle && !handle.scheduledStop) {
-      const now = ctx.currentTime;
-
-      // Use setTargetAtTime for natural bowed string release
-      // Time constant of 0.10s for strings
-      const timeConstant = 0.10;
-      handle.gainNode.gain.setValueAtTime(handle.gainNode.gain.value, now);
-      handle.gainNode.gain.setTargetAtTime(0, now, timeConstant);
-
-      // Stop smplr note after 5x time constant (99% decay)
-      const cleanupTime = timeConstant * 5 * 1000; // Convert to ms
-      handle.scheduledStop = window.setTimeout(() => {
-        this.sampler?.stop(note);
-        handle.gainNode.disconnect();
-        this.noteHandles.delete(note);
-      }, cleanupTime);
+    if (!handle) {
+      // No handle, just stop immediately
+      this.sampler.stop(note);
+      this.activeNotes.delete(note);
+      return;
     }
+
+    // Already scheduled stop? Skip
+    if (handle.stopTimeout) {
+      this.activeNotes.delete(note);
+      return;
+    }
+
+    // Schedule stop with small delay to allow natural release
+    // smplr's Versilian instruments have built-in release samples
+    const releaseDelay = 100; // ms - short delay to trigger release sample
+    handle.stopTimeout = window.setTimeout(() => {
+      // Guard against operations after disconnect
+      if (this.isDisconnected) return;
+      this.sampler?.stop(note);
+      this.noteHandles.delete(note);
+    }, releaseDelay);
 
     this.activeNotes.delete(note);
   }
 
   disconnect(): void {
+    // Mark as disconnected to prevent pending timeout operations
+    this.isDisconnected = true;
+
     // Stop all notes and clear handles
     this.noteHandles.forEach(handle => {
-      if (handle.scheduledStop) {
-        clearTimeout(handle.scheduledStop);
+      if (handle.stopTimeout) {
+        clearTimeout(handle.stopTimeout);
       }
-      handle.gainNode.disconnect();
     });
     this.noteHandles.clear();
 

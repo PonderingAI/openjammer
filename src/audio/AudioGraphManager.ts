@@ -30,7 +30,7 @@ import { TonePianoInstrument } from './samplers/TonePianoAdapter';
 // ============================================================================
 
 /** Valid instrument node types for keyboard triggering */
-const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'] as const;
+const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'instrument'] as const;
 
 /** Keyboard row bounds (1-indexed rows) */
 const MIN_KEYBOARD_ROW = 1;
@@ -72,13 +72,21 @@ class AudioGraphManager {
     private isInitialized: boolean = false;
     private unsubscribeGraph: (() => void) | null = null;
 
-    // Signal level visualization
+    // Signal level visualization (audio connections)
     private connectionAnalysers: Map<string, AnalyserNode> = new Map(); // connectionKey -> AnalyserNode
     private signalLevels: Map<string, number> = new Map(); // connectionKey -> 0-1 RMS level
     private signalUpdateCallbacks: Set<(levels: Map<string, number>) => void> = new Set();
     private signalAnimationId: number | null = null;
     private lastSignalUpdateTime: number = 0;
     private readonly SIGNAL_UPDATE_INTERVAL_MS = 100; // Update every 100ms for performance
+
+    // Reusable buffer for signal level calculation (avoids allocation in hot path)
+    private signalDataBuffer: Float32Array<ArrayBuffer> | null = null;
+
+    // Control signal visualization (keyboard, pedal, etc.)
+    private controlActivities: Map<string, { level: number; releasing: boolean; releaseStart: number }> = new Map();
+    private controlSignalLevels: Map<string, number> = new Map(); // connectionId -> 0-1 activity level
+    private readonly CONTROL_RELEASE_MS = 120; // Subtle pulse release time
 
     // Ramp time for smooth transitions (10ms)
     private readonly RAMP_TIME = 0.01;
@@ -202,10 +210,51 @@ class AudioGraphManager {
     }
 
     /**
-     * Get all current signal levels
+     * Get all current signal levels (audio + control combined)
      */
     getAllSignalLevels(): Map<string, number> {
-        return new Map(this.signalLevels);
+        const combined = new Map(this.signalLevels);
+        // Merge control signal levels
+        for (const [id, level] of this.controlSignalLevels) {
+            combined.set(id, level);
+        }
+        return combined;
+    }
+
+    /**
+     * Activate visual feedback for a control signal connection
+     * Called when a key is pressed or pedal is engaged
+     * @param connectionId - The connection ID to activate
+     */
+    activateControlSignal(connectionId: string): void {
+        this.controlActivities.set(connectionId, {
+            level: 1,
+            releasing: false,
+            releaseStart: 0
+        });
+        this.controlSignalLevels.set(connectionId, 1);
+
+        // Ensure update loop is running
+        this.startSignalUpdateLoop();
+
+        // Notify subscribers immediately for instant visual feedback
+        this.signalUpdateCallbacks.forEach(callback => {
+            callback(this.getAllSignalLevels());
+        });
+    }
+
+    /**
+     * Release visual feedback for a control signal connection
+     * Called when a key is released or pedal is disengaged
+     * Fades out over CONTROL_RELEASE_MS
+     * @param connectionId - The connection ID to release
+     */
+    releaseControlSignal(connectionId: string): void {
+        const activity = this.controlActivities.get(connectionId);
+        if (activity) {
+            activity.releasing = true;
+            activity.releaseStart = performance.now();
+        }
     }
 
     /**
@@ -238,15 +287,20 @@ class AudioGraphManager {
     }
 
     /**
-     * Update all signal levels from analysers
+     * Update all signal levels from analysers and control signals
      */
     private updateSignalLevels(): void {
         let hasChanges = false;
 
+        // Update audio signal levels from analysers
         this.connectionAnalysers.forEach((analyser, connectionKey) => {
-            // Get time domain data for RMS calculation
-            const dataArray = new Float32Array(analyser.fftSize);
-            analyser.getFloatTimeDomainData(dataArray);
+            // Reuse buffer to avoid allocation in hot path (perf optimization)
+            const fftSize = analyser.fftSize;
+            if (!this.signalDataBuffer || this.signalDataBuffer.length !== fftSize) {
+                this.signalDataBuffer = new Float32Array(fftSize) as Float32Array<ArrayBuffer>;
+            }
+            analyser.getFloatTimeDomainData(this.signalDataBuffer);
+            const dataArray = this.signalDataBuffer;
 
             // Calculate RMS (root mean square) for signal level
             let sumSquares = 0;
@@ -269,10 +323,33 @@ class AudioGraphManager {
             }
         });
 
+        // Update control signal levels (keyboard, pedal release animation)
+        const now = performance.now();
+        for (const [connId, activity] of this.controlActivities) {
+            if (activity.releasing) {
+                const elapsed = now - activity.releaseStart;
+                const progress = Math.min(1, elapsed / this.CONTROL_RELEASE_MS);
+                activity.level = 1 - progress;
+
+                // Update the control signal level
+                this.controlSignalLevels.set(connId, activity.level);
+                hasChanges = true;
+
+                // Remove completed releases
+                if (progress >= 1) {
+                    this.controlActivities.delete(connId);
+                    this.controlSignalLevels.delete(connId);
+                }
+            } else if (activity.level > 0) {
+                // Key is held, ensure level is set
+                this.controlSignalLevels.set(connId, activity.level);
+            }
+        }
+
         // Notify subscribers if there are changes
         if (hasChanges) {
             this.signalUpdateCallbacks.forEach(callback => {
-                callback(this.signalLevels);
+                callback(this.getAllSignalLevels());
             });
         }
     }
@@ -362,12 +439,29 @@ class AudioGraphManager {
         });
 
         // Create audio nodes for new graph nodes (root nodes only)
-        // Internal nodes are created on-demand by getInternalAudioNode()
+        // Also check if instrument nodes need to be recreated due to instrument change
         graphNodes.forEach((graphNode, nodeId) => {
-            if (!this.audioNodes.has(nodeId)) {
+            const existingAudioNode = this.audioNodes.get(nodeId);
+
+            if (!existingAudioNode) {
+                // Create new audio node
                 const audioNode = this.createAudioNode(graphNode);
                 if (audioNode) {
                     this.audioNodes.set(nodeId, audioNode);
+                }
+            } else if (INSTRUMENT_NODE_TYPES.includes(graphNode.type as typeof INSTRUMENT_NODE_TYPES[number])) {
+                // Check if instrument has changed
+                const currentInstrumentId = this.getInstrumentIdForNode(graphNode);
+                const storedInstrumentId = (existingAudioNode as AudioNodeInstance & { instrumentId?: string }).instrumentId;
+
+                // Recreate if: no stored ID (legacy node) OR stored ID differs from current
+                if (!storedInstrumentId || storedInstrumentId !== currentInstrumentId) {
+                    // Instrument changed or legacy node - destroy old and create new
+                    this.destroyAudioNode(existingAudioNode);
+                    const newAudioNode = this.createAudioNode(graphNode);
+                    if (newAudioNode) {
+                        this.audioNodes.set(nodeId, newAudioNode);
+                    }
                 }
             }
         });
@@ -403,23 +497,38 @@ class AudioGraphManager {
             case 'saxophone':
             case 'strings':
             case 'keys':
-            case 'winds': {
+            case 'winds':
+            case 'instrument': {
                 const instrumentId = this.getInstrumentIdForNode(graphNode);
                 const instrument = InstrumentLoader.create(instrumentId);
 
-                // Set loading state callback for UI updates
+                // Connect instrument output to our routing chain
+                const connectInstrumentOutput = () => {
+                    const output = instrument.getOutput();
+                    if (output) {
+                        try {
+                            output.disconnect(); // Disconnect from any existing connections
+                        } catch {
+                            // May not be connected
+                        }
+                        output.connect(gainEnvelope);
+                    }
+                };
+
+                // Connect now if output exists
+                connectInstrumentOutput();
+
+                // Also connect when instrument finishes loading (handles lazy output creation)
                 instrument.setOnLoadingStateChange((state) => {
-                    console.debug(`Instrument ${instrumentId} loading state: ${state}`);
-                    // TODO: Could emit event or update store for UI here
+                    if (state === 'loaded') {
+                        connectInstrumentOutput();
+                    }
                 });
 
-                const output = instrument.getOutput();
-                if (output) {
-                    output.disconnect(); // Disconnect from master
-                    output.connect(gainEnvelope);
-                }
                 baseInstance.instance = instrument;
                 baseInstance.outputNode = gainEnvelope;
+                // Store instrumentId to detect changes later
+                (baseInstance as AudioNodeInstance & { instrumentId?: string }).instrumentId = instrumentId;
                 break;
             }
 
@@ -1227,20 +1336,8 @@ class AudioGraphManager {
         const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2]; // Default octaves for rows 1, 2, 3
         const baseOctave = rowOctaves[row - 1] ?? 4;
 
-        // Find which output port to use
-        // With hierarchical canvas system, ports are auto-generated from internal canvas-output nodes
-        let sourcePortId: string | undefined;
-
-        // Try to find a port that matches this row
-        sourcePortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
-        )?.id;
-
-        // If no row-specific port found, try to use first available output port
-        if (!sourcePortId) {
-            sourcePortId = keyboardNode.ports.find(p => p.direction === 'output')?.id;
-        }
-
+        // Find which output port to use (same logic as releaseKeyboardNote)
+        const sourcePortId = this.getKeyboardSourcePort(keyboardNode, row);
         if (!sourcePortId) return;
 
         // Find all connections from this port (control connections to instruments)
@@ -1274,11 +1371,10 @@ class AudioGraphManager {
                     const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
                     noteName = getNoteName(noteIndex, finalOctave);
 
-                    // Apply per-key gain from keyGains array
+                    // Apply per-key gain from keyGains array (default 1.0 = normal, 2.0 = double)
                     const keyGain = instrumentRow.keyGains?.[keyIndex] ?? 1;
-                    // Scale velocity by keyGain (keyGain of 1 = normal, 2 = double, etc.)
-                    // Clamp to 0-1 range
-                    finalVelocity = Math.max(0, Math.min(1, velocity * (keyGain / 2)));
+                    // Scale velocity by keyGain, clamp to 0-1 range
+                    finalVelocity = Math.max(0, Math.min(1, velocity * keyGain));
                 } else {
                     // Legacy system: use per-port offsets
                     const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
@@ -1300,6 +1396,32 @@ class AudioGraphManager {
                 }
             }
         }
+    }
+
+    /**
+     * Get the source port ID for a keyboard row
+     * Handles both bundled output mode and individual row ports
+     */
+    private getKeyboardSourcePort(keyboardNode: GraphNode, row: number): string | undefined {
+        // Check if keyboard is using bundled output (simple mode) or individual ports (advanced mode)
+        const bundlePort = keyboardNode.ports.find(p => p.id === 'bundle-out');
+
+        if (bundlePort) {
+            // Simple mode: use bundle port
+            return 'bundle-out';
+        }
+
+        // Advanced mode or legacy: find the specific row port
+        let sourcePortId = keyboardNode.ports.find(
+            p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
+        )?.id;
+
+        // If no row-specific port found, try to use first available output port
+        if (!sourcePortId) {
+            sourcePortId = keyboardNode.ports.find(p => p.direction === 'output')?.id;
+        }
+
+        return sourcePortId;
     }
 
     /**
@@ -1335,21 +1457,8 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Check if keyboard is using bundled output (simple mode) or individual ports (advanced mode)
-        const bundlePort = keyboardNode.ports.find(p => p.id === 'bundle-out');
-
-        let sourcePortId: string | undefined;
-
-        if (bundlePort) {
-            // Simple mode: use bundle port
-            sourcePortId = 'bundle-out';
-        } else {
-            // Advanced mode or legacy: find the specific row port
-            sourcePortId = keyboardNode.ports.find(
-                p => p.direction === 'output' && p.name.toLowerCase().includes(`row ${row}`)
-            )?.id;
-        }
-
+        // Find which output port to use (same logic as triggerKeyboardNote)
+        const sourcePortId = this.getKeyboardSourcePort(keyboardNode, row);
         if (!sourcePortId) return;
 
         // Get keyboard's row octave settings
