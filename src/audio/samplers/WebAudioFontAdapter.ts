@@ -6,7 +6,34 @@ import { SampledInstrument } from './SampledInstrument';
 import { getAudioContext } from '../AudioEngine';
 import type { EnvelopeConfig } from './types';
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Timeout for preset loading (30 seconds) */
+const PRESET_LOAD_TIMEOUT_MS = 30000;
+
+/** WebAudioFont CDN URL with version lock */
+const WEBAUDIOFONT_CDN_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
+
+/**
+ * Subresource Integrity hash for WebAudioFont script
+ * Note: This hash must be updated if the CDN script changes
+ * Generate with: shasum -b -a 384 WebAudioFontPlayer.js | awk '{ print $1 }' | xxd -r -p | base64
+ */
+const WEBAUDIOFONT_SRI_HASH = ''; // CDN doesn't provide stable hashes - script changes without version
+
+// ============================================================================
+// Script Loading State (Module-level singleton)
+// ============================================================================
+
+/** Track script loading state to prevent duplicate loads */
+let scriptLoadPromise: Promise<void> | null = null;
+
+// ============================================================================
 // WebAudioFont types (from npm package)
+// ============================================================================
+
 interface WebAudioFontLoader {
   startLoad: (ctx: AudioContext, url: string, name: string) => void;
   waitLoad: (cb: () => void) => void;
@@ -70,23 +97,57 @@ export class WebAudioFontInstrument extends SampledInstrument {
 
   /**
    * Load webaudiofont via script tag to ensure global scope exposure
+   * Uses module-level singleton to prevent duplicate script elements (memory leak fix)
    */
   private loadWebAudioFontScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Check if already loaded
+    // Return existing promise if script is already loading/loaded
+    if (scriptLoadPromise) {
+      return scriptLoadPromise;
+    }
+
+    scriptLoadPromise = new Promise((resolve, reject) => {
+      // Check if already loaded in global scope
       const globalAny = (typeof window !== 'undefined' ? window : globalThis) as unknown as Record<string, unknown>;
       if (typeof globalAny.WebAudioFontPlayer === 'function') {
         resolve();
         return;
       }
 
+      // Check if script element already exists (prevents duplicate DOM elements)
+      const existingScript = document.querySelector(`script[src="${WEBAUDIOFONT_CDN_URL}"]`);
+      if (existingScript) {
+        // Script exists but may still be loading - wait for global
+        const checkLoaded = () => {
+          if (typeof globalAny.WebAudioFontPlayer === 'function') {
+            resolve();
+          } else {
+            setTimeout(checkLoaded, 50);
+          }
+        };
+        checkLoaded();
+        return;
+      }
+
       // Load via script tag from CDN
       const script = document.createElement('script');
-      script.src = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
+      script.src = WEBAUDIOFONT_CDN_URL;
+
+      // Add SRI hash if available (for security)
+      if (WEBAUDIOFONT_SRI_HASH) {
+        script.integrity = WEBAUDIOFONT_SRI_HASH;
+        script.crossOrigin = 'anonymous';
+      }
+
       script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Failed to load WebAudioFont script from CDN'));
+      script.onerror = () => {
+        // Reset promise on error so retry is possible
+        scriptLoadPromise = null;
+        reject(new Error('Failed to load WebAudioFont script from CDN'));
+      };
       document.head.appendChild(script);
     });
+
+    return scriptLoadPromise;
   }
 
   /**
@@ -104,9 +165,9 @@ export class WebAudioFontInstrument extends SampledInstrument {
       const timeoutId = window.setTimeout(() => {
         if (!loadResolved) {
           loadResolved = true;
-          reject(new Error('WebAudioFont preset loading timeout (30s)'));
+          reject(new Error(`WebAudioFont preset loading timeout (${PRESET_LOAD_TIMEOUT_MS / 1000}s)`));
         }
-      }, 30000);
+      }, PRESET_LOAD_TIMEOUT_MS);
 
       try {
         this.player.loader.startLoad(ctx, this.config.presetUrl, this.config.presetVar);

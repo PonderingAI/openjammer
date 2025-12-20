@@ -8,10 +8,13 @@
  * - Pedal section at bottom
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { GraphNode, InstrumentRow, InstrumentNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import './InstrumentVisualNode.css';
+
+/** Debounce interval for wheel events (ms) */
+const WHEEL_DEBOUNCE_MS = 16; // ~60fps
 
 const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -54,6 +57,7 @@ function EditableValue({
 }) {
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
+    const lastWheelTime = useRef(0);
 
     const display = displayFn ? displayFn(value) : String(value);
 
@@ -61,6 +65,12 @@ function EditableValue({
         if (disabled) return;
         e.stopPropagation();
         e.preventDefault();
+
+        // Debounce rapid wheel events
+        const now = Date.now();
+        if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
+        lastWheelTime.current = now;
+
         const delta = e.deltaY > 0 ? -step : step;
         const newVal = Math.max(min, Math.min(max, value + delta));
         // Round to avoid floating point issues

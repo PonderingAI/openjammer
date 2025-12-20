@@ -13,6 +13,17 @@ import { getAudioContext } from '../AudioEngine';
 import { ConvolutionReverb } from '../ConvolutionReverb';
 import type { EnvelopeConfig } from './types';
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Timeout for sample loading (30 seconds) */
+const SAMPLE_LOAD_TIMEOUT_MS = 30000;
+
+// ============================================================================
+// Module State
+// ============================================================================
+
 // Module-level flag to ensure Tone context is set only once
 let toneContextInitialized = false;
 
@@ -84,7 +95,7 @@ export class TonePianoInstrument extends SampledInstrument {
       // Wait for samples to load with timeout
       const loadPromise = this.piano.load();
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Piano sample loading timeout (30s)')), 30000)
+        setTimeout(() => reject(new Error(`Piano sample loading timeout (${SAMPLE_LOAD_TIMEOUT_MS / 1000}s)`)), SAMPLE_LOAD_TIMEOUT_MS)
       );
       await Promise.race([loadPromise, timeoutPromise]);
 

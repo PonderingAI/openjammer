@@ -8,6 +8,9 @@ let audioContext: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 let toneInitialized = false;
 
+/** Promise to track ongoing initialization (prevents race condition) */
+let initializationPromise: Promise<AudioContext> | null = null;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -29,8 +32,10 @@ export interface LatencyMetrics {
 
 /**
  * Initialize the audio context (must be called after user gesture)
+ * Uses a promise guard to prevent race conditions from concurrent calls
  */
 export async function initAudioContext(config?: AudioContextConfig): Promise<AudioContext> {
+    // Return existing context if available and running
     if (audioContext && audioContext.state !== 'closed') {
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
@@ -40,18 +45,37 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
         return audioContext;
     }
 
-    audioContext = new AudioContext({
-        sampleRate: config?.sampleRate || 48000,
-        latencyHint: config?.latencyHint !== undefined ? config.latencyHint : 'interactive'
-    });
-    masterGain = audioContext.createGain();
-    masterGain.connect(audioContext.destination);
-    masterGain.gain.value = 0.8;
+    // If initialization is already in progress, wait for it (race condition fix)
+    if (initializationPromise) {
+        return initializationPromise;
+    }
 
-    // Initialize Tone.js with our AudioContext
-    await ensureToneStarted();
+    // Start initialization and store the promise
+    initializationPromise = (async () => {
+        try {
+            audioContext = new AudioContext({
+                sampleRate: config?.sampleRate || 48000,
+                latencyHint: config?.latencyHint !== undefined ? config.latencyHint : 'interactive'
+            });
+            masterGain = audioContext.createGain();
+            masterGain.connect(audioContext.destination);
+            masterGain.gain.value = 0.8;
 
-    return audioContext;
+            // Initialize Tone.js with our AudioContext
+            await ensureToneStarted();
+
+            return audioContext;
+        } catch (error) {
+            // Reset on error so retry is possible
+            initializationPromise = null;
+            throw error;
+        }
+    })();
+
+    const result = await initializationPromise;
+    // Clear the promise after successful initialization
+    initializationPromise = null;
+    return result;
 }
 
 /**
@@ -85,6 +109,8 @@ export async function reinitAudioContext(config: AudioContextConfig): Promise<Au
 
     audioContext = null;
     masterGain = null;
+    initializationPromise = null; // Reset initialization promise
+    toneInitialized = false; // Reset Tone.js state for reinit
 
     // Create new context with config
     return initAudioContext(config);
