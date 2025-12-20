@@ -14,13 +14,41 @@ import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData } from '../engine/types';
 
-// Type guard for instrument node data
+/**
+ * Type guard for instrument node data with runtime validation
+ * Validates both structure and content of rows array
+ */
 function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
     if (typeof data !== 'object' || data === null) return false;
-    // Accept data with either rows (new system) or offsets (legacy system)
-    const hasRows = 'rows' in data && Array.isArray((data as InstrumentNodeData).rows);
-    const hasOffsets = 'offsets' in data && typeof (data as InstrumentNodeData).offsets === 'object';
-    return hasRows || hasOffsets;
+
+    const d = data as Record<string, unknown>;
+
+    // Check for new row-based system
+    if ('rows' in d && Array.isArray(d.rows)) {
+        // Validate each row has required fields
+        const rows = d.rows as unknown[];
+        const isValidRows = rows.every((row): row is InstrumentRow => {
+            if (typeof row !== 'object' || row === null) return false;
+            const r = row as Record<string, unknown>;
+            return (
+                typeof r.rowId === 'string' &&
+                typeof r.portCount === 'number' &&
+                typeof r.baseNote === 'number' &&
+                typeof r.baseOctave === 'number' &&
+                typeof r.baseOffset === 'number' &&
+                typeof r.spread === 'number'
+            );
+        });
+        return isValidRows;
+    }
+
+    // Check for legacy offset-based system
+    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
+        return true;
+    }
+
+    // Empty data object is valid (no configuration yet)
+    return Object.keys(d).length === 0 || (!('rows' in d) && !('offsets' in d));
 }
 import { useGraphStore } from '../store/graphStore';
 import { TonePianoInstrument } from './samplers/TonePianoAdapter';
@@ -85,7 +113,8 @@ class AudioGraphManager {
     private readonly SIGNAL_UPDATE_INTERVAL_MS = 100; // Update every 100ms for performance
 
     // Reusable buffer for signal level calculation (avoids allocation in hot path)
-    private signalDataBuffer: Float32Array<ArrayBuffer> | null = null;
+    // Initialized with standard FFT size of 256 (matches analyser.fftSize)
+    private signalDataBuffer = new Float32Array(256);
 
     // Control signal visualization (keyboard, pedal, etc.)
     private controlActivities: Map<string, { level: number; releasing: boolean; releaseStart: number }> = new Map();
@@ -267,11 +296,21 @@ class AudioGraphManager {
 
     /**
      * Start the signal level update animation loop
+     * Only runs when there are active connections or control signals to visualize
      */
     private startSignalUpdateLoop(): void {
         if (this.signalAnimationId !== null) return;
 
         const updateLoop = (timestamp: number) => {
+            // Stop loop if no work to do (performance optimization)
+            const hasAudioConnections = this.connectionAnalysers.size > 0;
+            const hasControlSignals = this.controlActivities.size > 0;
+
+            if (!hasAudioConnections && !hasControlSignals && this.signalUpdateCallbacks.size === 0) {
+                this.stopSignalUpdateLoop();
+                return;
+            }
+
             // Throttle updates to SIGNAL_UPDATE_INTERVAL_MS
             if (timestamp - this.lastSignalUpdateTime >= this.SIGNAL_UPDATE_INTERVAL_MS) {
                 this.updateSignalLevels();
@@ -302,11 +341,8 @@ class AudioGraphManager {
 
         // Update audio signal levels from analysers
         this.connectionAnalysers.forEach((analyser, connectionKey) => {
-            // Reuse buffer to avoid allocation in hot path (perf optimization)
-            const fftSize = analyser.fftSize;
-            if (!this.signalDataBuffer || this.signalDataBuffer.length !== fftSize) {
-                this.signalDataBuffer = new Float32Array(fftSize) as Float32Array<ArrayBuffer>;
-            }
+            // Reuse pre-allocated buffer (perf optimization)
+            // Buffer size matches analyser.fftSize (256) set in createConnectionAnalyser
             analyser.getFloatTimeDomainData(this.signalDataBuffer);
             const dataArray = this.signalDataBuffer;
 

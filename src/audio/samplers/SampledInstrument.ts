@@ -214,6 +214,11 @@ export abstract class SampledInstrument<TNoteHandle = unknown> {
   disconnect(): void {
     this.clearAllCleanups();
     this.stopAllNotes();
+
+    // Clear load promise to prevent stale state on reconnect (memory leak fix)
+    this.loadPromise = null;
+    this.setLoadingState('idle');
+
     if (this.outputNode) {
       this.outputNode.disconnect();
       this.outputNode = null;

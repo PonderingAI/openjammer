@@ -9,7 +9,7 @@
 
 import * as Tone from 'tone';
 import { SampledInstrument } from './SampledInstrument';
-import { getAudioContext } from '../AudioEngine';
+import { getAudioContext, ensureToneStarted } from '../AudioEngine';
 import { ConvolutionReverb } from '../ConvolutionReverb';
 import type { EnvelopeConfig } from './types';
 
@@ -19,26 +19,6 @@ import type { EnvelopeConfig } from './types';
 
 /** Timeout for sample loading (30 seconds) */
 const SAMPLE_LOAD_TIMEOUT_MS = 30000;
-
-// ============================================================================
-// Module State
-// ============================================================================
-
-// Module-level flag to ensure Tone context is set only once
-let toneContextInitialized = false;
-
-async function ensureToneContext(ctx: AudioContext): Promise<void> {
-  if (toneContextInitialized) return;
-
-  // Set Tone.js to use our AudioContext
-  Tone.setContext(ctx);
-  toneContextInitialized = true;
-
-  // Ensure Tone.js is started (requires user gesture)
-  if (Tone.context.state !== 'running') {
-    await Tone.start();
-  }
-}
 
 // Interface for @tonejs/piano (dynamically imported)
 interface PianoInstance {
@@ -78,8 +58,9 @@ export class TonePianoInstrument extends SampledInstrument {
     if (!ctx) throw new Error('AudioContext not available');
 
     try {
-      // CRITICAL: Set Tone.js context BEFORE creating Piano
-      await ensureToneContext(ctx);
+      // CRITICAL: Ensure Tone.js is initialized with our shared AudioContext
+      // Uses the single source of truth from AudioEngine to prevent race conditions
+      await ensureToneStarted();
 
       // Dynamic import to avoid module loading errors
       const { Piano } = await import('@tonejs/piano').catch((importErr) => {

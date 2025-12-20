@@ -79,11 +79,19 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
 }
 
 /**
- * Ensure Tone.js is initialized and started
+ * Ensure Tone.js is initialized and started with our AudioContext
  * MUST be called after user gesture for audio to work
+ *
+ * This is the SINGLE SOURCE OF TRUTH for Tone.js initialization.
+ * All code that needs Tone.js should call this function rather than
+ * managing their own initialization state.
+ *
+ * @returns Promise that resolves when Tone.js is ready, or rejects if no AudioContext
  */
-async function ensureToneStarted(): Promise<void> {
-    if (!audioContext) return;
+export async function ensureToneStarted(): Promise<void> {
+    if (!audioContext) {
+        throw new Error('AudioContext not initialized. Call initAudioContext() first.');
+    }
 
     // Set Tone.js to use our context (only once)
     if (!toneInitialized) {
@@ -95,6 +103,13 @@ async function ensureToneStarted(): Promise<void> {
     if (Tone.context.state !== 'running') {
         await Tone.start();
     }
+}
+
+/**
+ * Check if Tone.js has been initialized with our AudioContext
+ */
+export function isToneInitialized(): boolean {
+    return toneInitialized;
 }
 
 /**

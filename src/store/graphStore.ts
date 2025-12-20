@@ -19,6 +19,34 @@ import { useCanvasNavigationStore } from './canvasNavigationStore';
 import type { InstrumentRow, InstrumentNodeData } from '../engine/types';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Node dimension constants - extracted for maintainability */
+const NODE_DIMENSIONS = {
+    // Keyboard node
+    KEYBOARD_WIDTH: 160,
+    KEYBOARD_HEIGHT: 120,
+
+    // Speaker node
+    SPEAKER_WIDTH: 140,
+    SPEAKER_HEIGHT: 160,
+
+    // Looper node
+    LOOPER_WIDTH: 240,
+    LOOPER_HEIGHT: 120,
+
+    // Instrument nodes (dynamic height)
+    INSTRUMENT_WIDTH: 180,
+    INSTRUMENT_BASE_HEIGHT: 60,
+    INSTRUMENT_PORT_HEIGHT: 28,
+
+    // Default/standard nodes
+    DEFAULT_WIDTH: 200,
+    DEFAULT_HEIGHT: 150,
+} as const;
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
 
@@ -32,11 +60,20 @@ function generateId(): string {
 export function getNodeDimensions(node: GraphNode): { width: number; height: number } {
     switch (node.type) {
         case 'keyboard':
-            return { width: 160, height: 120 };
+            return {
+                width: NODE_DIMENSIONS.KEYBOARD_WIDTH,
+                height: NODE_DIMENSIONS.KEYBOARD_HEIGHT
+            };
         case 'speaker':
-            return { width: 140, height: 160 };
+            return {
+                width: NODE_DIMENSIONS.SPEAKER_WIDTH,
+                height: NODE_DIMENSIONS.SPEAKER_HEIGHT
+            };
         case 'looper':
-            return { width: 240, height: 120 }; // Updated for schematic looper
+            return {
+                width: NODE_DIMENSIONS.LOOPER_WIDTH,
+                height: NODE_DIMENSIONS.LOOPER_HEIGHT
+            };
         case 'piano':
         case 'cello':
         case 'electricCello':
@@ -47,10 +84,16 @@ export function getNodeDimensions(node: GraphNode): { width: number; height: num
         case 'winds':
             // Instrument nodes: height varies by number of input ports
             const inputPorts = node.ports.filter(p => p.direction === 'input').length;
-            return { width: 180, height: 60 + (inputPorts * 28) };
+            return {
+                width: NODE_DIMENSIONS.INSTRUMENT_WIDTH,
+                height: NODE_DIMENSIONS.INSTRUMENT_BASE_HEIGHT + (inputPorts * NODE_DIMENSIONS.INSTRUMENT_PORT_HEIGHT)
+            };
         default:
             // Standard nodes (microphone, effect, amplifier, recorder)
-            return { width: 200, height: 150 };
+            return {
+                width: NODE_DIMENSIONS.DEFAULT_WIDTH,
+                height: NODE_DIMENSIONS.DEFAULT_HEIGHT
+            };
     }
 }
 

@@ -8,7 +8,7 @@
  * - Pedal section at bottom
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, memo } from 'react';
 import type { GraphNode, InstrumentRow, InstrumentNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import './InstrumentVisualNode.css';
@@ -17,6 +17,28 @@ import './InstrumentVisualNode.css';
 const WHEEL_DEBOUNCE_MS = 16; // ~60fps
 
 const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+/**
+ * Type guard to validate InstrumentNodeData structure
+ */
+function isValidInstrumentData(data: unknown): data is InstrumentNodeData {
+    if (typeof data !== 'object' || data === null) return false;
+    const d = data as Record<string, unknown>;
+    // Must have rows array (new system) or offsets object (legacy)
+    if ('rows' in d && Array.isArray(d.rows)) {
+        // Validate rows structure
+        return d.rows.every((row: unknown) =>
+            typeof row === 'object' && row !== null &&
+            'rowId' in (row as Record<string, unknown>) &&
+            'portCount' in (row as Record<string, unknown>)
+        );
+    }
+    if ('offsets' in d && typeof d.offsets === 'object') {
+        return true;
+    }
+    // Empty data is valid (no rows yet)
+    return true;
+}
 
 interface InstrumentVisualNodeProps {
     node: GraphNode;
@@ -34,7 +56,8 @@ interface InstrumentVisualNodeProps {
 }
 
 // Editable value component with scroll and click-to-edit
-function EditableValue({
+// Memoized to prevent expensive re-renders
+const EditableValue = memo(function EditableValue({
     value,
     label,
     onChange,
@@ -131,7 +154,7 @@ function EditableValue({
             <span className="editable-label">{label}</span>
         </span>
     );
-}
+});
 
 export function InstrumentVisualNode({
     node,
@@ -149,9 +172,42 @@ export function InstrumentVisualNode({
 }: InstrumentVisualNodeProps) {
     const { nodes, updateInstrumentRow } = useGraphStore();
 
-    // Get parent node to access row data
+    // Get parent node to access row data with proper validation
     const parentNode = node.parentId ? nodes.get(node.parentId) : null;
-    const parentData = (parentNode?.data || {}) as InstrumentNodeData;
+
+    // Validate parent node exists and has valid instrument data
+    if (node.parentId && !parentNode) {
+        // Parent was deleted or doesn't exist - show error state
+        return (
+            <div
+                className={`instrument-visual-node compact error ${isSelected ? 'selected' : ''}`}
+                style={style}
+            >
+                <div className="instrument-visual-header compact">
+                    <span className="instrument-visual-title">Error</span>
+                </div>
+                <div className="no-rows-message compact">Parent node not found</div>
+            </div>
+        );
+    }
+
+    const parentData = parentNode?.data ?? {};
+
+    // Validate parent data structure
+    if (!isValidInstrumentData(parentData)) {
+        return (
+            <div
+                className={`instrument-visual-node compact error ${isSelected ? 'selected' : ''}`}
+                style={style}
+            >
+                <div className="instrument-visual-header compact">
+                    <span className="instrument-visual-title">Error</span>
+                </div>
+                <div className="no-rows-message compact">Invalid instrument data</div>
+            </div>
+        );
+    }
+
     const rows: InstrumentRow[] = parentData.rows || [];
     const parentNodeId = parentNode?.id;
 
