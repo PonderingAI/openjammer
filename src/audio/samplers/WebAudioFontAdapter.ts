@@ -13,31 +13,27 @@ import type { EnvelopeConfig } from './types';
 /** Timeout for preset loading (30 seconds) */
 const PRESET_LOAD_TIMEOUT_MS = 30000;
 
+/** Maximum concurrent notes to prevent resource exhaustion */
+const MAX_CONCURRENT_NOTES = 64;
+
 /**
- * WebAudioFont CDN URL
+ * WebAudioFont Script URL - Self-hosted from /public/lib
  *
- * SECURITY NOTE: This CDN doesn't provide versioned URLs or stable content hashes.
- * The script can change without notice, which is a supply chain risk.
+ * SECURITY: Self-hosted from npm package (webaudiofont@3.0.4) to avoid CDN supply chain risks.
+ * The file is copied from node_modules/webaudiofont/npm/dist/WebAudioFontPlayer.js
+ * and bundled with the application.
  *
- * RECOMMENDED MITIGATIONS (in order of preference):
- * 1. Self-host: Download WebAudioFontPlayer.js to /public and serve locally
- * 2. Use npm: Install webaudiofont via npm and bundle it (requires build config)
- * 3. Pin to commit: Use jsDelivr with a specific commit hash
- *    e.g., https://cdn.jsdelivr.net/gh/surikov/webaudiofont@COMMIT_HASH/npm/dist/WebAudioFontPlayer.js
- *
- * For now, we use the CDN as a fallback but acknowledge the risk.
+ * To update: Copy new version from node_modules and regenerate SRI hash:
+ *   cat public/lib/WebAudioFontPlayer.js | openssl dgst -sha384 -binary | openssl base64 -A
  */
-const WEBAUDIOFONT_CDN_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
+const WEBAUDIOFONT_SCRIPT_URL = '/lib/WebAudioFontPlayer.js';
 
 /**
  * Subresource Integrity hash for WebAudioFont script
- *
- * This is empty because the CDN serves mutable content (no versioning).
- * If you self-host or use a pinned version, generate the hash with:
- *   curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A
- * Then set: `sha384-<hash>`
+ * Generated from the self-hosted file for defense in depth
+ * Even though self-hosted, SRI ensures file integrity hasn't been modified
  */
-const WEBAUDIOFONT_SRI_HASH = '';
+const WEBAUDIOFONT_SRI_HASH = 'sha384-VpK1JoeR4g+Po6yJ33FsW8A9zkuCtHT6IqThhykRl4WDDQkFpEKBpz+EXWY/um0b';
 
 // ============================================================================
 // Script Loading State (Module-level singleton)
@@ -130,7 +126,7 @@ export class WebAudioFontInstrument extends SampledInstrument {
       }
 
       // Check if script element already exists (prevents duplicate DOM elements)
-      const existingScript = document.querySelector(`script[src="${WEBAUDIOFONT_CDN_URL}"]`);
+      const existingScript = document.querySelector(`script[src="${WEBAUDIOFONT_SCRIPT_URL}"]`);
       if (existingScript) {
         // Script exists but may still be loading - wait for global
         const checkLoaded = () => {
@@ -144,21 +140,18 @@ export class WebAudioFontInstrument extends SampledInstrument {
         return;
       }
 
-      // Load via script tag from CDN
+      // Load via script tag from self-hosted file
       const script = document.createElement('script');
-      script.src = WEBAUDIOFONT_CDN_URL;
+      script.src = WEBAUDIOFONT_SCRIPT_URL;
 
-      // Add SRI hash if available (for security)
-      if (WEBAUDIOFONT_SRI_HASH) {
-        script.integrity = WEBAUDIOFONT_SRI_HASH;
-        script.crossOrigin = 'anonymous';
-      }
+      // Add SRI hash for integrity verification (defense in depth)
+      script.integrity = WEBAUDIOFONT_SRI_HASH;
 
       script.onload = () => resolve();
       script.onerror = () => {
         // Reset promise on error so retry is possible
         scriptLoadPromise = null;
-        reject(new Error('Failed to load WebAudioFont script from CDN'));
+        reject(new Error('Failed to load WebAudioFont script from /lib/WebAudioFontPlayer.js'));
       };
       document.head.appendChild(script);
     });
@@ -231,6 +224,12 @@ export class WebAudioFontInstrument extends SampledInstrument {
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
     const ctx = getAudioContext();
     if (!this.player || !this.preset || !ctx || !this.outputNode) return;
+
+    // Prevent resource exhaustion from too many concurrent notes
+    if (this.noteHandles.size >= MAX_CONCURRENT_NOTES) {
+      console.warn(`[WebAudioFont] Max concurrent notes (${MAX_CONCURRENT_NOTES}) reached, dropping note ${note}`);
+      return;
+    }
 
     const midi = this.noteToMidi(note);
 

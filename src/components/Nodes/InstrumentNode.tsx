@@ -5,7 +5,7 @@
  * Shows row-based note grid with spread control - each bundle connection creates a row
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
@@ -29,9 +29,34 @@ interface InstrumentNodeProps {
     style?: React.CSSProperties;
 }
 
+// ============================================================================
 // Constants
+// ============================================================================
+
+/** Musical note names for display */
 const NOTE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+
+/** Minimum mouse movement before treating interaction as drag */
 const DRAG_THRESHOLD_PX = 5;
+
+/** Dropdown positioning constraints */
+const DROPDOWN_LAYOUT = {
+    HEADER_HEIGHT: 36,
+    MAX_WIDTH_RATIO: 0.5,    // 50% of viewport
+    MAX_WIDTH_PX: 800,
+    MAX_HEIGHT_RATIO: 0.4,   // 40% of viewport
+    MAX_HEIGHT_PX: 600,
+    MIN_HEIGHT_PX: 150,
+    MIN_WIDTH_PX: 250,
+    EDGE_PADDING_PX: 10,
+} as const;
+
+/** Row parameter value ranges */
+const ROW_PARAM_RANGES = {
+    NOTE: { min: 0, max: 6 },       // C to B
+    OCTAVE: { min: 0, max: 8 },     // Piano range
+    OFFSET: { min: -24, max: 24 },  // +/- 2 octaves
+} as const;
 
 // Build instrument labels from loader
 const INSTRUMENT_LABELS: Record<string, string> = {};
@@ -267,29 +292,35 @@ export function InstrumentNode({
             if (!nodeRef.current) return;
 
             const nodeRect = nodeRef.current.getBoundingClientRect();
-            const headerHeight = 36;
             const viewportHeight = window.innerHeight;
             const viewportWidth = window.innerWidth;
 
-            const spaceBelow = viewportHeight - (nodeRect.top + headerHeight);
-            const desiredWidth = Math.min(viewportWidth * 0.5, 800);
-            const desiredHeight = Math.min(viewportHeight * 0.4, 600);
-            const minHeight = 150;
-            const minWidth = 250;
+            const spaceBelow = viewportHeight - (nodeRect.top + DROPDOWN_LAYOUT.HEADER_HEIGHT);
+            const desiredWidth = Math.min(
+                viewportWidth * DROPDOWN_LAYOUT.MAX_WIDTH_RATIO,
+                DROPDOWN_LAYOUT.MAX_WIDTH_PX
+            );
+            const desiredHeight = Math.min(
+                viewportHeight * DROPDOWN_LAYOUT.MAX_HEIGHT_RATIO,
+                DROPDOWN_LAYOUT.MAX_HEIGHT_PX
+            );
 
-            const actualHeight = Math.max(0, Math.min(desiredHeight, spaceBelow - 10));
+            const actualHeight = Math.max(0, Math.min(
+                desiredHeight,
+                spaceBelow - DROPDOWN_LAYOUT.EDGE_PADDING_PX
+            ));
 
-            if (actualHeight < minHeight) {
+            if (actualHeight < DROPDOWN_LAYOUT.MIN_HEIGHT_PX) {
                 setDropdownStyle({ display: 'none' });
                 return;
             }
 
-            const actualWidth = Math.max(minWidth, desiredWidth);
+            const actualWidth = Math.max(DROPDOWN_LAYOUT.MIN_WIDTH_PX, desiredWidth);
             const leftOffset = (nodeRect.width - actualWidth) / 2;
 
             setDropdownStyle({
                 display: 'flex',
-                top: headerHeight,
+                top: DROPDOWN_LAYOUT.HEADER_HEIGHT,
                 left: leftOffset,
                 width: actualWidth,
                 height: actualHeight,
@@ -428,8 +459,8 @@ export function InstrumentNode({
         setSearchQuery('');
     };
 
-    // Update row field
-    const updateRowField = (rowId: string, field: keyof InstrumentRow, value: number) => {
+    // Update row field - memoized to prevent unnecessary re-renders
+    const updateRowField = useCallback((rowId: string, field: keyof InstrumentRow, value: number) => {
         const currentRows = data.rows || [];
         const updatedRows = currentRows.map(row => {
             if (row.rowId === rowId) {
@@ -438,10 +469,10 @@ export function InstrumentNode({
             return row;
         });
         updateNodeData(node.id, { rows: updatedRows });
-    };
+    }, [data.rows, node.id, updateNodeData]);
 
-    // Handle wheel on row control
-    const handleRowWheel = (rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
+    // Handle wheel on row control - memoized to prevent unnecessary re-renders
+    const handleRowWheel = useCallback((rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
         e.stopPropagation();
         // Note: preventDefault() removed - React wheel events are passive by default
         const row = rows.find(r => r.rowId === rowId);
@@ -452,7 +483,7 @@ export function InstrumentNode({
         const step = field === 'spread' ? 0.1 : 1;
         const newValue = Math.max(min, Math.min(max, currentValue + delta * step));
         updateRowField(rowId, field, newValue);
-    };
+    }, [rows, updateRowField]);
 
     return (
         <div
@@ -532,22 +563,22 @@ export function InstrumentNode({
                                             <>
                                                 <span
                                                     className="row-value note-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, 0, 6)}
-                                                    title="Note (C-B) - scroll to change"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, ROW_PARAM_RANGES.NOTE.min, ROW_PARAM_RANGES.NOTE.max)}
+                                                    title={`Note (C-B) - scroll to change`}
                                                 >
                                                     {NOTE_NAMES[row.baseNote] || 'C'}
                                                 </span>
                                                 <span
                                                     className="row-value octave-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOctave', e, 0, 8)}
-                                                    title="Octave (0-8) - scroll to change"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOctave', e, ROW_PARAM_RANGES.OCTAVE.min, ROW_PARAM_RANGES.OCTAVE.max)}
+                                                    title={`Octave (${ROW_PARAM_RANGES.OCTAVE.min}-${ROW_PARAM_RANGES.OCTAVE.max}) - scroll to change`}
                                                 >
                                                     {row.baseOctave}
                                                 </span>
                                                 <span
                                                     className="row-value offset-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOffset', e, -24, 24)}
-                                                    title="Offset (-24 to +24) - scroll to change"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOffset', e, ROW_PARAM_RANGES.OFFSET.min, ROW_PARAM_RANGES.OFFSET.max)}
+                                                    title={`Offset (${ROW_PARAM_RANGES.OFFSET.min} to +${ROW_PARAM_RANGES.OFFSET.max}) - scroll to change`}
                                                 >
                                                     {row.baseOffset >= 0 ? `+${row.baseOffset}` : row.baseOffset}
                                                 </span>

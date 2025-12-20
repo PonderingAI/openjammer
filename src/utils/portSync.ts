@@ -5,6 +5,86 @@
 import type { GraphNode, PortDefinition, Connection } from '../engine/types';
 import { generateUniqueId } from './idGenerator';
 
+// ============================================================================
+// Port ID Validation
+// ============================================================================
+
+/**
+ * Validate a port ID to prevent path traversal and injection attacks
+ *
+ * Valid IDs:
+ * - Must start with a letter
+ * - Can contain letters, numbers, hyphens, and underscores
+ * - Cannot be empty
+ * - Cannot contain path traversal characters (../, /, \)
+ * - Cannot contain XSS/injection characters (<, >, &, ", ', ;, etc.)
+ *
+ * This pattern is intentionally strict to prevent:
+ * - Path traversal attacks (../../etc/passwd)
+ * - XSS attacks (<script>alert(1)</script>)
+ * - SQL injection ('OR 1=1--)
+ * - Command injection (;rm -rf /)
+ *
+ * @param id - The port ID to validate
+ * @returns true if the ID is safe, false otherwise
+ */
+export function isValidPortId(id: string): boolean {
+    if (!id || typeof id !== 'string') return false;
+
+    // Limit length to prevent DoS via extremely long strings
+    if (id.length > 256) return false;
+
+    // Must start with a letter, then contain only alphanumeric, hyphen, underscore
+    return /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(id);
+}
+
+/**
+ * Validate a composite port ID (panelId:portId format)
+ *
+ * @param id - The composite port ID to validate (e.g., "output-panel-123:port-1")
+ * @returns true if both parts are valid, false otherwise
+ */
+export function isValidCompositePortId(id: string): boolean {
+    if (!id || typeof id !== 'string') return false;
+
+    // Limit length
+    if (id.length > 512) return false;
+
+    const colonIndex = id.indexOf(':');
+    if (colonIndex === -1) {
+        return isValidPortId(id);
+    }
+
+    // Only one colon allowed
+    if (id.indexOf(':', colonIndex + 1) !== -1) return false;
+
+    const panelId = id.substring(0, colonIndex);
+    const portId = id.substring(colonIndex + 1);
+
+    return isValidPortId(panelId) && isValidPortId(portId);
+}
+
+/**
+ * Sanitize a port ID by removing invalid characters
+ * Use this for display purposes only, not for security-critical operations
+ *
+ * @param id - The port ID to sanitize
+ * @returns A sanitized version of the ID, or 'invalid-port' if completely invalid
+ */
+export function sanitizePortId(id: string): string {
+    if (!id || typeof id !== 'string') return 'invalid-port';
+
+    // Remove any character that's not alphanumeric, hyphen, or underscore
+    const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    // Ensure it starts with a letter
+    if (!sanitized || !/^[a-zA-Z]/.test(sanitized)) {
+        return 'port-' + sanitized.substring(0, 50);
+    }
+
+    return sanitized.substring(0, 256);
+}
+
 /**
  * Synchronize a node's ports with its internal canvas-input/output nodes
  *
@@ -257,6 +337,12 @@ export function getBundleSizeFromSourcePort(
     nodes: Map<string, GraphNode>,
     connections: Map<string, Connection>
 ): { size: number; label: string } {
+    // Validate port ID to prevent injection attacks
+    if (!isValidCompositePortId(sourcePortId)) {
+        console.warn('[portSync] Invalid source port ID rejected:', sourcePortId);
+        return { size: 1, label: 'Input' };
+    }
+
     // Parse composite port ID: "output-panel-xxx:port-1"
     const colonIndex = sourcePortId.indexOf(':');
     const panelId = colonIndex !== -1 ? sourcePortId.substring(0, colonIndex) : sourcePortId;

@@ -26,6 +26,8 @@ const VALIDATION_BOUNDS = {
     MAX_OFFSET: 48,       // 4 octaves up
     MIN_SPREAD: 0,
     MAX_SPREAD: 12,       // Max 1 octave spread per key
+    MIN_KEY_GAIN: 0,      // Minimum per-key gain multiplier
+    MAX_KEY_GAIN: 10,     // Maximum per-key gain multiplier (10x amplification cap)
 } as const;
 
 /**
@@ -64,6 +66,19 @@ function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
                 r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
             if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
                 r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
+
+            // Validate keyGains if present (optional field)
+            if ('keyGains' in r && r.keyGains !== undefined) {
+                if (!Array.isArray(r.keyGains)) return false;
+                const gains = r.keyGains as unknown[];
+                const validGains = gains.every((g): g is number =>
+                    typeof g === 'number' &&
+                    Number.isFinite(g) &&
+                    g >= VALIDATION_BOUNDS.MIN_KEY_GAIN &&
+                    g <= VALIDATION_BOUNDS.MAX_KEY_GAIN
+                );
+                if (!validGains) return false;
+            }
 
             return true;
         });
@@ -172,6 +187,13 @@ class AudioGraphManager {
     // Metadata storage for audio nodes (avoids unsafe type assertions)
     private audioNodeMetadata: Map<string, AudioNodeMetadata> = new Map();
 
+    /**
+     * Connection index for O(1) lookup by source node+port
+     * Key format: "nodeId:portId" -> array of connections from that source
+     * Updated whenever connections change
+     */
+    private connectionsBySource: Map<string, Connection[]> = new Map();
+
     // Signal level visualization (audio connections)
     private connectionAnalysers: Map<string, AnalyserNode> = new Map(); // connectionKey -> AnalyserNode
     private signalLevels: Map<string, number> = new Map(); // connectionKey -> 0-1 RMS level
@@ -197,8 +219,11 @@ class AudioGraphManager {
      * Ensures the gain ramp completes before disconnecting nodes.
      * Without this buffer, race conditions can cause audio clicks
      * if setTimeout fires slightly before the ramp finishes.
+     *
+     * Set to 50ms (5x ramp time) to prevent clicks on slower systems
+     * or under heavy CPU load where setTimeout may fire late.
      */
-    private readonly RAMP_SAFETY_BUFFER_MS = 10;
+    private readonly RAMP_SAFETY_BUFFER_MS = 50;
 
     /**
      * Initialize the manager and subscribe to graph changes
@@ -944,8 +969,37 @@ class AudioGraphManager {
         // Update tracked connections
         this.activeAudioConnections = currentConnectionKeys;
 
+        // Rebuild connection index for O(1) lookups in keyboard triggering
+        this.rebuildConnectionIndex(graphConnections);
+
         // Process hierarchical routing through internal structures
         this.processHierarchicalRouting(_graphNodes);
+    }
+
+    /**
+     * Rebuild the connectionsBySource index for O(1) lookup
+     * Called whenever connections change
+     */
+    private rebuildConnectionIndex(graphConnections: Map<string, Connection>): void {
+        this.connectionsBySource.clear();
+
+        for (const connection of graphConnections.values()) {
+            const key = `${connection.sourceNodeId}:${connection.sourcePortId}`;
+            const existing = this.connectionsBySource.get(key);
+            if (existing) {
+                existing.push(connection);
+            } else {
+                this.connectionsBySource.set(key, [connection]);
+            }
+        }
+    }
+
+    /**
+     * Get connections from a specific source node+port
+     * O(1) lookup using pre-built index
+     */
+    private getConnectionsFromSource(sourceNodeId: string, sourcePortId: string): Connection[] {
+        return this.connectionsBySource.get(`${sourceNodeId}:${sourcePortId}`) ?? [];
     }
 
     /**
@@ -1466,7 +1520,6 @@ class AudioGraphManager {
         // Clamp velocity to valid range (0-1) to prevent audio damage
         const clampedVelocity = Math.max(0, Math.min(1, velocity));
 
-        const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
         // Get the keyboard node
@@ -1482,60 +1535,61 @@ class AudioGraphManager {
         const sourcePortId = this.getKeyboardSourcePort(keyboardNode, row);
         if (!sourcePortId) return;
 
-        // Find all connections from this port (control connections to instruments)
-        for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === sourcePortId) {
-                const targetNodeId = connection.targetNodeId;
-                const targetNode = graphNodes.get(targetNodeId);
+        // Get all connections from this port using O(1) indexed lookup
+        const connections = this.getConnectionsFromSource(keyboardId, sourcePortId);
 
-                if (!targetNode) continue;
+        // Process each connection to instruments
+        for (const connection of connections) {
+            const targetNodeId = connection.targetNodeId;
+            const targetNode = graphNodes.get(targetNodeId);
 
-                // Check if target is an instrument
-                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+            if (!targetNode) continue;
 
-                // Validate instrument data with type guard
-                if (!isInstrumentNodeData(targetNode.data)) continue;
-                const instrumentData = targetNode.data;
+            // Check if target is an instrument
+            if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
-                const targetPortId = connection.targetPortId;
+            // Validate instrument data with type guard
+            if (!isInstrumentNodeData(targetNode.data)) continue;
+            const instrumentData = targetNode.data;
 
-                // NEW: Check for row-based system first
-                const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
+            const targetPortId = connection.targetPortId;
 
-                let noteName: string;
-                let finalVelocity = clampedVelocity;
+            // NEW: Check for row-based system first
+            const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
 
-                if (instrumentRow) {
-                    // New row-based system: calculate note using spread
-                    // Spread-based offset: baseOffset + (keyIndex * spread)
-                    const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
-                    const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
-                    const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
-                    noteName = getNoteName(noteIndex, finalOctave);
+            let noteName: string;
+            let finalVelocity = clampedVelocity;
 
-                    // Apply per-key gain from keyGains array (default 1.0 = normal, 2.0 = double)
-                    const keyGain = instrumentRow.keyGains?.[keyIndex] ?? 1;
-                    // Scale velocity by keyGain (already clamped at input)
-                    finalVelocity = Math.max(0, Math.min(1, clampedVelocity * keyGain));
-                } else {
-                    // Legacy system: use per-port offsets
-                    const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
-                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
-                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+            if (instrumentRow) {
+                // New row-based system: calculate note using spread
+                // Spread-based offset: baseOffset + (keyIndex * spread)
+                const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
+                const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
+                const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
+                noteName = getNoteName(noteIndex, finalOctave);
 
-                    // Calculate final note
-                    const finalOctave = baseOctave + octaveOffset;
-                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+                // Apply per-key gain from keyGains array (default 1.0 = normal, 2.0 = double)
+                const keyGain = instrumentRow.keyGains?.[keyIndex] ?? 1;
+                // Scale velocity by keyGain (already clamped at input)
+                finalVelocity = Math.max(0, Math.min(1, clampedVelocity * keyGain));
+            } else {
+                // Legacy system: use per-port offsets
+                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
-                    // Convert to note name string (e.g., "C4", "D#4")
-                    noteName = getNoteName(finalNoteIndex, finalOctave);
-                }
+                // Calculate final note
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
 
-                // Get the instrument and play the note with adjusted velocity
-                const instrument = this.getInstrument(targetNodeId);
-                if (instrument) {
-                    instrument.playNote(noteName, finalVelocity);
-                }
+                // Convert to note name string (e.g., "C4", "D#4")
+                noteName = getNoteName(finalNoteIndex, finalOctave);
+            }
+
+            // Get the instrument and play the note with adjusted velocity
+            const instrument = this.getInstrument(targetNodeId);
+            if (instrument) {
+                instrument.playNote(noteName, finalVelocity);
             }
         }
     }
@@ -1592,7 +1646,6 @@ class AudioGraphManager {
         if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
         if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
 
-        const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
         // Get the keyboard node
@@ -1608,52 +1661,53 @@ class AudioGraphManager {
         const rowOctaves = keyboardData.rowOctaves ?? [4, 3, 2];
         const baseOctave = rowOctaves[row - 1] ?? 4;
 
-        // Find all connections from this port
-        for (const [, connection] of graphConnections) {
-            if (connection.sourceNodeId === keyboardId && connection.sourcePortId === sourcePortId) {
-                const targetNodeId = connection.targetNodeId;
-                const targetNode = graphNodes.get(targetNodeId);
+        // Get all connections from this port using O(1) indexed lookup
+        const connections = this.getConnectionsFromSource(keyboardId, sourcePortId);
 
-                if (!targetNode) continue;
+        // Process each connection to instruments
+        for (const connection of connections) {
+            const targetNodeId = connection.targetNodeId;
+            const targetNode = graphNodes.get(targetNodeId);
 
-                // Check if target is an instrument
-                if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+            if (!targetNode) continue;
 
-                // Validate instrument data with type guard
-                if (!isInstrumentNodeData(targetNode.data)) continue;
-                const instrumentData = targetNode.data;
+            // Check if target is an instrument
+            if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
-                const targetPortId = connection.targetPortId;
+            // Validate instrument data with type guard
+            if (!isInstrumentNodeData(targetNode.data)) continue;
+            const instrumentData = targetNode.data;
 
-                // NEW: Check for row-based system first
-                const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
+            const targetPortId = connection.targetPortId;
 
-                let noteName: string;
-                if (instrumentRow) {
-                    // New row-based system: calculate note using spread
-                    const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
-                    const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
-                    const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
-                    noteName = getNoteName(noteIndex, finalOctave);
-                } else {
-                    // Legacy system: use per-port offsets
-                    const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
-                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
-                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+            // NEW: Check for row-based system first
+            const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
 
-                    // Calculate final note (same as trigger)
-                    const finalOctave = baseOctave + octaveOffset;
-                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+            let noteName: string;
+            if (instrumentRow) {
+                // New row-based system: calculate note using spread
+                const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
+                const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
+                const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
+                noteName = getNoteName(noteIndex, finalOctave);
+            } else {
+                // Legacy system: use per-port offsets
+                const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
-                    // Convert to note name string
-                    noteName = getNoteName(finalNoteIndex, finalOctave);
-                }
+                // Calculate final note (same as trigger)
+                const finalOctave = baseOctave + octaveOffset;
+                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
 
-                // Get the instrument and stop the note
-                const instrument = this.getInstrument(targetNodeId);
-                if (instrument) {
-                    instrument.stopNote(noteName);
-                }
+                // Convert to note name string
+                noteName = getNoteName(finalNoteIndex, finalOctave);
+            }
+
+            // Get the instrument and stop the note
+            const instrument = this.getInstrument(targetNodeId);
+            if (instrument) {
+                instrument.stopNote(noteName);
             }
         }
     }
