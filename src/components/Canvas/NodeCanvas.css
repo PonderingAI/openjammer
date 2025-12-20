@@ -18,6 +18,9 @@
 .node-canvas-content {
     position: absolute;
     transform-origin: 0 0;
+    /* Explicit large size to ensure SVG connections render properly */
+    width: 10000px;
+    height: 10000px;
 }
 
 .connections-layer {
@@ -25,6 +28,12 @@
     inset: 0;
     pointer-events: none;
     overflow: visible;
+    z-index: 1; /* Below nodes by default */
+}
+
+/* When connecting, bring connections layer on top of nodes */
+.node-canvas.is-connecting .connections-layer {
+    z-index: 100;
 }
 
 .connections-layer svg {
@@ -42,6 +51,8 @@
     pointer-events: stroke;
     cursor: pointer;
     transition: stroke-width var(--transition-fast);
+    /* Fallback stroke in case CSS variables aren't loaded */
+    stroke: #888;
 }
 
 .connection-line:hover {
@@ -50,27 +61,44 @@
 
 .connection-line.audio {
     stroke: var(--audio-connection);
+    /* Signal strength visualization - driven by --signal-strength CSS variable (0-1) */
+    --signal-strength: 0;
+    /* Base opacity with signal boost */
+    opacity: calc(0.6 + var(--signal-strength) * 0.4);
+    /* Glow effect based on signal strength */
+    filter: drop-shadow(0 0 calc(var(--signal-strength) * 6px) var(--audio-connection));
+    transition: opacity 0.1s ease-out, filter 0.1s ease-out;
 }
 
-.connection-line.technical {
-    stroke: var(--technical-connection);
+.connection-line.audio.active-signal {
+    /* Class added when signal is present for additional styling if needed */
+}
+
+.connection-line.control {
+    stroke: var(--control-connection);
 }
 
 .connection-line.selected {
-    stroke-width: 4;
-    filter: drop-shadow(0 0 4px currentColor);
+    stroke-width: 5;
+    filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 16px currentColor);
+    animation: selected-glow 1s ease-in-out infinite alternate;
+}
+
+@keyframes selected-glow {
+    0% { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
+    100% { filter: drop-shadow(0 0 10px currentColor) drop-shadow(0 0 20px currentColor); }
 }
 
 /* Bundled connections - thicker, with glow and animation */
 .connection-line.bundled {
     stroke-width: 6;
-    filter: drop-shadow(0 0 3px var(--technical-glow));
+    filter: drop-shadow(0 0 3px var(--control-glow));
     animation: bundle-pulse 2s ease-in-out infinite;
 }
 
 .connection-line.bundled:hover {
     stroke-width: 8;
-    filter: drop-shadow(0 0 6px var(--technical-glow));
+    filter: drop-shadow(0 0 6px var(--control-glow));
 }
 
 .connection-line.bundled.selected {
@@ -99,6 +127,7 @@
 .nodes-layer {
     position: absolute;
     inset: 0;
+    z-index: 10; /* Above connections by default */
 }
 
 /* ============================================================================
@@ -117,8 +146,17 @@
    Ghost Mode - W key toggle
    ============================================================================ */
 
-.node-canvas.ghost-mode .node {
-    opacity: 0.1;
+.node-canvas.ghost-mode .nodes-layer {
+    z-index: 1; /* Move nodes layer below connections in ghost mode */
+}
+
+.node-canvas.ghost-mode .connections-layer {
+    z-index: 100; /* Bring connections on top in ghost mode */
+}
+
+.node-canvas.ghost-mode .node,
+.node-canvas.ghost-mode .schematic-node {
+    opacity: 0.1 !important;
     pointer-events: none;
 }
 
@@ -130,9 +168,20 @@
     will-change: box-shadow;
 }
 
+/* Connections fully visible and on top in ghost mode */
 .node-canvas.ghost-mode .connection-line {
     pointer-events: stroke;
     stroke-width: 4;
+    opacity: 1 !important; /* Override any signal-based opacity */
+    filter: drop-shadow(0 0 4px currentColor); /* Add glow for visibility */
+}
+
+.node-canvas.ghost-mode .connection-line.audio {
+    filter: drop-shadow(0 0 6px var(--audio-connection));
+}
+
+.node-canvas.ghost-mode .connection-line.control {
+    filter: drop-shadow(0 0 6px var(--control-connection));
 }
 
 @keyframes portGlow {
@@ -147,21 +196,6 @@
     }
 }
 
-/* Ghost mode indicator */
-.node-canvas.ghost-mode::after {
-    content: '👻 Ghost Mode (W)';
-    position: fixed;
-    top: 60px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 8px 16px;
-    background: color-mix(in srgb, var(--sketch-black) 80%, transparent);
-    color: var(--text-on-accent);
-    border-radius: var(--radius-md);
-    font-size: 12px;
-    z-index: 1000;
-    pointer-events: none;
-}
 
 /* ============================================================================
    Back to Action - Navigation button when nodes are out of view

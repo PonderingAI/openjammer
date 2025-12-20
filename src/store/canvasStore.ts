@@ -29,6 +29,8 @@ interface CanvasStore {
     connectingFrom: ConnectionSource[] | null;
     // Track which node is being hovered while connecting
     hoverTarget: HoverTarget | null;
+    // Connection to disconnect when new connection is confirmed
+    pendingDisconnect: string | null;
 
     // Ghost Mode - reduces node opacity, disables buttons, only connections editable
     ghostMode: boolean;
@@ -44,8 +46,10 @@ interface CanvasStore {
     setDragging: (isDragging: boolean) => void;
     setPanning: (isPanning: boolean) => void;
     // Accept either (nodeId, portIds) or pre-built sources array
-    startConnecting: (nodeIdOrSources: string | ConnectionSource[], portIds?: string | string[]) => void;
+    startConnecting: (nodeIdOrSources: string | ConnectionSource[], portIds?: string | string[], pendingDisconnectId?: string) => void;
     stopConnecting: () => void;
+    clearPendingDisconnect: () => void;
+    getPendingDisconnect: () => string | null;
     setHoverTarget: (nodeId: string | null, portId?: string) => void;
     toggleGhostMode: () => void;
 
@@ -70,6 +74,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     isConnecting: false,
     connectingFrom: null,
     hoverTarget: null,
+    pendingDisconnect: null,
     ghostMode: false,
 
     // Transform Actions
@@ -109,7 +114,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     setDragging: (isDragging) => set({ isDragging }),
     setPanning: (isPanning) => set({ isPanning }),
 
-    startConnecting: (nodeIdOrSources, portIds) => {
+    startConnecting: (nodeIdOrSources, portIds, pendingDisconnectId) => {
         let sources: ConnectionSource[];
 
         // Check if first arg is already an array of sources
@@ -129,15 +134,21 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
         set({
             isConnecting: true,
-            connectingFrom: sources
+            connectingFrom: sources,
+            pendingDisconnect: pendingDisconnectId || null
         });
     },
 
     stopConnecting: () => set({
         isConnecting: false,
         connectingFrom: null,
-        hoverTarget: null
+        hoverTarget: null,
+        pendingDisconnect: null
     }),
+
+    clearPendingDisconnect: () => set({ pendingDisconnect: null }),
+
+    getPendingDisconnect: () => get().pendingDisconnect,
 
     setHoverTarget: (nodeId, portId) => {
         if (nodeId === null) {

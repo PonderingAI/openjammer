@@ -9,19 +9,47 @@
 import { useState } from 'react';
 import type { GraphNode } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
+import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
 
 interface CanvasIONodeProps {
     node: GraphNode;
     isGhost?: boolean;
+    style?: React.CSSProperties;
+    handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    isSelected?: boolean;
+    isDragging?: boolean;
+    hasConnection?: (portId: string) => boolean;
 }
 
-export function CanvasIONode({ node, isGhost }: CanvasIONodeProps) {
+export function CanvasIONode({
+    node,
+    isGhost,
+    style,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    isSelected,
+    isDragging,
+    hasConnection
+}: CanvasIONodeProps) {
     const updateNodeData = useGraphStore(s => s.updateNodeData);
+    const flashingNodes = useUIFeedbackStore(s => s.flashingNodes);
     const [isEditing, setIsEditing] = useState(false);
     const [tempName, setTempName] = useState('');
 
     const portName = (node.data.portName as string) || '';
     const isInput = node.type === 'canvas-input';
+    const isFlashing = flashingNodes.has(node.id);
 
     const handleNameClick = () => {
         setTempName(portName);
@@ -43,11 +71,35 @@ export function CanvasIONode({ node, isGhost }: CanvasIONodeProps) {
         }
     };
 
+    // Get the port ID for connections
+    const portId = node.ports[0]?.id || (isInput ? 'out' : 'in');
+    const isConnected = hasConnection?.(portId) || false;
+
     return (
-        <div className={`schematic-node canvas-io-node ${node.type} ${isGhost ? 'ghost' : ''}`}>
+        <div
+            className={`schematic-node canvas-io-node ${node.type} ${isGhost ? 'ghost' : ''} ${isFlashing ? 'deletion-attempted' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            style={style}
+            onMouseDown={handleHeaderMouseDown}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
+        >
             {/* Port indicator */}
             <div className="io-indicator">
-                <div className={`port-dot ${isInput ? 'output' : 'input'}`} />
+                <div
+                    className={`port-dot ${isInput ? 'output' : 'input'} ${isConnected ? 'connected' : ''}`}
+                    data-node-id={node.id}
+                    data-port-id={portId}
+                    onMouseDown={(e) => {
+                        e.stopPropagation();
+                        handlePortMouseDown?.(portId, e);
+                    }}
+                    onMouseUp={(e) => {
+                        e.stopPropagation();
+                        handlePortMouseUp?.(portId, e);
+                    }}
+                    onMouseEnter={() => handlePortMouseEnter?.(portId)}
+                    onMouseLeave={handlePortMouseLeave}
+                />
             </div>
 
             {/* Name field */}

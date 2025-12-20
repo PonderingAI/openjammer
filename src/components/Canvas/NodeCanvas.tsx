@@ -3,14 +3,20 @@
  */
 
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
-import type { Position, NodeType, Connection, GraphNode } from '../../engine/types';
-import { useGraphStore } from '../../store/graphStore';
+import type { Position, NodeType, Connection } from '../../engine/types';
+import { useGraphStore, getNodeDimensions, type NodeBounds } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useAudioStore } from '../../store/audioStore';
 import { useKeybindingsStore } from '../../store/keybindingsStore';
 import { useCanvasNavigationStore } from '../../store/canvasNavigationStore';
+import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
+import { getNodeDefinition } from '../../engine/registry';
+import { getPortPosition as calculatePortPosition } from '../../utils/portPositions';
+import { getConnectionBundleCount } from '../../utils/portSync';
+import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
+import { LevelBreadcrumb } from '../UI/LevelBreadcrumb';
 import './NodeCanvas.css';
 
 interface SelectionBox {
@@ -30,39 +36,38 @@ export function NodeCanvas() {
     const rightClickMoved = useRef(false);
     const rightClickOnCanvas = useRef(false);
 
-    // Canvas navigation store
-    const currentLevel = useCanvasNavigationStore((s) => s.currentLevel);
-    const currentParentNode = useCanvasNavigationStore((s) => s.currentParentNode);
-    const diveInto = useCanvasNavigationStore((s) => s.diveInto);
-    const goBackUp = useCanvasNavigationStore((s) => s.goBackUp);
+    // Signal levels for audio visualization (connection key -> 0-1 level)
+    const [signalLevels, setSignalLevels] = useState<Map<string, number>>(new Map());
 
-    // Graph store - get nodes/connections based on current level
-    const rootNodes = useGraphStore((s) => s.nodes);
-    const rootConnections = useGraphStore((s) => s.connections);
+    // Subscribe to signal level updates from AudioGraphManager
+    useEffect(() => {
+        const unsubscribe = audioGraphManager.subscribeToSignalLevels((levels) => {
+            setSignalLevels(new Map(levels));
+        });
+        return unsubscribe;
+    }, []);
 
-    // Determine which nodes/connections to render based on level
+    // Canvas navigation store (simplified - just track which node we're viewing)
+    const currentViewNodeId = useCanvasNavigationStore((s) => s.currentViewNodeId);
+    const enterNode = useCanvasNavigationStore((s) => s.enterNode);
+    const exitToParent = useCanvasNavigationStore((s) => s.exitToParent);
+
+    // Graph store - use flat structure helpers to get nodes/connections at current view level
+    const getNodesAtLevel = useGraphStore((s) => s.getNodesAtLevel);
+    const getConnectionsAtLevel = useGraphStore((s) => s.getConnectionsAtLevel);
+    const allNodes = useGraphStore((s) => s.nodes);
+    const allConnections = useGraphStore((s) => s.connections);
+
+    // Determine which nodes/connections to render based on current view
     const nodes = useMemo(() => {
-        if (currentLevel === 0) {
-            return rootNodes;
-        } else if (currentParentNode?.internalNodes) {
-            return currentParentNode.internalNodes;
-        }
-        return new Map<string, GraphNode>();
-    }, [currentLevel, currentParentNode, rootNodes]);
+        const nodeArray = getNodesAtLevel(currentViewNodeId);
+        return new Map(nodeArray.map(n => [n.id, n]));
+    }, [currentViewNodeId, getNodesAtLevel, allNodes]);
 
     const connections = useMemo(() => {
-        if (currentLevel === 0) {
-            return rootConnections;
-        } else if (currentParentNode?.internalConnections) {
-            // Convert array to Map for consistency
-            const connMap = new Map<string, Connection>();
-            currentParentNode.internalConnections.forEach(conn => {
-                connMap.set(conn.id, conn);
-            });
-            return connMap;
-        }
-        return new Map<string, Connection>();
-    }, [currentLevel, currentParentNode, rootConnections]);
+        const connArray = getConnectionsAtLevel(currentViewNodeId);
+        return new Map(connArray.map(c => [c.id, c]));
+    }, [currentViewNodeId, getConnectionsAtLevel, allConnections]);
     const addNode = useGraphStore((s) => s.addNode);
     const selectedConnectionIds = useGraphStore((s) => s.selectedConnectionIds);
     const selectConnection = useGraphStore((s) => s.selectConnection);
@@ -71,6 +76,8 @@ export function NodeCanvas() {
     const selectNodesInRect = useGraphStore((s) => s.selectNodesInRect);
     const undo = useGraphStore((s) => s.undo);
     const redo = useGraphStore((s) => s.redo);
+    const copySelected = useGraphStore((s) => s.copySelected);
+    const pasteClipboard = useGraphStore((s) => s.pasteClipboard);
 
     // Canvas store
     const pan = useCanvasStore((s) => s.pan);
@@ -87,7 +94,6 @@ export function NodeCanvas() {
     const ghostMode = useCanvasStore((s) => s.ghostMode);
     const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
     const fitToNodes = useCanvasStore((s) => s.fitToNodes);
-    const getNodesBounds = useGraphStore((s) => s.getNodesBounds);
 
     // Audio store for mode switching
     const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
@@ -95,34 +101,19 @@ export function NodeCanvas() {
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
-    // Port position cache with TTL
-    const portPositionCache = useRef<Map<string, { position: Position; timestamp: number }>>(new Map());
-    const CACHE_TTL_MS = 200; // Cache valid for 200ms (increased for animation smoothness)
-    const CACHE_PAN_THRESHOLD = 5; // Clear cache when pan changes by more than 5px
-    const CACHE_ZOOM_THRESHOLD = 0.05; // Clear cache when zoom changes by more than 5%
-    const lastPanZoom = useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
-
-    // Clear cache when pan/zoom changes significantly (in useEffect to avoid render-phase side effects)
-    useEffect(() => {
-        if (Math.abs(pan.x - lastPanZoom.current.pan.x) > CACHE_PAN_THRESHOLD ||
-            Math.abs(pan.y - lastPanZoom.current.pan.y) > CACHE_PAN_THRESHOLD ||
-            Math.abs(zoom - lastPanZoom.current.zoom) > CACHE_ZOOM_THRESHOLD) {
-            portPositionCache.current.clear();
-            lastPanZoom.current = { pan: { x: pan.x, y: pan.y }, zoom };
-        }
-    }, [pan.x, pan.y, zoom]);
-
     // Handle right-click context menu - just prevent default
     // Menu is shown on mouseup if no drag occurred
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
     }, []);
 
-    // Handle adding a node
+    // Handle adding a node (works at all levels - just pass parentId)
     const handleAddNode = useCallback((type: NodeType, screenPos: Position) => {
         const canvasPos = screenToCanvas(screenPos);
-        addNode(type, canvasPos);
-    }, [screenToCanvas, addNode]);
+        // With flat structure, addNode accepts parentId directly
+        // null = root level, nodeId = inside that node
+        addNode(type, canvasPos, currentViewNodeId);
+    }, [screenToCanvas, addNode, currentViewNodeId]);
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -310,17 +301,17 @@ export function NodeCanvas() {
                 return;
             }
 
-            // Q key - Go back up one level in hierarchical canvas
-            if (e.key === 'q' || e.key === 'Q') {
-                if (currentLevel > 0) {
-                    e.preventDefault();
-                    goBackUp();
-                }
-                return;
-            }
-
             // Mode 1 only shortcuts (config mode)
             if (currentMode === 1) {
+                // Q key - Go back up one level in hierarchical canvas (only in mode 1)
+                if (e.key === 'q' || e.key === 'Q') {
+                    if (currentViewNodeId !== null) {
+                        e.preventDefault();
+                        exitToParent();
+                        return;
+                    }
+                }
+
                 if (matchesAction(e, 'view.ghostMode')) {
                     e.preventDefault();
                     toggleGhostMode();
@@ -336,6 +327,20 @@ export function NodeCanvas() {
                 if (matchesAction(e, 'edit.redo')) {
                     e.preventDefault();
                     redo();
+                    return;
+                }
+
+                // Ctrl+C / Cmd+C - Copy
+                if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                    e.preventDefault();
+                    copySelected();
+                    return;
+                }
+
+                // Ctrl+V / Cmd+V - Paste
+                if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                    e.preventDefault();
+                    pasteClipboard();
                     return;
                 }
 
@@ -355,7 +360,7 @@ export function NodeCanvas() {
                             const node = graphNodes.get(nodeId);
                             if (!node) continue;
 
-                            // Get all output ports (both audio and technical)
+                            // Get all output ports (both audio and control)
                             const outputPorts = node.ports.filter(p => p.direction === 'output');
 
                             // Filter to only empty (unconnected) ports
@@ -382,10 +387,22 @@ export function NodeCanvas() {
                 if (e.key === 'e' || e.key === 'E') {
                     const selectedIds = Array.from(useGraphStore.getState().selectedNodeIds);
                     if (selectedIds.length === 1) {
-                        const selectedNode = nodes.get(selectedIds[0]);
+                        const selectedNode = allNodes.get(selectedIds[0]);
                         if (selectedNode) {
-                            e.preventDefault();
-                            diveInto(selectedNode.id);
+                            // Check if node can be entered via definition
+                            const definition = getNodeDefinition(selectedNode.type);
+                            if (definition.canEnter === false) {
+                                // Flash red and reject entry
+                                e.preventDefault();
+                                useUIFeedbackStore.getState().flashNode(selectedNode.id);
+                                return;
+                            }
+
+                            // Only enter if node has children (has internal structure)
+                            if (selectedNode.childIds && selectedNode.childIds.length > 0) {
+                                e.preventDefault();
+                                enterNode(selectedNode.id);
+                            }
                         }
                     }
                     return;
@@ -460,60 +477,36 @@ export function NodeCanvas() {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, diveInto, goBackUp, nodes, currentLevel]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId]);
 
-    // Get port position for connection rendering using DOM measurement
+    // Get port position for connection rendering
+    // Uses DOM query for accurate positions, falls back to math calculation
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
-        const cacheKey = `${nodeId}:${portId}`;
-        const now = Date.now();
-
-        // Check cache first
-        const cached = portPositionCache.current.get(cacheKey);
-        if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
-            return cached.position;
-        }
-
-        // Query port element by data attributes
+        // First try DOM query for actual port position (more accurate for schematic nodes)
         const portElement = document.querySelector(
             `[data-node-id="${nodeId}"][data-port-id="${portId}"]`
-        );
+        ) as HTMLElement | null;
 
-        // Fallback: If DOM element not found, calculate approximate position from node position
-        if (!portElement) {
-            const node = nodes.get(nodeId);
-            if (node) {
-                // Approximate position: node center + small offset for ports
-                const fallbackPos = {
-                    x: node.position.x + 80, // Approximate half-width
-                    y: node.position.y + 40  // Approximate half-height
-                };
-                return fallbackPos;
-            }
-            return null;
+        if (portElement && canvasRef.current) {
+            const canvasRect = canvasRef.current.getBoundingClientRect();
+            const portRect = portElement.getBoundingClientRect();
+
+            // Convert screen position to canvas coordinates (accounting for pan/zoom)
+            const screenX = portRect.left + portRect.width / 2;
+            const screenY = portRect.top + portRect.height / 2;
+
+            // Reverse the canvas transform to get canvas coordinates
+            const canvasX = (screenX - canvasRect.left - pan.x) / zoom;
+            const canvasY = (screenY - canvasRect.top - pan.y) / zoom;
+
+            return { x: canvasX, y: canvasY };
         }
 
-        const canvasElement = canvasRef.current;
-        if (!canvasElement) return null;
-
-        const portRect = portElement.getBoundingClientRect();
-        const canvasRect = canvasElement.getBoundingClientRect();
-
-        // Convert screen coordinates to canvas coordinates
-        // Account for pan and zoom
-        const centerX = portRect.left + portRect.width / 2 - canvasRect.left;
-        const centerY = portRect.top + portRect.height / 2 - canvasRect.top;
-
-        // Inverse transform to get canvas-space coordinates
-        const canvasX = (centerX - pan.x) / zoom;
-        const canvasY = (centerY - pan.y) / zoom;
-
-        const position = { x: canvasX, y: canvasY };
-
-        // Cache the result
-        portPositionCache.current.set(cacheKey, { position, timestamp: now });
-
-        return position;
-    }, [pan, zoom, nodes]);
+        // Fall back to math-based calculation
+        const node = allNodes.get(nodeId);
+        if (!node) return null;
+        return calculatePortPosition(node, portId);
+    }, [allNodes, pan, zoom]);
 
     // Render connection path
     const renderConnection = useCallback((conn: Connection) => {
@@ -531,24 +524,37 @@ export function NodeCanvas() {
                     ${endPos.x} ${endPos.y}`;
 
         const isSelected = selectedConnectionIds.has(conn.id);
-        const isBundled = conn.isBundled ?? false;
+
+        // Auto-detect bundle status from internal wiring
+        const bundleCount = getConnectionBundleCount(conn, allNodes, allConnections);
+        const isBundled = bundleCount > 1;
+
+        // Get signal level for audio connections (for visualization)
+        const connectionKey = `${conn.sourceNodeId}->${conn.targetNodeId}`;
+        const signalLevel = conn.type === 'audio' ? (signalLevels.get(connectionKey) ?? 0) : 0;
+
+        // Apply signal-based styling for audio connections
+        const signalStyle = conn.type === 'audio' ? {
+            '--signal-strength': signalLevel.toFixed(3)
+        } as React.CSSProperties : undefined;
 
         return (
             <g key={conn.id}>
                 <path
                     d={path}
                     className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''} ${isBundled ? 'bundled' : ''}`}
+                    style={signalStyle}
                     onClick={(e) => {
                         e.stopPropagation();
                         selectConnection(conn.id);
                     }}
                 />
                 {isBundled && (
-                    <title>Bundle (30 keys)</title>
+                    <title>{`Bundle (${bundleCount} connections)`}</title>
                 )}
             </g>
         );
-    }, [getPortPosition, selectedConnectionIds, selectConnection]);
+    }, [getPortPosition, selectedConnectionIds, selectConnection, allNodes, allConnections, signalLevels]);
 
     // Render temporary connection while dragging
     const renderTempConnection = useCallback(() => {
@@ -578,7 +584,7 @@ export function NodeCanvas() {
                         <path
                             key={`${source.nodeId}-${source.portId}`}
                             d={path}
-                            className={`connection-line technical connection-temp`}
+                            className={`connection-line control connection-temp`}
                         />
                     );
                 })}
@@ -586,11 +592,36 @@ export function NodeCanvas() {
         );
     }, [isConnecting, connectingFrom, getPortPosition, screenToCanvas, mousePos]);
 
+    // Calculate bounds for current level's nodes (not root)
+    const getCurrentLevelBounds = useCallback((): NodeBounds | null => {
+        if (nodes.size === 0) return null;
+
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+
+        nodes.forEach(node => {
+            const dims = getNodeDimensions(node);
+            minX = Math.min(minX, node.position.x);
+            minY = Math.min(minY, node.position.y);
+            maxX = Math.max(maxX, node.position.x + dims.width);
+            maxY = Math.max(maxY, node.position.y + dims.height);
+        });
+
+        return {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+            centerX: (minX + maxX) / 2,
+            centerY: (minY + maxY) / 2
+        };
+    }, [nodes]);
+
     // Visibility detection for BackToAction button
     const nodesVisibility = useMemo(() => {
         if (nodes.size === 0) return { visible: true, direction: null };
 
-        const bounds = getNodesBounds();
+        const bounds = getCurrentLevelBounds();
         if (!bounds) return { visible: true, direction: null };
 
         const viewportWidth = window.innerWidth;
@@ -632,15 +663,15 @@ export function NodeCanvas() {
             visible: visible && !tooSmall,
             direction
         };
-    }, [nodes.size, pan.x, pan.y, zoom, getNodesBounds]);
+    }, [nodes.size, pan.x, pan.y, zoom, getCurrentLevelBounds]);
 
     // Handle back to action navigation
     const handleBackToAction = useCallback(() => {
-        const bounds = getNodesBounds();
+        const bounds = getCurrentLevelBounds();
         if (bounds) {
             fitToNodes(bounds, window.innerWidth, window.innerHeight);
         }
-    }, [getNodesBounds, fitToNodes]);
+    }, [getCurrentLevelBounds, fitToNodes]);
 
     // Render selection box
     const renderSelectionBox = () => {
@@ -667,7 +698,7 @@ export function NodeCanvas() {
     return (
         <div
             ref={canvasRef}
-            className={`node-canvas ${ghostMode ? 'ghost-mode' : ''}`}
+            className={`node-canvas ${ghostMode ? 'ghost-mode' : ''} ${isConnecting ? 'is-connecting' : ''}`}
             onContextMenu={handleContextMenu}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -715,7 +746,10 @@ export function NodeCanvas() {
                 />
             )}
 
-            {/* Back to Action button - appears when nodes are not visible */}
+            {/* Level Breadcrumb - shows navigation path when inside nodes */}
+            <LevelBreadcrumb />
+
+            {/* Back to Action button - appears when nodes are not visible on any level */}
             {nodes.size > 0 && !nodesVisibility.visible && nodesVisibility.direction !== null && (
                 <button
                     className="back-to-action"

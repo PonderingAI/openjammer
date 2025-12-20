@@ -135,12 +135,13 @@ export function SpeakerNode({
 
             {/* Visual Container */}
             <div className="speaker-body">
-                {/* Input Port */}
+                {/* Input Port - positioned in top left corner under header */}
                 {inputPort && (
                     <div
                         className={`speaker-input-port ${hasConnection?.(inputPort.id) ? 'connected' : ''}`}
                         data-node-id={node.id}
                         data-port-id={inputPort.id}
+                        data-port-type={inputPort.type}
                         onMouseDown={(e) => handlePortMouseDown?.(inputPort.id, e)}
                         onMouseUp={(e) => handlePortMouseUp?.(inputPort.id, e)}
                         onMouseEnter={() => handlePortMouseEnter?.(inputPort.id)}

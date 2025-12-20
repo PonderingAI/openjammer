@@ -10,12 +10,17 @@ import { generateUniqueId } from '../../utils/idGenerator';
 import { InstrumentNode } from './InstrumentNode';
 import { MicrophoneNode } from './MicrophoneNode';
 import { KeyboardNode } from './KeyboardNode';
+import { KeyboardVisualNode } from './KeyboardVisualNode';
 import { LooperNode } from './LooperNode';
 import { EffectNode } from './EffectNode';
 import { AmplifierNode } from './AmplifierNode';
 import { SpeakerNode } from './SpeakerNode';
 import { RecorderNode } from './RecorderNode';
 import { CanvasIONode } from './CanvasIONode';
+import { OutputPanelNode } from './OutputPanelNode';
+import { InputPanelNode } from './InputPanelNode';
+import { ContainerNode } from './ContainerNode';
+import { MathNode } from './MathNode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -25,12 +30,18 @@ interface NodeWrapperProps {
 // Schematic nodes render their own container - no wrapper needed
 const SCHEMATIC_TYPES = [
     'keyboard',
+    'keyboard-visual',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
     'microphone',
     'canvas-input',
-    'canvas-output'
+    'canvas-output',
+    'output-panel',
+    'input-panel',
+    'container',
+    'add',
+    'subtract'
 ];
 
 export function NodeWrapper({ node }: NodeWrapperProps) {
@@ -117,7 +128,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         window.addEventListener('mouseup', handleMouseUp);
     }, [node.id, node.position, zoom, selectNode, updateNodePosition]);
 
-    // Handle port mouse down - start connection dragging
+    // Handle port mouse down - start connection dragging (with pending disconnect)
     const handlePortMouseDown = useCallback((portId: string, e: React.MouseEvent) => {
         if (e.button !== 0) return; // Only left click
         e.stopPropagation();
@@ -125,9 +136,31 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         // If not already connecting, start a new connection
         const currentIsConnecting = useCanvasStore.getState().isConnecting;
         if (!currentIsConnecting) {
-            startConnecting(node.id, portId);
+            // Check if this port has an existing connection - if so, store it for pending disconnect
+            const currentConnections = useGraphStore.getState().connections;
+            const port = node.ports.find(p => p.id === portId);
+            let pendingDisconnectId: string | undefined;
+
+            if (port) {
+                // Find existing connection on this port
+                const existingConnection = Array.from(currentConnections.values()).find(conn => {
+                    if (port.direction === 'output') {
+                        return conn.sourceNodeId === node.id && conn.sourcePortId === portId;
+                    } else {
+                        return conn.targetNodeId === node.id && conn.targetPortId === portId;
+                    }
+                });
+
+                if (existingConnection) {
+                    // Store for pending disconnect (will be removed when new connection confirmed)
+                    pendingDisconnectId = existingConnection.id;
+                }
+            }
+
+            // Start new connection from this port (with optional pending disconnect)
+            startConnecting(node.id, portId, pendingDisconnectId);
         }
-    }, [node.id, startConnecting]);
+    }, [node.id, node.ports, startConnecting]);
 
     // Handle port mouse up - complete connection if dragging to a different port
     const handlePortMouseUp = useCallback((portId: string, e: React.MouseEvent) => {
@@ -156,7 +189,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             if (isGhostPort && isInstrument) {
                 // Extract the ghost port index
                 const ghostIndex = parseInt(portId.replace('ghost-input-', ''), 10);
-                const currentInputs = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+                const currentInputs = node.ports.filter(p => p.direction === 'input' && p.type === 'control');
 
                 // Create all needed ports up to and including the ghost port index
                 const newPorts = [...node.ports];
@@ -170,7 +203,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                     newPorts.push({
                         id: newPortId,
                         name: `In ${nextIndex}`,
-                        type: 'technical',
+                        type: 'control',
                         direction: 'input'
                     });
                 }
@@ -192,7 +225,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
             // Check if we need to auto-expand for multiple connections
             if (isInstrument && targetPort.direction === 'input' && sources.length > 1) {
-                const currentInputs = updatedNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+                const currentInputs = updatedNode.ports.filter(p => p.direction === 'input' && p.type === 'control');
                 const clickedIndex = currentInputs.findIndex(p => p.id === actualFirstPortId);
 
                 if (clickedIndex === -1) return;
@@ -209,7 +242,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                         newPorts.push({
                             id: generateUniqueId('input-'),
                             name: `In ${nextIndex}`,
-                            type: 'technical',
+                            type: 'control',
                             direction: 'input'
                         });
                     }
@@ -220,7 +253,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
 
             // Get final updated node and inputs after all port additions
             const finalNode = useGraphStore.getState().nodes.get(node.id) || updatedNode;
-            const finalInputs = finalNode.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+            const finalInputs = finalNode.ports.filter(p => p.direction === 'input' && p.type === 'control');
 
             sources.forEach((source, index) => {
                 let actualTargetPortId = actualFirstPortId;
@@ -240,6 +273,12 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                     addConnection(node.id, actualTargetPortId, source.nodeId, source.portId);
                 }
             });
+
+            // Remove pending disconnect connection now that new connection is confirmed
+            const pendingDisconnect = useCanvasStore.getState().pendingDisconnect;
+            if (pendingDisconnect) {
+                useGraphStore.getState().removeConnection(pendingDisconnect);
+            }
 
             stopConnecting();
         }
@@ -285,6 +324,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         switch (node.type) {
             case 'keyboard':
                 return <KeyboardNode {...schematicProps} />;
+            case 'keyboard-visual':
+                return <KeyboardVisualNode {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':
@@ -302,7 +343,16 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <MicrophoneNode {...schematicProps} />;
             case 'canvas-input':
             case 'canvas-output':
-                return <CanvasIONode node={node} />;
+                return <CanvasIONode {...schematicProps} />;
+            case 'output-panel':
+                return <OutputPanelNode {...schematicProps} />;
+            case 'input-panel':
+                return <InputPanelNode {...schematicProps} />;
+            case 'container':
+                return <ContainerNode {...schematicProps} />;
+            case 'add':
+            case 'subtract':
+                return <MathNode {...schematicProps} />;
         }
     }
 
@@ -354,7 +404,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                             onMouseLeave={handlePortMouseLeave}
                         >
                             <div
-                                className={`port-dot ${port.type === 'audio' ? 'audio-input' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
+                                className={`port-dot ${port.type === 'audio' ? 'audio-input' : 'control'} ${hasConnection(port.id) ? 'connected' : ''}`}
                                 data-node-id={node.id}
                                 data-port-id={port.id}
                             />
@@ -375,7 +425,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                         >
                             <span className="port-label">{port.name}</span>
                             <div
-                                className={`port-dot ${port.type === 'audio' ? 'audio-output' : 'technical'} ${hasConnection(port.id) ? 'connected' : ''}`}
+                                className={`port-dot ${port.type === 'audio' ? 'audio-output' : 'control'} ${hasConnection(port.id) ? 'connected' : ''}`}
                                 data-node-id={node.id}
                                 data-port-id={port.id}
                             />

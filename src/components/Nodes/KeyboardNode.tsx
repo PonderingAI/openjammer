@@ -5,15 +5,13 @@
  * Pressing that number key activates this keyboard's input mode
  * Q-M rows then send input to connected instruments
  *
- * Design: Compact pill-shaped node with bundled connection support
- * Simple mode: Single bundle port (default)
- * Advanced mode: Individual port per key (30 ports)
+ * Design: Hierarchical node with internal canvas structure
+ * Press E to dive into internal canvas and see key routing
  */
 
 import { useEffect } from 'react';
 import { useAudioStore } from '../../store/audioStore';
-import { useGraphStore } from '../../store/graphStore';
-import type { GraphNode, KeyboardNodeData, PortDefinition } from '../../engine/types';
+import type { GraphNode, KeyboardNodeData } from '../../engine/types';
 
 interface KeyboardNodeProps {
     node: GraphNode;
@@ -30,45 +28,6 @@ interface KeyboardNodeProps {
     isHoveredWithConnections?: boolean;
     incomingConnectionCount?: number;
     style?: React.CSSProperties;
-}
-
-// Key layout constants
-const KEY_ROWS = {
-    row1: ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
-    row2: ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
-    row3: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
-};
-
-const ROW_LABELS = {
-    row1: 'Row 1 (Q-P)',
-    row2: 'Row 2 (A-L)',
-    row3: 'Row 3 (Z-/)'
-};
-
-// Generate individual key ports for advanced mode
-function generateKeyPorts(): PortDefinition[] {
-    const ports: PortDefinition[] = [];
-
-    Object.values(KEY_ROWS).forEach((keys) => {
-        keys.forEach(key => {
-            ports.push({
-                id: `key-${key}`,
-                name: key.toUpperCase(),
-                type: 'technical',
-                direction: 'output'
-            });
-        });
-    });
-
-    // Add control port
-    ports.push({
-        id: 'control',
-        name: 'Control (Space)',
-        type: 'technical',
-        direction: 'output'
-    });
-
-    return ports;
 }
 
 export function KeyboardNode({
@@ -92,40 +51,14 @@ export function KeyboardNode({
     const registerKeyboard = useAudioStore((s) => s.registerKeyboard);
     const unregisterKeyboard = useAudioStore((s) => s.unregisterKeyboard);
 
-    const updateNodeData = useGraphStore((s) => s.updateNodeData);
-    const updateNodePorts = useGraphStore((s) => s.updateNodePorts);
-
     const isActive = activeKeyboardId === node.id;
     const assignedKey = data.assignedKey ?? 2;
-    const viewMode = data.viewMode ?? 'simple';
 
     // Register this keyboard with its assigned number
     useEffect(() => {
         registerKeyboard(assignedKey, node.id);
         return () => unregisterKeyboard(assignedKey);
     }, [assignedKey, node.id, registerKeyboard, unregisterKeyboard]);
-
-    // Handle mode switching
-    const switchToAdvanced = () => {
-        // Update view mode
-        updateNodeData<KeyboardNodeData>(node.id, { viewMode: 'advanced' });
-
-        // Generate and set individual key ports
-        const advancedPorts = generateKeyPorts();
-        updateNodePorts(node.id, advancedPorts);
-    };
-
-    const switchToSimple = () => {
-        // Update view mode
-        updateNodeData<KeyboardNodeData>(node.id, { viewMode: 'simple' });
-
-        // Restore simple mode ports (bundle + control)
-        const simplePorts: PortDefinition[] = [
-            { id: 'bundle-out', name: 'Keys Bundle', type: 'technical', direction: 'output', isBundled: true },
-            { id: 'control', name: 'Control (Space)', type: 'technical', direction: 'output' }
-        ];
-        updateNodePorts(node.id, simplePorts);
-    };
 
     return (
         <div
@@ -143,162 +76,26 @@ export function KeyboardNode({
                 <span className="keyboard-octave">{assignedKey}</span>
             </div>
 
-            {/* Body - Simple Mode */}
-            {viewMode === 'simple' && (
-                <div className="keyboard-schematic-body">
-                    {/* Bundle port */}
-                    <div className="bundle-port-row">
-                        <span className="port-label">
-                            <span className="bundle-icon">🎹</span>
-                            <span>Keys Bundle</span>
-                        </span>
+            {/* Body - Show auto-generated ports from internal canvas */}
+            <div className="keyboard-schematic-body">
+                {/* Render ports dynamically (auto-synced from internal canvas-input/output nodes) */}
+                {node.ports.map((port) => (
+                    <div key={port.id} className={`port-row ${port.direction}`}>
+                        <span className="port-label">{port.name}</span>
                         <div
-                            className={`port-circle-marker bundle-port ${hasConnection?.('bundle-out') ? 'connected' : ''}`}
+                            className={`port-circle-marker ${port.type}-port ${port.direction}-port ${hasConnection?.(port.id) ? 'connected' : ''} ${port.id === 'control' && isActive && controlDown ? 'control-active' : ''}`}
                             data-node-id={node.id}
-                            data-port-id="bundle-out"
-                            onMouseDown={(e) => handlePortMouseDown?.('bundle-out', e)}
-                            onMouseUp={(e) => handlePortMouseUp?.('bundle-out', e)}
-                            onMouseEnter={() => handlePortMouseEnter?.('bundle-out')}
+                            data-port-id={port.id}
+                            data-port-type={port.type}
+                            onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter?.(port.id)}
                             onMouseLeave={handlePortMouseLeave}
-                            title="Keys Bundle (30 keys)"
+                            title={port.name}
                         />
                     </div>
-
-                    {/* Control port */}
-                    <div className="control-port-row">
-                        <span className="port-label">
-                            <span className="binary-label">0/1</span>
-                            <span>Control</span>
-                        </span>
-                        <div
-                            className={`port-circle-marker control-port ${hasConnection?.('control') ? 'connected' : ''} ${isActive && controlDown ? 'control-active' : ''}`}
-                            data-node-id={node.id}
-                            data-port-id="control"
-                            onMouseDown={(e) => handlePortMouseDown?.('control', e)}
-                            onMouseUp={(e) => handlePortMouseUp?.('control', e)}
-                            onMouseEnter={() => handlePortMouseEnter?.('control')}
-                            onMouseLeave={handlePortMouseLeave}
-                            title="Control (Space)"
-                        />
-                    </div>
-
-                    {/* Expand button */}
-                    <button
-                        className="expand-btn"
-                        onClick={switchToAdvanced}
-                        title="Switch to advanced mode for per-key control"
-                    >
-                        ⚙️ Advanced
-                    </button>
-                </div>
-            )}
-
-            {/* Body - Advanced Mode */}
-            {viewMode === 'advanced' && (
-                <div className="keyboard-schematic-body advanced-mode">
-                    {/* Row 1: Q-P */}
-                    <div className="key-row-section">
-                        <div className="key-row-label">{ROW_LABELS.row1}</div>
-                        <div className="key-ports-grid">
-                            {KEY_ROWS.row1.map((key) => {
-                                const portId = `key-${key}`;
-                                return (
-                                    <div key={portId} className="key-port-item">
-                                        <span className="key-label">{key.toUpperCase()}</span>
-                                        <div
-                                            className={`port-circle-marker key-port ${hasConnection?.(portId) ? 'connected' : ''}`}
-                                            data-node-id={node.id}
-                                            data-port-id={portId}
-                                            onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
-                                            onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
-                                            onMouseEnter={() => handlePortMouseEnter?.(portId)}
-                                            onMouseLeave={handlePortMouseLeave}
-                                            title={`Key ${key.toUpperCase()}`}
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* Row 2: A-L */}
-                    <div className="key-row-section">
-                        <div className="key-row-label">{ROW_LABELS.row2}</div>
-                        <div className="key-ports-grid">
-                            {KEY_ROWS.row2.map((key) => {
-                                const portId = `key-${key}`;
-                                return (
-                                    <div key={portId} className="key-port-item">
-                                        <span className="key-label">{key.toUpperCase()}</span>
-                                        <div
-                                            className={`port-circle-marker key-port ${hasConnection?.(portId) ? 'connected' : ''}`}
-                                            data-node-id={node.id}
-                                            data-port-id={portId}
-                                            onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
-                                            onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
-                                            onMouseEnter={() => handlePortMouseEnter?.(portId)}
-                                            onMouseLeave={handlePortMouseLeave}
-                                            title={`Key ${key.toUpperCase()}`}
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* Row 3: Z-/ */}
-                    <div className="key-row-section">
-                        <div className="key-row-label">{ROW_LABELS.row3}</div>
-                        <div className="key-ports-grid">
-                            {KEY_ROWS.row3.map((key) => {
-                                const portId = `key-${key}`;
-                                return (
-                                    <div key={portId} className="key-port-item">
-                                        <span className="key-label">{key.toUpperCase()}</span>
-                                        <div
-                                            className={`port-circle-marker key-port ${hasConnection?.(portId) ? 'connected' : ''}`}
-                                            data-node-id={node.id}
-                                            data-port-id={portId}
-                                            onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
-                                            onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
-                                            onMouseEnter={() => handlePortMouseEnter?.(portId)}
-                                            onMouseLeave={handlePortMouseLeave}
-                                            title={`Key ${key.toUpperCase()}`}
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* Control port */}
-                    <div className="control-port-row">
-                        <span className="port-label">
-                            <span className="binary-label">0/1</span>
-                            <span>Control</span>
-                        </span>
-                        <div
-                            className={`port-circle-marker control-port ${hasConnection?.('control') ? 'connected' : ''} ${isActive && controlDown ? 'control-active' : ''}`}
-                            data-node-id={node.id}
-                            data-port-id="control"
-                            onMouseDown={(e) => handlePortMouseDown?.('control', e)}
-                            onMouseUp={(e) => handlePortMouseUp?.('control', e)}
-                            onMouseEnter={() => handlePortMouseEnter?.('control')}
-                            onMouseLeave={handlePortMouseLeave}
-                            title="Control (Space)"
-                        />
-                    </div>
-
-                    {/* Collapse button */}
-                    <button
-                        className="collapse-btn"
-                        onClick={switchToSimple}
-                        title="Switch to simple mode"
-                    >
-                        ⊗ Collapse
-                    </button>
-                </div>
-            )}
+                ))}
+            </div>
 
             {/* Active indicator */}
             {isActive && (

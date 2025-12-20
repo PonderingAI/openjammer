@@ -12,21 +12,24 @@ const audioOutput: PortDefinition = {
     id: 'audio-out',
     name: 'Audio Out',
     type: 'audio',
-    direction: 'output'
+    direction: 'output',
+    position: { x: 1, y: 0.5 }  // Right side, centered
 };
 
 const audioInput: PortDefinition = {
     id: 'audio-in',
     name: 'Audio In',
     type: 'audio',
-    direction: 'input'
+    direction: 'input',
+    position: { x: 0, y: 0.5 }  // Left side, centered
 };
 
-const technicalInput: PortDefinition = {
-    id: 'tech-in',
-    name: 'Input',
-    type: 'technical',
-    direction: 'input'
+const controlInput: PortDefinition = {
+    id: 'control-in',
+    name: 'Control',
+    type: 'control',
+    direction: 'input',
+    position: { x: 0, y: 0.5 }
 };
 
 // ============================================================================
@@ -40,21 +43,84 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'input',
         name: 'Keyboard',
         description: 'Virtual keyboard controller (auto-assigned key)',
-        defaultPorts: [
-            { id: 'bundle-out', name: 'Keys Bundle', type: 'technical', direction: 'output', isBundled: true },
-            { id: 'control', name: 'Control (Space)', type: 'technical', direction: 'output' }
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             assignedKey: 2,
-            viewMode: 'simple',
             activeRow: null,
-            rowOctaves: [4, 4, 4],
-            keyConfigs: {},
-            bundleDefaults: {
-                velocity: 0.8,
-                noteMapping: 'chromatic'
-            }
+            rowOctaves: [4, 4, 4]
+        },
+        dimensions: { width: 160, height: 120 },
+        portLayout: {
+            direction: 'vertical',
+            outputArea: { x: 1, startY: 0.15, endY: 0.85 }
         }
+    },
+
+    'keyboard-key': {
+        type: 'keyboard-key',
+        category: 'input',
+        name: 'Key',
+        description: 'Individual keyboard key signal generator',
+        defaultPorts: [
+            {
+                id: 'out',
+                name: 'Out',
+                type: 'control',
+                direction: 'output',
+                position: { x: 1, y: 0.5 }
+            }
+        ],
+        defaultData: {
+            keyLabel: 'Q',
+            row: 1,
+            keyIndex: 0
+        },
+        dimensions: { width: 50, height: 50 }
+    },
+
+    'keyboard-visual': {
+        type: 'keyboard-visual',
+        category: 'input',
+        name: 'Keyboard',
+        description: 'Visual keyboard with per-key outputs',
+        defaultPorts: [
+            // Row 1 (Q-P): 10 keys - ports on right edge, y: 0.05-0.22
+            { id: 'key-q', name: 'Q', type: 'control', direction: 'output', position: { x: 1, y: 0.05 } },
+            { id: 'key-w', name: 'W', type: 'control', direction: 'output', position: { x: 1, y: 0.07 } },
+            { id: 'key-e', name: 'E', type: 'control', direction: 'output', position: { x: 1, y: 0.09 } },
+            { id: 'key-r', name: 'R', type: 'control', direction: 'output', position: { x: 1, y: 0.11 } },
+            { id: 'key-t', name: 'T', type: 'control', direction: 'output', position: { x: 1, y: 0.13 } },
+            { id: 'key-y', name: 'Y', type: 'control', direction: 'output', position: { x: 1, y: 0.15 } },
+            { id: 'key-u', name: 'U', type: 'control', direction: 'output', position: { x: 1, y: 0.17 } },
+            { id: 'key-i', name: 'I', type: 'control', direction: 'output', position: { x: 1, y: 0.19 } },
+            { id: 'key-o', name: 'O', type: 'control', direction: 'output', position: { x: 1, y: 0.21 } },
+            { id: 'key-p', name: 'P', type: 'control', direction: 'output', position: { x: 1, y: 0.23 } },
+            // Row 2 (A-L): 9 keys - y: 0.30-0.46
+            { id: 'key-a', name: 'A', type: 'control', direction: 'output', position: { x: 1, y: 0.30 } },
+            { id: 'key-s', name: 'S', type: 'control', direction: 'output', position: { x: 1, y: 0.32 } },
+            { id: 'key-d', name: 'D', type: 'control', direction: 'output', position: { x: 1, y: 0.34 } },
+            { id: 'key-f', name: 'F', type: 'control', direction: 'output', position: { x: 1, y: 0.36 } },
+            { id: 'key-g', name: 'G', type: 'control', direction: 'output', position: { x: 1, y: 0.38 } },
+            { id: 'key-h', name: 'H', type: 'control', direction: 'output', position: { x: 1, y: 0.40 } },
+            { id: 'key-j', name: 'J', type: 'control', direction: 'output', position: { x: 1, y: 0.42 } },
+            { id: 'key-k', name: 'K', type: 'control', direction: 'output', position: { x: 1, y: 0.44 } },
+            { id: 'key-l', name: 'L', type: 'control', direction: 'output', position: { x: 1, y: 0.46 } },
+            // Row 3 (Z-/): 10 keys - y: 0.53-0.71
+            { id: 'key-z', name: 'Z', type: 'control', direction: 'output', position: { x: 1, y: 0.53 } },
+            { id: 'key-x', name: 'X', type: 'control', direction: 'output', position: { x: 1, y: 0.55 } },
+            { id: 'key-c', name: 'C', type: 'control', direction: 'output', position: { x: 1, y: 0.57 } },
+            { id: 'key-v', name: 'V', type: 'control', direction: 'output', position: { x: 1, y: 0.59 } },
+            { id: 'key-b', name: 'B', type: 'control', direction: 'output', position: { x: 1, y: 0.61 } },
+            { id: 'key-n', name: 'N', type: 'control', direction: 'output', position: { x: 1, y: 0.63 } },
+            { id: 'key-m', name: 'M', type: 'control', direction: 'output', position: { x: 1, y: 0.65 } },
+            { id: 'key-comma', name: ',', type: 'control', direction: 'output', position: { x: 1, y: 0.67 } },
+            { id: 'key-period', name: '.', type: 'control', direction: 'output', position: { x: 1, y: 0.69 } },
+            { id: 'key-slash', name: '/', type: 'control', direction: 'output', position: { x: 1, y: 0.71 } },
+            // Spacebar - y: 0.85
+            { id: 'key-space', name: 'Space', type: 'control', direction: 'output', position: { x: 1, y: 0.85 } }
+        ],
+        defaultData: {},
+        dimensions: { width: 660, height: 280 }
     },
 
     microphone: {
@@ -62,28 +128,30 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'input',
         name: 'Microphone',
         description: 'Live audio input from microphone',
-        defaultPorts: [audioOutput],
+        defaultPorts: [{ ...audioOutput, position: { x: 1, y: 0.5 } }],
         defaultData: {
             isMuted: false,
             isActive: true
-        }
+        },
+        dimensions: { width: 140, height: 100 }
     },
 
-    // Instruments
+    // Instruments - all share similar layout: inputs on left, audio out on right
     piano: {
         type: 'piano',
         category: 'instruments',
         name: 'Classic Piano',
         description: 'Grand piano instrument',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }  // Audio out centered
         }
     },
 
@@ -92,15 +160,16 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Cello',
         description: 'Orchestral cello',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             offsets: { 'input-1': -12 }, // Default octaves lower
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
 
@@ -109,15 +178,16 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Electric Cello',
         description: 'Modern electric cello with saturation and chorus',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             offsets: { 'input-1': -12 }, // Same range as acoustic cello
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
 
@@ -126,15 +196,16 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Violin',
         description: 'Orchestral violin',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             offsets: { 'input-1': 12 }, // Higher pitch
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
 
@@ -143,33 +214,35 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Saxophone',
         description: 'Jazz saxophone',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [], // Ports generated from internal canvas-input/output nodes
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
 
-    // Category Aliases / Defaults
+    // Category Aliases / Defaults - inherit layout from their base type
     strings: {
         type: 'cello', // Default string instrument
         category: 'instruments',
         name: 'Strings',
         description: 'String Ensemble',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [],
         defaultData: {
             offsets: { 'input-1': -12 },
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
     keys: {
@@ -177,15 +250,16 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Keys',
         description: 'Keyboards',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [],
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
     winds: {
@@ -193,15 +267,16 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'instruments',
         name: 'Winds',
         description: 'Wind Instruments',
-        defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
-        ],
+        defaultPorts: [],
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
+        },
+        dimensions: { width: 180, height: 100 },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         }
     },
 
@@ -212,16 +287,17 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Instrument',
         description: 'Generic sampled instrument',
         defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'technical', direction: 'input', isBundled: true },
-            { id: 'input-1', name: 'In 1', type: 'technical', direction: 'input' },
-            { id: 'control-in', name: 'Control', type: 'technical', direction: 'input' },
-            audioOutput
+            { id: 'bundle-in', name: 'Keys Bundle', type: 'control', direction: 'input', isBundled: true, position: { x: 0, y: 0.25 } },
+            { id: 'input-1', name: 'In 1', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } },
+            { id: 'control-in', name: 'Control', type: 'control', direction: 'input', position: { x: 0, y: 0.75 } },
+            { ...audioOutput, position: { x: 1, y: 0.5 } }
         ],
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1'],
-            instrumentId: 'salamander-piano' // Default instrument
-        }
+            instrumentId: 'salamander-piano'
+        },
+        dimensions: { width: 180, height: 120 }
     },
 
     // Effects & Processing
@@ -230,13 +306,17 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'routing',
         name: 'Looper',
         description: 'Record and loop audio with auto-detection',
-        defaultPorts: [audioInput, audioOutput],
+        defaultPorts: [
+            { ...audioInput, position: { x: 0, y: 0.5 } },
+            { ...audioOutput, position: { x: 1, y: 0.5 } }
+        ],
         defaultData: {
             duration: 10,
             isRecording: false,
             loops: [],
             currentTime: 0
-        }
+        },
+        dimensions: { width: 240, height: 120 }
     },
 
     effect: {
@@ -244,11 +324,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'effects',
         name: 'Effect',
         description: 'Audio effect processor',
-        defaultPorts: [audioInput, audioOutput],
+        defaultPorts: [
+            { ...audioInput, position: { x: 0, y: 0.5 } },
+            { ...audioOutput, position: { x: 1, y: 0.5 } }
+        ],
         defaultData: {
             effectType: 'distortion',
             params: { amount: 0.5 }
-        }
+        },
+        dimensions: { width: 160, height: 100 }
     },
 
     amplifier: {
@@ -257,13 +341,14 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Amplifier',
         description: 'Gain control for audio signals',
         defaultPorts: [
-            audioInput,
-            audioOutput,
-            { ...technicalInput, id: 'gain-in', name: 'Gain' }
+            { ...audioInput, position: { x: 0, y: 0.35 } },
+            { ...audioOutput, position: { x: 1, y: 0.5 } },
+            { ...controlInput, id: 'gain-in', name: 'Gain', position: { x: 0, y: 0.65 } }
         ],
         defaultData: {
             gain: 1
-        }
+        },
+        dimensions: { width: 140, height: 100 }
     },
 
     // Outputs
@@ -272,12 +357,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'output',
         name: 'Speaker',
         description: 'Audio output to device speakers',
-        defaultPorts: [audioInput],
+        defaultPorts: [
+            { ...audioInput, position: { x: 0, y: 0.5 } }
+        ],
         defaultData: {
             volume: 1,
             isMuted: false,
             deviceId: 'default'
-        }
+        },
+        dimensions: { width: 140, height: 160 }
     },
 
     recorder: {
@@ -285,25 +373,29 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'output',
         name: 'Recorder',
         description: 'Record audio to WAV file',
-        defaultPorts: [audioInput],
+        defaultPorts: [
+            { ...audioInput, position: { x: 0, y: 0.5 } }
+        ],
         defaultData: {
             isRecording: false,
             recordings: []
-        }
+        },
+        dimensions: { width: 160, height: 120 }
     },
 
-    // Hierarchical Canvas I/O Nodes
+    // Hierarchical Canvas I/O Nodes - small connector nodes
     'canvas-input': {
         type: 'canvas-input',
         category: 'routing',
         name: 'Input',
         description: 'Receives signal from parent canvas',
         defaultPorts: [
-            { id: 'out', name: 'Out', type: 'technical', direction: 'output' }
+            { id: 'out', name: 'Out', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         defaultData: {
-            portName: '' // User-defined name for this input port
-        }
+            portName: ''
+        },
+        dimensions: { width: 80, height: 40 }
     },
 
     'canvas-output': {
@@ -312,11 +404,96 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Output',
         description: 'Sends signal to parent canvas',
         defaultPorts: [
-            { id: 'in', name: 'In', type: 'technical', direction: 'input' }
+            { id: 'in', name: 'In', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } }
         ],
         defaultData: {
-            portName: '' // User-defined name for this output port
-        }
+            portName: ''
+        },
+        dimensions: { width: 80, height: 40 }
+    },
+
+    'output-panel': {
+        type: 'output-panel',
+        category: 'routing',
+        name: 'Outputs',
+        description: 'Multi-port output panel with editable labels',
+        defaultPorts: [
+            // Default 4 ports for keyboard (Row 1, Row 2, Row 3, Pedal)
+            { id: 'port-1', name: 'Row 1 (Q-P)', type: 'control', direction: 'input', position: { x: 0, y: 0.15 } },
+            { id: 'port-2', name: 'Row 2 (A-L)', type: 'control', direction: 'input', position: { x: 0, y: 0.38 } },
+            { id: 'port-3', name: 'Row 3 (Z-/)', type: 'control', direction: 'input', position: { x: 0, y: 0.61 } },
+            { id: 'port-4', name: 'Pedal', type: 'control', direction: 'input', position: { x: 0, y: 0.84 } }
+        ],
+        defaultData: {
+            // Store port labels for editing
+            portLabels: {
+                'port-1': 'Row 1 (Q-P)',
+                'port-2': 'Row 2 (A-L)',
+                'port-3': 'Row 3 (Z-/)',
+                'port-4': 'Pedal'
+            }
+        },
+        dimensions: { width: 160, height: 200 }
+    },
+
+    'input-panel': {
+        type: 'input-panel',
+        category: 'routing',
+        name: 'Inputs',
+        description: 'Multi-port input panel with editable labels',
+        defaultPorts: [],  // Empty by default
+        defaultData: {
+            portLabels: {}
+        },
+        dimensions: { width: 160, height: 80 }
+    },
+
+    // Utility Nodes
+    container: {
+        type: 'container',
+        category: 'utility',
+        name: 'Empty Node',
+        description: 'Empty node for grouping and organizing other nodes',
+        defaultPorts: [],  // Ports synced from internal canvas-input/output nodes
+        defaultData: {
+            displayName: 'Untitled'
+        },
+        dimensions: { width: 160, height: 100 },
+        canEnter: true  // Can be entered to place nodes inside
+    },
+
+    add: {
+        type: 'add',
+        category: 'utility',
+        name: 'Add',
+        description: 'Add two signals together (audio mixing or number addition)',
+        defaultPorts: [
+            { id: 'in-1', name: 'In 1', type: 'universal', direction: 'input', position: { x: 0, y: 0.33 } },
+            { id: 'in-2', name: 'In 2', type: 'universal', direction: 'input', position: { x: 0, y: 0.67 } },
+            { id: 'out', name: 'Out', type: 'universal', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {
+            resolvedType: null
+        },
+        dimensions: { width: 120, height: 80 },
+        canEnter: false  // Cannot be entered - flashes red on E key
+    },
+
+    subtract: {
+        type: 'subtract',
+        category: 'utility',
+        name: 'Subtract',
+        description: 'Subtract second signal from first (audio phase cancellation or number subtraction)',
+        defaultPorts: [
+            { id: 'in-1', name: 'In 1', type: 'universal', direction: 'input', position: { x: 0, y: 0.33 } },
+            { id: 'in-2', name: 'In 2', type: 'universal', direction: 'input', position: { x: 0, y: 0.67 } },
+            { id: 'out', name: 'Out', type: 'universal', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {
+            resolvedType: null
+        },
+        dimensions: { width: 120, height: 80 },
+        canEnter: false  // Cannot be entered - flashes red on E key
     }
 };
 
@@ -362,6 +539,11 @@ export const menuCategories: MenuCategory[] = [
         items: ['effect', 'amplifier']
     },
     {
+        name: 'Utility',
+        icon: '🔧',
+        items: ['container', 'add', 'subtract']
+    },
+    {
         name: 'Output',
         icon: '🔊',
         items: ['speaker', 'recorder']
@@ -380,16 +562,30 @@ export function canConnect(
     sourcePort: PortDefinition,
     targetPort: PortDefinition
 ): boolean {
-    // Must be same connection type
-    if (sourcePort.type !== targetPort.type) {
-        return false;
+    // ANY-TO-ANY PHILOSOPHY: Allow all connections by default
+    // Signal coercion/interpretation happens at the receiving node
+    // This follows modular synth conventions where "it's all just voltage"
+
+    // Universal ports can connect to anything (they adapt to the connected type)
+    if (sourcePort.type === 'universal' || targetPort.type === 'universal') {
+        // Still enforce direction (can't connect output→output)
+        if (sourcePort.direction === targetPort.direction) {
+            return false;
+        }
+        return true;
     }
 
-    // For audio (directional): source must be output, target must be input
-    if (sourcePort.type === 'audio') {
-        return sourcePort.direction === 'output' && targetPort.direction === 'input';
+    // Only restriction: For audio signals, enforce direction
+    // (can't connect output→output or input→input for audio)
+    if (sourcePort.type === 'audio' && targetPort.type === 'audio') {
+        if (sourcePort.direction === targetPort.direction) {
+            return false; // Can't connect same-direction audio ports
+        }
     }
 
-    // For technical (bidirectional): any direction works
+    // All other connections are allowed:
+    // - audio → control (audio modulates a parameter)
+    // - control → audio (control signal as audio, interesting effects)
+    // - control → control (normal parameter routing)
     return true;
 }

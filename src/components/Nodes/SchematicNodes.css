@@ -312,7 +312,7 @@
 }
 
 .binary-label {
-    color: var(--technical-output);
+    color: var(--control-output);
 }
 
 .keyboard-row-ports-marker {
@@ -323,36 +323,55 @@
     margin-top: var(--space-xs);
 }
 
-/* Keyboard output ports - technical (light grey) */
+/* Keyboard output ports - control (light grey) */
 .port-circle-marker {
     width: 20px;
     height: 20px;
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: 50%;
-    background: var(--technical-output);
+    background: var(--control-output);
     cursor: crosshair;
     transition: all var(--transition-fast);
 }
 
+/* Explicitly style control ports as grey */
+.port-circle-marker.control-port {
+    background: var(--control-output);
+}
+
+.port-circle-marker.control-port.input-port {
+    background: var(--control-input);
+}
+
 .port-circle-marker:hover {
-    background: var(--technical-output);
+    background: var(--control-output);
     transform: scale(1.15);
     filter: brightness(1.1);
 }
 
+.port-circle-marker.control-port:hover {
+    background: var(--control-output);
+    filter: brightness(1.2);
+}
+
 .port-circle-marker.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 6px var(--technical-connected);
+    background: var(--control-connected);
+    box-shadow: 0 0 6px var(--control-connected);
+}
+
+.port-circle-marker.control-port.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 6px var(--control-connected);
 }
 
 /* Note port styling */
 .port-circle-marker.note-port {
-    background: var(--technical-output);
+    background: var(--control-output);
 }
 
 /* Control port styling */
 .port-circle-marker.control-port {
-    background: var(--technical-output);
+    background: var(--control-output);
 }
 
 .port-circle-marker.control-active {
@@ -427,7 +446,7 @@
 }
 
 .note-input-port.ghost {
-    background: var(--technical-input);
+    background: var(--control-input);
     border-style: dashed;
     opacity: 0.7;
 }
@@ -437,13 +456,13 @@
     border-style: solid;
 }
 
-/* Instrument input ports - technical (dark grey, receives data from keyboard) */
+/* Instrument input ports - control (dark grey, receives data from keyboard) */
 .note-input-port {
     width: 14px;
     height: 14px;
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: 50%;
-    background: var(--technical-input);
+    background: var(--control-input);
     cursor: crosshair;
     flex-shrink: 0;
     transition: all var(--transition-fast);
@@ -455,8 +474,8 @@
 }
 
 .note-input-port.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 6px var(--technical-connected);
+    background: var(--control-connected);
+    box-shadow: 0 0 6px var(--control-connected);
 }
 
 .note-name {
@@ -481,7 +500,7 @@
     padding: var(--space-sm) var(--space-md);
     border-top: 1px solid var(--border-subtle);
     border-bottom: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--technical-input) 10%, transparent);
+    background: color-mix(in srgb, var(--control-input) 10%, transparent);
 }
 
 .control-label {
@@ -497,7 +516,7 @@
     height: 14px;
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: 50%;
-    background: var(--technical-input);
+    background: var(--control-input);
     cursor: crosshair;
     transition: all var(--transition-fast);
 }
@@ -508,8 +527,8 @@
 }
 
 .control-input-port.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 6px var(--technical-connected);
+    background: var(--control-connected);
+    box-shadow: 0 0 6px var(--control-connected);
 }
 
 .instrument-output {
@@ -1376,7 +1395,7 @@
 }
 
 .port-circle-marker.bundle-port {
-    background: var(--technical-output);
+    background: var(--control-output);
     width: 24px;
     height: 24px;
     border: 3px solid var(--sketch-black);
@@ -1390,8 +1409,8 @@
 }
 
 .port-circle-marker.bundle-port.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 8px var(--technical-connected);
+    background: var(--control-connected);
+    box-shadow: 0 0 8px var(--control-connected);
 }
 
 .expand-btn {
@@ -1475,7 +1494,7 @@
 .port-circle-marker.key-port {
     width: 18px;
     height: 18px;
-    background: var(--technical-output);
+    background: var(--control-output);
 }
 
 .port-circle-marker.key-port:hover {
@@ -1483,8 +1502,8 @@
 }
 
 .port-circle-marker.key-port.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 6px var(--technical-connected);
+    background: var(--control-connected);
+    box-shadow: 0 0 6px var(--control-connected);
 }
 
 .collapse-btn {
@@ -1583,11 +1602,11 @@
 }
 
 .canvas-io-node.canvas-input .port-dot {
-    background: var(--technical-output);
+    background: var(--control-output);
 }
 
 .canvas-io-node.canvas-output .port-dot {
-    background: var(--technical-input);
+    background: var(--control-input);
 }
 
 .canvas-io-node .port-dot:hover {
@@ -1646,4 +1665,606 @@
 
 .canvas-io-node.deletion-attempted {
     animation: flash-red 0.4s ease-in-out;
+}
+
+/* ============================================
+ * Keyboard Visual Node - Full keyboard layout
+ * Used inside keyboard's internal canvas
+ * ============================================ */
+.keyboard-visual-node {
+    min-width: 600px;
+    max-width: 700px;
+}
+
+.keyboard-visual-header {
+    text-align: center;
+}
+
+.keyboard-visual-body {
+    padding: var(--space-md) var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+/* Keyboard rows */
+.keyboard-visual-node .keyboard-row {
+    display: flex;
+    gap: 4px;
+}
+
+.keyboard-visual-node .keyboard-row.row-1 {
+    margin-left: 0;
+}
+
+.keyboard-visual-node .keyboard-row.row-2 {
+    margin-left: 25px; /* Offset for A row */
+}
+
+.keyboard-visual-node .keyboard-row.row-3 {
+    margin-left: 50px; /* Offset for Z row */
+}
+
+.keyboard-visual-node .keyboard-row.row-space {
+    margin-left: 80px;
+    margin-top: var(--space-sm);
+}
+
+/* Individual keys */
+.keyboard-visual-key {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    background: var(--bg-canvas);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    user-select: none;
+    cursor: crosshair;
+}
+
+.keyboard-visual-key:hover {
+    background: var(--bg-tertiary);
+    transform: translateY(-2px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.keyboard-visual-key.active {
+    background: var(--accent-primary);
+    color: var(--text-on-accent);
+    border-color: var(--accent-primary);
+    transform: translateY(0);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Key label */
+.keyboard-visual-key .key-label {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: inherit;
+}
+
+/* Spacebar - wide key */
+.keyboard-visual-key.spacebar {
+    width: 300px;
+}
+
+.keyboard-visual-key.spacebar .key-label {
+    font-size: var(--text-sm);
+    letter-spacing: 2px;
+}
+
+/* Port marker on each key */
+.key-port-marker {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--control-output);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+    z-index: 1;
+}
+
+.key-port-marker:hover {
+    transform: scale(1.3);
+    background: var(--control-output);
+    filter: brightness(1.2);
+}
+
+.key-port-marker.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}
+
+/* Port row layout (for auto-generated ports from internal canvas-IO) */
+.port-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-xs) var(--space-sm);
+    gap: var(--space-sm);
+}
+
+.port-row.input {
+    flex-direction: row;
+}
+
+.port-row.output {
+    flex-direction: row-reverse;
+}
+
+/* ============================================================================
+   OUTPUT PANEL NODE - Multi-port output panel with editable labels
+   ============================================================================ */
+
+.output-panel-node {
+    position: absolute;
+    min-width: 140px;
+    background: var(--control-output);
+    border: 2px solid var(--sketch-black);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    cursor: default;
+    transition: box-shadow var(--transition-fast);
+}
+
+.output-panel-node:hover {
+    box-shadow: var(--shadow-lg);
+}
+
+.output-panel-node.selected {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+.output-panel-node.dragging {
+    opacity: 0.9;
+    cursor: grabbing;
+}
+
+/* Header */
+.output-panel-header {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--sketch-grid);
+    border-bottom: 2px solid var(--sketch-black);
+    cursor: grab;
+}
+
+.output-panel-header:active {
+    cursor: grabbing;
+}
+
+.output-panel-header .schematic-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Body */
+.output-panel-body {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-sm) var(--space-xs);
+    gap: var(--space-sm);
+}
+
+/* Individual port row */
+.output-panel-port-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-xs);
+    border-radius: var(--radius-xs);
+    transition: background var(--transition-fast);
+}
+
+.output-panel-port-row:hover {
+    background: var(--sketch-grid);
+}
+
+/* Port marker */
+.output-panel-port-marker {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    border: 2px solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--control-input);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+}
+
+.output-panel-port-marker:hover {
+    transform: scale(1.2);
+    filter: brightness(1.1);
+}
+
+.output-panel-port-marker.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}
+
+/* Label */
+.output-panel-label {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    color: var(--sketch-ink);
+    cursor: text;
+    padding: 2px 4px;
+    border-radius: var(--radius-xs);
+    transition: background var(--transition-fast);
+    min-width: 60px;
+}
+
+.output-panel-label:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Label input for editing - seamless inline editing */
+.output-panel-label-input {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    color: var(--sketch-ink);
+    padding: 2px 4px;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    outline: none;
+    min-width: 60px;
+    caret-color: var(--accent-primary);
+}
+
+.output-panel-label-input::selection {
+    background: var(--accent-primary-alpha);
+}
+
+/* ============================================================================
+   INPUT PANEL NODE - Multi-port input panel with editable labels
+   Mirror of output panel: labels on left, ports on right
+   ============================================================================ */
+
+.input-panel-node {
+    position: absolute;
+    min-width: 140px;
+    background: var(--control-input);
+    border: 2px solid var(--sketch-black);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    cursor: default;
+    transition: box-shadow var(--transition-fast);
+}
+
+.input-panel-node:hover {
+    box-shadow: var(--shadow-lg);
+}
+
+.input-panel-node.selected {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+.input-panel-node.dragging {
+    opacity: 0.9;
+    cursor: grabbing;
+}
+
+/* Header */
+.input-panel-header {
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom: 2px solid var(--sketch-black);
+    cursor: grab;
+}
+
+.input-panel-header:active {
+    cursor: grabbing;
+}
+
+.input-panel-header .schematic-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Body */
+.input-panel-body {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-sm) var(--space-xs);
+    gap: var(--space-sm);
+    min-height: 40px;
+}
+
+/* Empty state */
+.input-panel-empty {
+    font-size: var(--text-xs);
+    color: var(--sketch-gray);
+    text-align: center;
+    padding: var(--space-xs);
+    font-style: italic;
+}
+
+/* Individual port row - reversed order from output panel */
+.input-panel-port-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-xs);
+    border-radius: var(--radius-xs);
+    transition: background var(--transition-fast);
+}
+
+.input-panel-port-row:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Port marker on right side */
+.input-panel-port-marker {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    border: 2px solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--control-output);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+}
+
+.input-panel-port-marker:hover {
+    transform: scale(1.2);
+    filter: brightness(1.1);
+}
+
+.input-panel-port-marker.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}
+
+/* Label on left side */
+.input-panel-label {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    color: var(--sketch-ink);
+    cursor: text;
+    padding: 2px 4px;
+    border-radius: var(--radius-xs);
+    transition: background var(--transition-fast);
+    min-width: 60px;
+    text-align: left;
+}
+
+.input-panel-label:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Label input for editing - seamless inline editing */
+.input-panel-label-input {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    color: var(--sketch-ink);
+    padding: 2px 4px;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    outline: none;
+    min-width: 60px;
+    caret-color: var(--accent-primary);
+    text-align: left;
+}
+
+.input-panel-label-input::selection {
+    background: var(--accent-primary-alpha);
+}
+
+/* ============================================
+ * Universal (Rainbow) Ports
+ * Used by Add/Subtract nodes - adapt to connected type
+ * ============================================ */
+.port-dot.universal {
+    background: linear-gradient(135deg, #FF6B6B, #FFE66D, #4ECB71, #4DB8FF, #9B59B6);
+    background-size: 200% 200%;
+    animation: rainbow-shift 3s ease infinite;
+}
+
+.port-dot.universal.connected {
+    animation: none;
+}
+
+/* When resolved to audio type */
+.port-dot.universal.resolved-audio {
+    background: var(--audio-connected);
+    box-shadow: 0 0 8px var(--audio-connected);
+    animation: none;
+}
+
+/* When resolved to control type */
+.port-dot.universal.resolved-control {
+    background: var(--control-connected);
+    box-shadow: 0 0 8px var(--control-connected);
+    animation: none;
+}
+
+@keyframes rainbow-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* ============================================
+ * Container Node - Empty grouping node
+ * ============================================ */
+.container-node {
+    min-width: 140px;
+    min-height: 80px;
+}
+
+.container-header {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-node-header);
+    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    cursor: grab;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.container-header:active {
+    cursor: grabbing;
+}
+
+.container-name {
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: text;
+    transition: background var(--transition-fast);
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+}
+
+.container-name:hover {
+    background: var(--bg-tertiary);
+}
+
+.container-name-input {
+    font-family: var(--font-sketch);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-canvas);
+    border: 2px solid var(--accent-primary);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+    width: 100%;
+    outline: none;
+}
+
+.entry-indicator {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+}
+
+.container-body {
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-height: 40px;
+}
+
+.container-ports-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-align: center;
+    font-style: italic;
+}
+
+/* ============================================
+ * Math Node (Add/Subtract)
+ * ============================================ */
+.math-node {
+    min-width: 100px;
+}
+
+.math-header {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-node-header);
+    border-bottom: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.math-header:active {
+    cursor: grabbing;
+}
+
+.math-symbol {
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    font-weight: bold;
+    color: var(--accent-primary);
+}
+
+.math-name {
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    color: var(--text-primary);
+}
+
+.math-body {
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: stretch;
+    gap: var(--space-md);
+}
+
+.math-inputs {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    gap: var(--space-sm);
+}
+
+.math-outputs {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+}
+
+.math-port-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.math-port-row.output {
+    justify-content: flex-end;
+}
+
+.subtract-indicator {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent-danger);
+    margin-left: var(--space-xs);
+}
+
+/* Math node port dots */
+.math-node .port-dot {
+    width: 16px;
+    height: 16px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+}
+
+.math-node .port-dot:hover {
+    transform: scale(1.2);
+    filter: brightness(1.1);
 }

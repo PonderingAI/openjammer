@@ -90,7 +90,11 @@ export function importWorkflow(
             category: serialized.category,
             position: serialized.position,
             data: serialized.data,
-            ports: [...definition.defaultPorts]
+            ports: [...definition.defaultPorts],
+            // Flat structure fields - deserialized nodes are root-level by default
+            parentId: null,
+            childIds: [],
+            specialNodes: []
         };
     });
 

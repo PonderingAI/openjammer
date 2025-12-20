@@ -211,10 +211,10 @@ OpenJammer is a visual node-based audio workstation inspired by ComfyUI's interf
 ## Node System
 
 ### Connections
-- **Blue (Audio)**: Light blue = input, dark blue = output. Directional only.
-- **Grey (Data)**: Bidirectional, for passing numbers/parameters.
+- **Blue ports**: Music/audio signals (directional)
+- **Grey ports**: Numbers/triggers/parameters (bidirectional)
 
-Ports are color-coded on each node. Same-color connections are interchangeable respecting directionality.
+Keyboard outputs are grey (they send numbers). Instrument outputs are blue (they make sound).
 
 ### Multi-Select & Undo
 - Drag to select multiple nodes → Backspace/Delete removes them

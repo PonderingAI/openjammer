@@ -670,6 +670,7 @@ export function InstrumentNode({
 
     // Drag state
     const [dragStartPos, setDragStartPos] = useState<{x: number, y: number} | null>(null);
+    const [wasDragging, setWasDragging] = useState(false);
 
     // Inline editing state
     const [editingPort, setEditingPort] = useState<string | null>(null);
@@ -815,20 +816,34 @@ export function InstrumentNode({
         };
     }, [showPopup]);
 
-    // Clear dragStartPos on mouseup to prevent stale state
+    // Track mouse movement to detect dragging
     useEffect(() => {
         if (!dragStartPos) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            const distance = Math.sqrt(
+                Math.pow(e.clientX - dragStartPos.x, 2) +
+                Math.pow(e.clientY - dragStartPos.y, 2)
+            );
+            if (distance > DRAG_THRESHOLD_PX) {
+                setWasDragging(true);
+            }
+        };
 
         const handleMouseUp = () => {
             setDragStartPos(null);
         };
 
+        window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
-        return () => window.removeEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
     }, [dragStartPos]);
 
     // Get persisted input ports (exclude control-in port)
-    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical' && p.id !== 'control-in');
+    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'control' && p.id !== 'control-in');
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
 
     // Count connected ports
@@ -853,7 +868,7 @@ export function InstrumentNode({
             visibleInputPorts.push({
                 id: `ghost-input-${i}`,
                 name: `In ${i + 1}`,
-                type: 'technical' as const,
+                type: 'control' as const,
                 direction: 'input' as const,
                 isGhost: true
             });
@@ -911,13 +926,16 @@ export function InstrumentNode({
     // Handle header mouse down - track drag start
     const handleHeaderMouseDownLocal = (e: React.MouseEvent) => {
         setDragStartPos({ x: e.clientX, y: e.clientY });
+        setWasDragging(false); // Reset dragging flag
         handleHeaderMouseDown?.(e);
     };
 
     // Handle instrument name click to open popup (only if not dragging)
     const handleInstrumentNameClick = (e: React.MouseEvent) => {
-        // Don't open if node is being dragged
-        if (isDragging) {
+        // Don't open if node was being dragged or is currently being dragged
+        if (isDragging || wasDragging) {
+            setWasDragging(false); // Reset for next interaction
+            setDragStartPos(null);
             return;
         }
 
@@ -929,6 +947,7 @@ export function InstrumentNode({
             );
             if (distance > DRAG_THRESHOLD_PX) {
                 setDragStartPos(null);
+                setWasDragging(true); // Mark that dragging occurred
                 return; // Was a drag, don't open popup
             }
         }
