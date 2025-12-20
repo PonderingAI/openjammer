@@ -11,6 +11,7 @@ import { InstrumentNode } from './InstrumentNode';
 import { MicrophoneNode } from './MicrophoneNode';
 import { KeyboardNode } from './KeyboardNode';
 import { KeyboardVisualNode } from './KeyboardVisualNode';
+import { InstrumentVisualNode } from './InstrumentVisualNode';
 import { LooperNode } from './LooperNode';
 import { EffectNode } from './EffectNode';
 import { AmplifierNode } from './AmplifierNode';
@@ -31,6 +32,7 @@ interface NodeWrapperProps {
 const SCHEMATIC_TYPES = [
     'keyboard',
     'keyboard-visual',
+    'instrument-visual',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
@@ -284,19 +286,19 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         }
     }, [node, addConnection, stopConnecting]);
 
-    // Handle port hover for connection targeting
+    // Handle port hover for connection targeting and 'A' key selection
     const handlePortMouseEnter = useCallback((portId: string) => {
-        if (useCanvasStore.getState().isConnecting) {
-            setHoverTarget(node.id, portId);
+        const port = node.ports.find(p => p.id === portId);
+        if (port) {
+            // Always set hover target with port type info (for 'A' key detection)
+            setHoverTarget(node.id, portId, port.type, port.direction);
         }
-    }, [node.id, setHoverTarget]);
+    }, [node.id, node.ports, setHoverTarget]);
 
     const handlePortMouseLeave = useCallback(() => {
-        if (useCanvasStore.getState().isConnecting) {
-            // Only clear the port, keep hovering over node
-            setHoverTarget(node.id);
-        }
-    }, [node.id, setHoverTarget]);
+        // Clear port hover (only clear when leaving port, not just when connecting)
+        setHoverTarget(null);
+    }, [setHoverTarget]);
 
     // Common props for schematic nodes
     const schematicProps = {
@@ -326,6 +328,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <KeyboardNode {...schematicProps} />;
             case 'keyboard-visual':
                 return <KeyboardVisualNode {...schematicProps} />;
+            case 'instrument-visual':
+                return <InstrumentVisualNode {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':
@@ -408,7 +412,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                                 data-node-id={node.id}
                                 data-port-id={port.id}
                             />
-                            <span className="port-label">{port.name}</span>
+                            {!port.hideExternalLabel && <span className="port-label">{port.name}</span>}
                         </div>
                     ))}
                 </div>
@@ -423,7 +427,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                             onMouseEnter={() => handlePortMouseEnter(port.id)}
                             onMouseLeave={handlePortMouseLeave}
                         >
-                            <span className="port-label">{port.name}</span>
+                            {!port.hideExternalLabel && <span className="port-label">{port.name}</span>}
                             <div
                                 className={`port-dot ${port.type === 'audio' ? 'audio-output' : 'control'} ${hasConnection(port.id) ? 'connected' : ''}`}
                                 data-node-id={node.id}

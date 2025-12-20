@@ -16,7 +16,6 @@ import { getConnectionBundleCount } from '../../utils/portSync';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
-import { LevelBreadcrumb } from '../UI/LevelBreadcrumb';
 import './NodeCanvas.css';
 
 interface SelectionBox {
@@ -35,6 +34,9 @@ export function NodeCanvas() {
     const [rightClickStart, setRightClickStart] = useState<Position | null>(null);
     const rightClickMoved = useRef(false);
     const rightClickOnCanvas = useRef(false);
+
+    // Track if Ctrl was held when starting selection box (for port selection mode)
+    const selectionBoxCtrlHeld = useRef(false);
 
     // Signal levels for audio visualization (connection key -> 0-1 level)
     const [signalLevels, setSignalLevels] = useState<Map<string, number>>(new Map());
@@ -101,6 +103,40 @@ export function NodeCanvas() {
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
+    // Get port position in canvas coordinates for a given node and port
+    // Used for box selection of ports
+    const getPortCanvasPositionForSelection = useCallback((node: { id: string; position: Position; ports: { id: string; position?: { x: number; y: number } }[] }, portId: string): Position | null => {
+        // First try DOM query for actual port position (more accurate)
+        const portElement = document.querySelector(
+            `[data-node-id="${node.id}"][data-port-id="${portId}"]`
+        ) as HTMLElement | null;
+
+        if (portElement && canvasRef.current) {
+            const canvasRect = canvasRef.current.getBoundingClientRect();
+            const portRect = portElement.getBoundingClientRect();
+
+            const screenX = portRect.left + portRect.width / 2;
+            const screenY = portRect.top + portRect.height / 2;
+
+            const canvasX = (screenX - canvasRect.left - pan.x) / zoom;
+            const canvasY = (screenY - canvasRect.top - pan.y) / zoom;
+
+            return { x: canvasX, y: canvasY };
+        }
+
+        // Fallback: calculate from node position + port.position
+        const port = node.ports.find(p => p.id === portId);
+        if (port?.position) {
+            const nodeWidth = 180;
+            const nodeHeight = 120;
+            return {
+                x: node.position.x + port.position.x * nodeWidth,
+                y: node.position.y + port.position.y * nodeHeight
+            };
+        }
+        return null;
+    }, [pan, zoom]);
+
     // Handle right-click context menu - just prevent default
     // Menu is shown on mouseup if no drag occurred
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -144,6 +180,9 @@ export function NodeCanvas() {
         if (e.button === 0 && !isNodeOrPort) {
             clearSelection();
             stopConnecting();
+
+            // Track if Ctrl is held (for port selection mode)
+            selectionBoxCtrlHeld.current = e.ctrlKey;
 
             // Start box selection
             const canvasPos = screenToCanvas({ x: e.clientX, y: e.clientY });
@@ -219,22 +258,54 @@ export function NodeCanvas() {
             rightClickOnCanvas.current = false;
         }
 
-        // Complete box selection
+        // Complete box selection - check for ports first (if Ctrl held), then nodes
         if (selectionBox) {
             const width = selectionBox.currentX - selectionBox.startX;
             const height = selectionBox.currentY - selectionBox.startY;
 
             // Only select if dragged more than 5 pixels
             if (Math.abs(width) > 5 || Math.abs(height) > 5) {
+                const rect = {
+                    minX: Math.min(selectionBox.startX, selectionBox.currentX),
+                    maxX: Math.max(selectionBox.startX, selectionBox.currentX),
+                    minY: Math.min(selectionBox.startY, selectionBox.currentY),
+                    maxY: Math.max(selectionBox.startY, selectionBox.currentY)
+                };
+
+                // Only check for ports if Ctrl was held when starting the selection
+                if (selectionBoxCtrlHeld.current) {
+                    const selectedPorts: { nodeId: string; portId: string }[] = [];
+
+                    nodes.forEach(node => {
+                        node.ports.forEach(port => {
+                            const pos = getPortCanvasPositionForSelection(node, port.id);
+                            if (pos && pos.x >= rect.minX && pos.x <= rect.maxX &&
+                                pos.y >= rect.minY && pos.y <= rect.maxY) {
+                                selectedPorts.push({ nodeId: node.id, portId: port.id });
+                            }
+                        });
+                    });
+
+                    if (selectedPorts.length > 0) {
+                        // Ports found - start connecting with them (they follow cursor)
+                        startConnecting(selectedPorts);
+                        setSelectionBox(null);
+                        selectionBoxCtrlHeld.current = false;
+                        return;
+                    }
+                }
+
+                // Normal node selection (no Ctrl or no ports found)
                 selectNodesInRect({
-                    x: Math.min(selectionBox.startX, selectionBox.currentX),
-                    y: Math.min(selectionBox.startY, selectionBox.currentY),
+                    x: rect.minX,
+                    y: rect.minY,
                     width: Math.abs(width),
                     height: Math.abs(height)
                 });
             }
 
             setSelectionBox(null);
+            selectionBoxCtrlHeld.current = false;
         }
 
         // Cancel connection if mouseup happens on empty canvas (not on a valid port)
@@ -248,7 +319,7 @@ export function NodeCanvas() {
                 }
             }, 0);
         }
-    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting]);
+    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting, nodes, startConnecting, getPortCanvasPositionForSelection]);
 
     // Handle wheel for zoom and two-finger trackpad pan
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -345,7 +416,32 @@ export function NodeCanvas() {
                 }
 
                 if (matchesAction(e, 'canvas.multiConnect')) {
-                    // Get all selected nodes
+                    // Ctrl+A while hovering over a port - select all ports of same type on that node
+                    const hoverTarget = useCanvasStore.getState().hoverTarget;
+
+                    if (e.ctrlKey && hoverTarget?.portId && hoverTarget?.portType && hoverTarget?.portDirection) {
+                        e.preventDefault();
+
+                        const graphNodes = useGraphStore.getState().nodes;
+                        const node = graphNodes.get(hoverTarget.nodeId);
+                        if (!node) return;
+
+                        // Find all ports matching type AND direction on this node
+                        const matchingPorts = node.ports.filter(
+                            p => p.type === hoverTarget.portType &&
+                                 p.direction === hoverTarget.portDirection
+                        );
+
+                        if (matchingPorts.length > 0) {
+                            // Start connecting with all matching ports
+                            startConnecting(
+                                matchingPorts.map(p => ({ nodeId: node.id, portId: p.id }))
+                            );
+                        }
+                        return;
+                    }
+
+                    // Fallback: Get all selected nodes (original behavior)
                     const selectedIds = useGraphStore.getState().selectedNodeIds;
                     const graphNodes = useGraphStore.getState().nodes;
                     const graphConnections = useGraphStore.getState().connections;
@@ -477,7 +573,7 @@ export function NodeCanvas() {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId, copySelected, pasteClipboard]);
 
     // Get port position for connection rendering
     // Uses DOM query for accurate positions, falls back to math calculation
@@ -745,9 +841,6 @@ export function NodeCanvas() {
                     onAddNode={handleAddNode}
                 />
             )}
-
-            {/* Level Breadcrumb - shows navigation path when inside nodes */}
-            <LevelBreadcrumb />
 
             {/* Back to Action button - appears when nodes are not visible on any level */}
             {nodes.size > 0 && !nodesVisibility.visible && nodesVisibility.direction !== null && (

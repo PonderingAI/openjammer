@@ -8,13 +8,15 @@ import type {
     GraphNode,
     Connection,
     Position,
-    NodeType
+    NodeType,
+    PortDefinition
 } from '../engine/types';
 import { getNodeDefinition, canConnect } from '../engine/registry';
 import { createDefaultInternalStructure } from '../utils/nodeInternals';
-import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval } from '../utils/portSync';
+import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval, isInstrumentNode, detectBundleInfo, expandTargetForBundle } from '../utils/portSync';
 import { useUIFeedbackStore } from './uiFeedbackStore';
 import { useCanvasNavigationStore } from './canvasNavigationStore';
+import type { InstrumentRow, InstrumentNodeData } from '../engine/types';
 
 // ============================================================================
 // Utility Functions
@@ -103,6 +105,10 @@ interface GraphStore {
     updateNodeData: <T extends object>(nodeId: string, data: Partial<T>) => void;
     updateNodePorts: (nodeId: string, ports: import('../engine/types').PortDefinition[]) => void;
     updateNodeType: (nodeId: string, type: NodeType) => void;
+
+    // Instrument Row Actions
+    updateInstrumentRow: (nodeId: string, rowId: string, updates: Partial<InstrumentRow>) => void;
+    updateKeyGain: (nodeId: string, rowId: string, keyIndex: number, gain: number) => void;
 
     // Connection Actions
     addConnection: (
@@ -499,6 +505,68 @@ export const useGraphStore = create<GraphStore>()(
                 });
             },
 
+            // Instrument Row Actions
+            updateInstrumentRow: (nodeId, rowId, updates) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const instrumentData = node.data as InstrumentNodeData;
+                    const rows = instrumentData.rows || [];
+                    const rowIndex = rows.findIndex(r => r.rowId === rowId);
+                    if (rowIndex === -1) return state;
+
+                    const updatedRow = { ...rows[rowIndex], ...updates };
+
+                    // If spread changed, recalculate keyGains
+                    if (updates.spread !== undefined && updates.spread !== rows[rowIndex].spread) {
+                        const newSpread = updates.spread;
+                        updatedRow.keyGains = Array.from(
+                            { length: updatedRow.portCount },
+                            (_, i) => i * newSpread
+                        );
+                    }
+
+                    const newRows = [...rows];
+                    newRows[rowIndex] = updatedRow;
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, rows: newRows }
+                    });
+                    return { nodes: newNodes };
+                });
+            },
+
+            updateKeyGain: (nodeId, rowId, keyIndex, gain) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const instrumentData = node.data as InstrumentNodeData;
+                    const rows = instrumentData.rows || [];
+                    const rowIndex = rows.findIndex(r => r.rowId === rowId);
+                    if (rowIndex === -1) return state;
+
+                    const row = rows[rowIndex];
+                    if (keyIndex < 0 || keyIndex >= row.keyGains.length) return state;
+
+                    const newKeyGains = [...row.keyGains];
+                    newKeyGains[keyIndex] = gain;
+
+                    const newRows = [...rows];
+                    newRows[rowIndex] = { ...row, keyGains: newKeyGains };
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, rows: newRows }
+                    });
+                    return { nodes: newNodes };
+                });
+            },
+
             // Connection Actions
             addConnection: (sourceNodeId, sourcePortId, targetNodeId, targetPortId) => {
                 const state = get();
@@ -508,7 +576,23 @@ export const useGraphStore = create<GraphStore>()(
                 if (!sourceNode || !targetNode) return null;
 
                 const sourcePort = sourceNode.ports.find(p => p.id === sourcePortId);
-                const targetPort = targetNode.ports.find(p => p.id === targetPortId);
+                let targetPort = targetNode.ports.find(p => p.id === targetPortId);
+
+                // If target port not found (e.g., placeholder was replaced by previous connection),
+                // try to find any available control input port on instruments
+                if (!targetPort && isInstrumentNode(targetNode)) {
+                    const existingConnections = Array.from(state.connections.values());
+                    const connectedTargetPorts = new Set(
+                        existingConnections
+                            .filter(c => c.targetNodeId === targetNodeId)
+                            .map(c => c.targetPortId)
+                    );
+                    targetPort = targetNode.ports.find(p =>
+                        p.direction === 'input' &&
+                        p.type === 'control' &&
+                        !connectedTargetPorts.has(p.id)
+                    );
+                }
 
                 if (!sourcePort || !targetPort) return null;
                 if (!canConnect(sourcePort, targetPort)) return null;
@@ -552,20 +636,189 @@ export const useGraphStore = create<GraphStore>()(
                 set((state) => {
                     const newConnections = new Map(state.connections);
                     newConnections.set(id, connection);
+                    let newNodes = new Map(state.nodes);
+
+                    // ================================================================
+                    // Generic Bundle Expansion
+                    // When a bundle connects to ANY node with an input-panel,
+                    // expand the input-panel to match the bundle size
+                    // ================================================================
+                    const bundleInfo = detectBundleInfo(
+                        sourceNodeId,
+                        sourcePortId,
+                        newNodes,
+                        newConnections
+                    );
+
+                    if (bundleInfo) {
+                        // Try to expand target for bundle
+                        const expansion = expandTargetForBundle(
+                            targetNodeId,
+                            bundleInfo.size,
+                            bundleInfo.label,
+                            newNodes
+                        );
+
+                        if (expansion) {
+                            // Update input-panel with new ports
+                            const inputPanel = newNodes.get(expansion.panelId);
+                            if (inputPanel) {
+                                // Keep existing ports (except placeholders) and add new bundle ports
+                                const existingPorts = inputPanel.ports.filter(p =>
+                                    p.direction === 'output' && !p.id.startsWith('port-placeholder')
+                                );
+                                const existingLabels = (inputPanel.data.portLabels as Record<string, string>) || {};
+                                const existingHideLabels = (inputPanel.data.portHideExternalLabel as Record<string, boolean>) || {};
+
+                                // Add a new placeholder port at the end
+                                const placeholderPortId = `port-placeholder-${Date.now()}`;
+                                const allPorts = [
+                                    ...existingPorts,
+                                    ...expansion.newPorts,
+                                    {
+                                        id: placeholderPortId,
+                                        name: '',
+                                        type: 'control' as const,
+                                        direction: 'output' as const,
+                                        position: { x: 1, y: 0.95 }
+                                    }
+                                ];
+                                const allLabels = {
+                                    ...existingLabels,
+                                    ...expansion.newPortLabels,
+                                    [placeholderPortId]: ''
+                                };
+                                const allHideLabels = {
+                                    ...existingHideLabels,
+                                    ...expansion.newPortHideExternalLabel,
+                                    [placeholderPortId]: true
+                                };
+
+                                newNodes.set(inputPanel.id, {
+                                    ...inputPanel,
+                                    ports: allPorts,
+                                    data: {
+                                        ...inputPanel.data,
+                                        portLabels: allLabels,
+                                        portHideExternalLabel: allHideLabels
+                                    }
+                                });
+
+                                // Build composite target port ID from panel and first new port
+                                const firstNewPortId = expansion.newPorts[0]?.id || '';
+                                const bundleTargetPortId = `${expansion.panelId}:${firstNewPortId}`;
+
+                                // Update the connection to use the new bundle port
+                                const updatedConnection = { ...connection, targetPortId: bundleTargetPortId };
+                                newConnections.set(id, updatedConnection);
+
+                                // If target is an instrument, also create InstrumentRow
+                                const targetNodeForExpansion = newNodes.get(targetNodeId);
+                                if (targetNodeForExpansion && isInstrumentNode(targetNodeForExpansion)) {
+                                    const rowId = `row-${Date.now()}`;
+                                    const defaultSpread = 0.5;
+
+                                    const newRow: InstrumentRow = {
+                                        rowId,
+                                        sourceNodeId,
+                                        sourcePortId,
+                                        targetPortId: bundleTargetPortId,
+                                        label: bundleInfo.label,
+                                        spread: defaultSpread,
+                                        baseNote: 0,
+                                        baseOctave: 4,
+                                        baseOffset: 0,
+                                        portCount: bundleInfo.size,
+                                        keyGains: Array.from({ length: bundleInfo.size }, () => 1)
+                                    };
+
+                                    const instrumentData = targetNodeForExpansion.data as InstrumentNodeData;
+                                    const existingRows = instrumentData.rows || [];
+                                    newNodes.set(targetNodeId, {
+                                        ...targetNodeForExpansion,
+                                        data: {
+                                            ...targetNodeForExpansion.data,
+                                            rows: [...existingRows, newRow]
+                                        }
+                                    });
+
+                                    // === INTERNAL WIRING ===
+                                    // Find instrument-visual node and wire up the key ports
+                                    const instrumentVisual = targetNodeForExpansion.childIds
+                                        .map(cid => newNodes.get(cid))
+                                        .find(n => n?.type === 'instrument-visual');
+
+                                    if (instrumentVisual) {
+                                        // Create key input ports on instrument-visual
+                                        const newKeyPorts: PortDefinition[] = [];
+                                        for (let i = 0; i < bundleInfo.size; i++) {
+                                            const keyPortId = `${rowId}-key-${i}`;
+                                            const yPos = 0.1 + (i / bundleInfo.size) * 0.8;
+                                            newKeyPorts.push({
+                                                id: keyPortId,
+                                                name: `Key ${i + 1}`,
+                                                type: 'control',
+                                                direction: 'input',
+                                                position: { x: 0, y: yPos }
+                                            });
+                                        }
+
+                                        // Update instrument-visual with new ports
+                                        const existingVisualPorts = instrumentVisual.ports;
+                                        newNodes.set(instrumentVisual.id, {
+                                            ...instrumentVisual,
+                                            ports: [...existingVisualPorts, ...newKeyPorts]
+                                        });
+
+                                        // Create internal connections from input-panel bundle port to each key port
+                                        const bundlePortId = expansion.newPorts[0]?.id;
+                                        if (bundlePortId) {
+                                            for (let i = 0; i < bundleInfo.size; i++) {
+                                                const keyPortId = `${rowId}-key-${i}`;
+                                                const connId = `internal-conn-${generateId()}`;
+                                                newConnections.set(connId, {
+                                                    id: connId,
+                                                    sourceNodeId: expansion.panelId,
+                                                    sourcePortId: bundlePortId,
+                                                    targetNodeId: instrumentVisual.id,
+                                                    targetPortId: keyPortId,
+                                                    type: 'control'
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Re-sync parent's ports
+                                const updatedTarget = newNodes.get(targetNodeId);
+                                if (updatedTarget) {
+                                    const childNodes = updatedTarget.childIds
+                                        .map(cid => newNodes.get(cid))
+                                        .filter((n): n is GraphNode => n !== undefined);
+
+                                    const syncedPorts = syncPortsWithInternalNodes(
+                                        updatedTarget,
+                                        childNodes,
+                                        newConnections,
+                                        true
+                                    );
+                                    newNodes.set(targetNodeId, { ...updatedTarget, ports: syncedPorts });
+                                }
+                            }
+                        }
+                    }
 
                     // Check if we need to add a dynamic port to the target's parent
-                    const targetNodeInState = state.nodes.get(targetNodeId);
+                    const targetNodeInState = newNodes.get(targetNodeId);
                     if (targetNodeInState?.parentId) {
                         const { newNode, updatedNode } = checkDynamicPortAddition(
                             targetNodeInState.parentId,
-                            state.nodes,
+                            newNodes,
                             newConnections
                         );
 
                         // Handle adding a new port to an existing output-panel
                         if (updatedNode) {
-                            const newNodes = new Map(state.nodes);
-
                             // Update the output-panel with new port
                             const existingNode = newNodes.get(updatedNode.id);
                             if (existingNode) {
@@ -597,8 +850,6 @@ export const useGraphStore = create<GraphStore>()(
 
                         // Handle adding a new canvas-output node (legacy)
                         if (newNode) {
-                            const newNodes = new Map(state.nodes);
-
                             // Add the new node
                             newNodes.set(newNode.id, newNode);
 
@@ -637,11 +888,7 @@ export const useGraphStore = create<GraphStore>()(
                     }
 
                     // Handle universal port type resolution for math nodes
-                    const resolveUniversalPorts = () => {
-                        if (sourcePort.type !== 'universal' && targetPort.type !== 'universal') {
-                            return null;
-                        }
-
+                    if (sourcePort.type === 'universal' || targetPort.type === 'universal') {
                         // Determine the resolved type from the non-universal port
                         let resolvedType: 'audio' | 'control' = 'control';
                         if (sourcePort.type !== 'universal') {
@@ -650,44 +897,35 @@ export const useGraphStore = create<GraphStore>()(
                             resolvedType = targetPort.type as 'audio' | 'control';
                         }
 
-                        const newNodes = new Map(state.nodes);
-
                         // Update source node if it has universal ports (add/subtract)
                         if ((sourceNode.type === 'add' || sourceNode.type === 'subtract') &&
                             sourcePort.type === 'universal') {
-                            const updatedSource = {
-                                ...sourceNode,
-                                data: { ...sourceNode.data, resolvedType }
-                            };
-                            newNodes.set(sourceNodeId, updatedSource);
+                            const currentSource = newNodes.get(sourceNodeId) || sourceNode;
+                            newNodes.set(sourceNodeId, {
+                                ...currentSource,
+                                data: { ...currentSource.data, resolvedType }
+                            });
                         }
 
                         // Update target node if it has universal ports (add/subtract)
                         if ((targetNode.type === 'add' || targetNode.type === 'subtract') &&
                             targetPort.type === 'universal') {
-                            const existingTarget = newNodes.get(targetNodeId) || targetNode;
-                            const updatedTarget = {
-                                ...existingTarget,
-                                data: { ...existingTarget.data, resolvedType }
-                            };
-                            newNodes.set(targetNodeId, updatedTarget);
+                            const currentTarget = newNodes.get(targetNodeId) || targetNode;
+                            newNodes.set(targetNodeId, {
+                                ...currentTarget,
+                                data: { ...currentTarget.data, resolvedType }
+                            });
                         }
-
-                        return newNodes;
-                    };
-
-                    const resolvedNodes = resolveUniversalPorts();
-                    if (resolvedNodes) {
-                        return { connections: newConnections, nodes: resolvedNodes };
                     }
 
-                    return { connections: newConnections };
+                    return { connections: newConnections, nodes: newNodes };
                 });
 
                 return id;
             },
 
             removeConnection: (connectionId) => {
+                get().pushHistory();  // Enable undo for connection deletion
                 set((state) => {
                     const connection = state.connections.get(connectionId);
                     const newConnections = new Map(state.connections);
@@ -892,18 +1130,25 @@ export const useGraphStore = create<GraphStore>()(
 
                 get().pushHistory();
 
+                // Capture IDs as arrays to avoid stale closure issues
+                // (state changes after each removeNode call, but we want to process all originally selected items)
+                const nodesToDelete = Array.from(state.selectedNodeIds);
+                const connectionsToDelete = Array.from(state.selectedConnectionIds);
+
                 // Node types that cannot be deleted when inside an internal canvas
                 const UNDELETABLE_INTERNAL_TYPES = ['keyboard-visual', 'output-panel', 'input-panel'];
 
                 // With flat structure, we just use removeNode for all nodes
                 // It handles all levels uniformly
-                state.selectedNodeIds.forEach(nodeId => {
-                    const node = state.nodes.get(nodeId);
+                nodesToDelete.forEach(nodeId => {
+                    // Get fresh state each iteration since removeNode mutates state
+                    const currentState = get();
+                    const node = currentState.nodes.get(nodeId);
                     if (!node) return;
 
                     // Check if this node is inside an internal canvas (has a parent)
                     if (node.parentId) {
-                        const parent = state.nodes.get(node.parentId);
+                        const parent = currentState.nodes.get(node.parentId);
 
                         // Check if this is a special node (in specialNodes array)
                         if (parent?.specialNodes?.includes(nodeId)) {
@@ -923,7 +1168,7 @@ export const useGraphStore = create<GraphStore>()(
                     get().removeNode(nodeId);
                 });
 
-                state.selectedConnectionIds.forEach(connectionId => {
+                connectionsToDelete.forEach(connectionId => {
                     get().removeConnection(connectionId);
                 });
 

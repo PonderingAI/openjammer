@@ -30,6 +30,7 @@ export function createDefaultInternalStructure(parentNode: GraphNode): InternalS
         case 'strings':
         case 'keys':
         case 'winds':
+        case 'instrument':
             return createInstrumentInternals();
 
         case 'container':
@@ -222,66 +223,103 @@ function createKeyboardInternals(): InternalStructure {
 
 /**
  * Instrument internal structure:
- * - Input nodes for parameters (velocity, pitch, etc.)
- * - 1 Output node (audio)
- * - Pre-wired to instrument controls
+ * - Input panel for bundle inputs (from keyboard rows)
+ * - Instrument visual node showing row configuration
+ * - Output panel with audio output
+ * - Connections: input-panel -> instrument-visual -> output-panel
  */
 function createInstrumentInternals(): InternalStructure {
     const internalNodes = new Map<string, GraphNode>();
-    const internalConnections = new Map<string, Connection>();  // Changed from Array to Map
+    const internalConnections = new Map<string, Connection>();
     const specialNodes: string[] = [];
 
-    // Create Input node (receives keys/notes from parent)
-    const inputNodeId = generateUniqueId('canvas-input-');
-    const inputNode: GraphNode = {
-        id: inputNodeId,
-        type: 'canvas-input',
+    // Create input-panel with one empty placeholder port
+    // When bundles connect, this will expand dynamically
+    const inputPanelId = generateUniqueId('input-panel-');
+    const inputPanel: GraphNode = {
+        id: inputPanelId,
+        type: 'input-panel',
         category: 'routing',
-        position: { x: 200, y: 300 },
-        data: { portName: 'Notes In' },
+        position: { x: 50, y: 150 },
+        data: {
+            portLabels: {
+                'port-1': ''  // Empty label for placeholder
+            },
+            portHideExternalLabel: {
+                'port-1': true  // Hide the empty label on parent
+            }
+        },
         ports: [
-            { id: 'out', name: 'Out', type: 'control', direction: 'output' }
+            { id: 'port-1', name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
-        parentId: null,  // Will be set by addNode
+        parentId: null,
         childIds: []
     };
-    internalNodes.set(inputNodeId, inputNode);
-    specialNodes.push(inputNodeId);
+    internalNodes.set(inputPanelId, inputPanel);
+    specialNodes.push(inputPanelId);
 
-    // Create Output node (sends audio to parent)
-    const outputNodeId = generateUniqueId('canvas-output-');
-    const outputNode: GraphNode = {
-        id: outputNodeId,
-        type: 'canvas-output',
-        category: 'routing',
-        position: { x: 600, y: 300 },
-        data: { portName: 'Audio Out' },
+    // Create instrument-visual node in the center
+    // This is purely for internal visualization - NOT a special node
+    // Its ports should not sync to the parent
+    // Key input ports are added dynamically when bundles connect
+    const instrumentVisualId = generateUniqueId('instrument-visual-');
+    const instrumentVisual: GraphNode = {
+        id: instrumentVisualId,
+        type: 'instrument-visual',
+        category: 'instruments',
+        position: { x: 250, y: 100 },
+        data: {},
         ports: [
-            { id: 'in', name: 'In', type: 'audio', direction: 'input' }
+            // Only audio output - key input ports are added dynamically per bundle
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
-        parentId: null,  // Will be set by addNode
+        parentId: null,
         childIds: []
     };
-    internalNodes.set(outputNodeId, outputNode);
-    specialNodes.push(outputNodeId);
+    internalNodes.set(instrumentVisualId, instrumentVisual);
+    // NOT added to specialNodes - this is internal visualization only
 
-    // CREATE DEFAULT CONNECTION from notes input to audio output (passthrough)
-    const connId = generateUniqueId('conn-');
-    internalConnections.set(connId, {
-        id: connId,
-        sourceNodeId: inputNodeId,
-        sourcePortId: 'out',
-        targetNodeId: outputNodeId,
-        targetPortId: 'in',
-        type: 'control'
+    // Create output-panel with audio output
+    const outputPanelId = generateUniqueId('output-panel-');
+    const outputPanel: GraphNode = {
+        id: outputPanelId,
+        type: 'output-panel',
+        category: 'routing',
+        position: { x: 800, y: 150 },
+        data: {
+            portLabels: {
+                'audio-out': 'Audio'
+            }
+        },
+        ports: [
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'input', position: { x: 0, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(outputPanelId, outputPanel);
+    specialNodes.push(outputPanelId);
+
+    // NOTE: No default input-panel → instrument-visual connection
+    // Bundle connections are wired dynamically in graphStore.ts when bundles connect
+
+    // Create connection: instrument-visual -> output-panel
+    const conn2Id = generateUniqueId('conn-');
+    internalConnections.set(conn2Id, {
+        id: conn2Id,
+        sourceNodeId: instrumentVisualId,
+        sourcePortId: 'audio-out',
+        targetNodeId: outputPanelId,
+        targetPortId: 'audio-out',
+        type: 'audio'
     });
 
     return {
         internalNodes,
         internalConnections,
         specialNodes,
-        showEmptyInputPorts: false,   // Hide until connected
-        showEmptyOutputPorts: false   // Hide until connected
+        showEmptyInputPorts: true,    // Show empty input placeholder
+        showEmptyOutputPorts: true    // Always show audio output
     };
 }
 

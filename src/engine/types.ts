@@ -24,6 +24,10 @@ export interface PortDefinition {
 
     // For universal ports: what type they resolved to after connection
     resolvedType?: 'audio' | 'control' | null;
+
+    // Hide label on parent node's external port (label still shows inside panel)
+    // Default: false (labels are shown on parent)
+    hideExternalLabel?: boolean;
 }
 
 // Port layout configuration for dynamic port positioning
@@ -81,6 +85,7 @@ export type NodeType =
     | 'keyboard'
     | 'keyboard-key'    // Individual keyboard key (signal generator)
     | 'keyboard-visual' // Visual keyboard with per-key outputs (internal node)
+    | 'instrument-visual' // Visual instrument with row configuration (internal node)
     | 'microphone'
     | 'piano'
     | 'cello'
@@ -114,12 +119,34 @@ export interface NodeData {
     [key: string]: unknown;
 }
 
+/**
+ * Instrument row configuration - represents a connected bundle from keyboard
+ */
+export interface InstrumentRow {
+    rowId: string;           // Unique row identifier
+    sourceNodeId: string;    // Which keyboard node this came from
+    sourcePortId: string;    // Which keyboard port this came from (composite ID)
+    targetPortId: string;    // Which instrument input port receives this bundle
+    label: string;           // Auto-pulled from source ("Row 1", "Pedal", etc.)
+    spread: number;          // Offset increment between ports (default 0.5)
+    baseNote: number;        // 0-6 (C-B)
+    baseOctave: number;      // 0-8
+    baseOffset: number;      // -24 to +24 semitones
+    portCount: number;       // Number of ports in this row
+    keyGains: number[];      // Per-key gain values (length = portCount)
+}
+
 export interface InstrumentNodeData extends NodeData {
     instrumentId?: string; // ID from InstrumentDefinitions (optional, falls back to legacy type mapping)
-    offsets: { [portId: string]: number }; // Per-input pitch offset (semitones)
+
+    // NEW: Row-based structure for bundle connections
+    rows?: InstrumentRow[];
+
+    // Legacy fields (kept for backwards compatibility)
+    offsets?: { [portId: string]: number }; // Per-input pitch offset (semitones)
     octaveOffsets?: { [portId: string]: number }; // Per-input octave adjustment
     noteOffsets?: { [portId: string]: number }; // Per-input note adjustment (0-6 for C-B)
-    activeInputs: string[]; // List of active input port IDs
+    activeInputs?: string[]; // List of active input port IDs
     isLoading?: boolean; // For UI loading indicator
 }
 

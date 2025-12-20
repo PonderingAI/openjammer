@@ -1,0 +1,358 @@
+/**
+ * Instrument Visual Node - Compact configuration with per-key ports
+ *
+ * Mockup-based redesign:
+ * - Each key has its own port (like keyboard node)
+ * - Inline header: Note, Octave, Offset, Spread (scroll/click to edit)
+ * - Offset values displayed below each port
+ * - Pedal section at bottom
+ */
+
+import { useState, useCallback } from 'react';
+import type { GraphNode, InstrumentRow, InstrumentNodeData } from '../../engine/types';
+import { useGraphStore } from '../../store/graphStore';
+import './InstrumentVisualNode.css';
+
+const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+interface InstrumentVisualNodeProps {
+    node: GraphNode;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    hasConnection?: (portId: string) => boolean;
+    handleHeaderMouseDown?: (e: React.MouseEvent) => void;
+    handleNodeMouseEnter?: () => void;
+    handleNodeMouseLeave?: () => void;
+    isSelected?: boolean;
+    isDragging?: boolean;
+    style?: React.CSSProperties;
+}
+
+// Editable value component with scroll and click-to-edit
+function EditableValue({
+    value,
+    label,
+    onChange,
+    min,
+    max,
+    step = 1,
+    displayFn,
+    parseFn,
+    disabled = false
+}: {
+    value: number;
+    label: string;
+    onChange: (v: number) => void;
+    min: number;
+    max: number;
+    step?: number;
+    displayFn?: (v: number) => string;
+    parseFn?: (s: string) => number | null;
+    disabled?: boolean;
+}) {
+    const [editing, setEditing] = useState(false);
+    const [editValue, setEditValue] = useState('');
+
+    const display = displayFn ? displayFn(value) : String(value);
+
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+        if (disabled) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -step : step;
+        const newVal = Math.max(min, Math.min(max, value + delta));
+        // Round to avoid floating point issues
+        const rounded = Math.round(newVal * 100) / 100;
+        if (rounded !== value) onChange(rounded);
+    }, [value, onChange, min, max, step, disabled]);
+
+    const startEdit = useCallback(() => {
+        if (disabled) return;
+        setEditing(true);
+        setEditValue(display);
+    }, [display, disabled]);
+
+    const submitEdit = useCallback(() => {
+        if (parseFn) {
+            const parsed = parseFn(editValue);
+            if (parsed !== null && parsed >= min && parsed <= max) {
+                onChange(parsed);
+            }
+        } else {
+            const parsed = parseFloat(editValue);
+            if (!isNaN(parsed) && parsed >= min && parsed <= max) {
+                onChange(Math.round(parsed * 100) / 100);
+            }
+        }
+        setEditing(false);
+    }, [editValue, parseFn, onChange, min, max]);
+
+    const cancelEdit = useCallback(() => {
+        setEditing(false);
+    }, []);
+
+    return (
+        <span
+            className="editable-value"
+            onWheel={handleWheel}
+            onClick={() => !editing && startEdit()}
+            title={`Scroll or click to edit ${label}`}
+        >
+            {editing ? (
+                <input
+                    type="text"
+                    className="editable-input"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={submitEdit}
+                    onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') submitEdit();
+                        if (e.key === 'Escape') cancelEdit();
+                    }}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                />
+            ) : (
+                <span className="editable-display">{display}</span>
+            )}
+            <span className="editable-label">{label}</span>
+        </span>
+    );
+}
+
+export function InstrumentVisualNode({
+    node,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    hasConnection,
+    handleHeaderMouseDown,
+    handleNodeMouseEnter,
+    handleNodeMouseLeave,
+    isSelected,
+    isDragging,
+    style
+}: InstrumentVisualNodeProps) {
+    const { nodes, updateInstrumentRow } = useGraphStore();
+
+    // Get parent node to access row data
+    const parentNode = node.parentId ? nodes.get(node.parentId) : null;
+    const parentData = (parentNode?.data || {}) as InstrumentNodeData;
+    const rows: InstrumentRow[] = parentData.rows || [];
+    const parentNodeId = parentNode?.id;
+
+    // Get output port for audio out
+    const outputPorts = node.ports.filter(p => p.direction === 'output');
+
+    // Handle row field update
+    const handleRowUpdate = useCallback((rowId: string, field: keyof InstrumentRow, value: number) => {
+        if (!parentNodeId) return;
+        updateInstrumentRow(parentNodeId, rowId, { [field]: value });
+    }, [parentNodeId, updateInstrumentRow]);
+
+    // Separate pedal rows from key rows
+    const keyRows = rows.filter(r => r.portCount > 1);
+    const pedalRows = rows.filter(r => r.portCount === 1);
+
+    return (
+        <div
+            className={`instrument-visual-node compact ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            style={style}
+            onMouseEnter={handleNodeMouseEnter}
+            onMouseLeave={handleNodeMouseLeave}
+        >
+            {/* Header */}
+            <div
+                className="instrument-visual-header compact"
+                onMouseDown={handleHeaderMouseDown}
+            >
+                <span className="instrument-visual-title">Config</span>
+            </div>
+
+            {/* Rows with individual key ports */}
+            <div className="instrument-rows-compact">
+                {keyRows.length === 0 && pedalRows.length === 0 ? (
+                    <div className="no-rows-message compact">
+                        Connect bundles
+                    </div>
+                ) : (
+                    <>
+                        {keyRows.map((row) => (
+                            <RowWithPorts
+                                key={row.rowId}
+                                row={row}
+                                nodeId={node.id}
+                                onUpdate={(field, value) => handleRowUpdate(row.rowId, field, value)}
+                                handlePortMouseDown={handlePortMouseDown}
+                                handlePortMouseUp={handlePortMouseUp}
+                                handlePortMouseEnter={handlePortMouseEnter}
+                                handlePortMouseLeave={handlePortMouseLeave}
+                                hasConnection={hasConnection}
+                                disabled={!parentNodeId}
+                            />
+                        ))}
+
+                        {/* Pedal section */}
+                        {pedalRows.length > 0 && (
+                            <div className="pedal-row-compact">
+                                {pedalRows.map((pedal) => {
+                                    // Pedal port ID matches internal wiring: {rowId}-key-0
+                                    const pedalPortId = `${pedal.rowId}-key-0`;
+                                    return (
+                                        <div key={pedal.rowId} className="pedal-item">
+                                            <div
+                                                className="key-port pedal"
+                                                data-node-id={node.id}
+                                                data-port-id={pedalPortId}
+                                                onMouseDown={(e) => handlePortMouseDown?.(pedalPortId, e)}
+                                                onMouseUp={(e) => handlePortMouseUp?.(pedalPortId, e)}
+                                                onMouseEnter={() => handlePortMouseEnter?.(pedalPortId)}
+                                                onMouseLeave={handlePortMouseLeave}
+                                            />
+                                            <span className="pedal-label">Pedal</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+
+            {/* Output port on right */}
+            <div className="output-port-area">
+                {outputPorts.map((port) => (
+                    <div
+                        key={port.id}
+                        className={`visual-port output audio ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                        data-node-id={node.id}
+                        data-port-id={port.id}
+                        onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                        onMouseLeave={handlePortMouseLeave}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// Row with individual key ports
+function RowWithPorts({
+    row,
+    nodeId,
+    onUpdate,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    hasConnection,
+    disabled
+}: {
+    row: InstrumentRow;
+    nodeId: string;
+    onUpdate: (field: keyof InstrumentRow, value: number) => void;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    hasConnection?: (portId: string) => boolean;
+    disabled: boolean;
+}) {
+    // Generate key ports
+    const keyCount = row.portCount;
+    const keys = Array.from({ length: keyCount }, (_, i) => i);
+
+    // Calculate offset for each key
+    const getKeyOffset = (index: number) => {
+        return row.baseOffset + index * row.spread;
+    };
+
+    // Format offset for display
+    const formatOffset = (offset: number) => {
+        const rounded = Math.round(offset * 10) / 10;
+        return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(1);
+    };
+
+    return (
+        <div className="row-compact">
+            {/* Row header with editable values */}
+            <div className="row-header-compact">
+                <EditableValue
+                    value={row.baseNote}
+                    label="Note"
+                    onChange={(v) => onUpdate('baseNote', v)}
+                    min={0}
+                    max={11}
+                    step={1}
+                    displayFn={(v) => NOTE_DISPLAY[v] || 'C'}
+                    parseFn={(s) => {
+                        const idx = NOTE_DISPLAY.findIndex(
+                            n => n.toLowerCase() === s.toLowerCase()
+                        );
+                        return idx !== -1 ? idx : null;
+                    }}
+                    disabled={disabled}
+                />
+                <EditableValue
+                    value={row.baseOctave}
+                    label="Octave"
+                    onChange={(v) => onUpdate('baseOctave', v)}
+                    min={0}
+                    max={8}
+                    step={1}
+                    disabled={disabled}
+                />
+                <EditableValue
+                    value={row.baseOffset}
+                    label="offset"
+                    onChange={(v) => onUpdate('baseOffset', v)}
+                    min={-24}
+                    max={24}
+                    step={1}
+                    displayFn={(v) => v >= 0 ? String(v) : String(v)}
+                    disabled={disabled}
+                />
+                <EditableValue
+                    value={row.spread}
+                    label="Spread"
+                    onChange={(v) => onUpdate('spread', v)}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    displayFn={(v) => v.toFixed(1)}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Key ports with offset labels */}
+            <div className="row-keys-compact">
+                {keys.map((index) => {
+                    const portId = `${row.rowId}-key-${index}`;
+                    const offset = getKeyOffset(index);
+                    const isConnected = hasConnection?.(portId) ?? false;
+
+                    return (
+                        <div key={index} className="key-column">
+                            <div
+                                className={`key-port ${isConnected ? 'connected' : ''}`}
+                                data-node-id={nodeId}
+                                data-port-id={portId}
+                                onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
+                                onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
+                                onMouseEnter={() => handlePortMouseEnter?.(portId)}
+                                onMouseLeave={handlePortMouseLeave}
+                            />
+                            <span className="key-offset">{formatOffset(offset)}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}

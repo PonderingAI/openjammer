@@ -90,6 +90,7 @@ export function syncPortsWithInternalNodes(
         } else if (childNode.type === 'output-panel') {
             // Output-panel creates multiple output ports on parent (one per input port)
             const portLabels = (childNode.data.portLabels as Record<string, string>) || {};
+            const portHideExternalLabel = (childNode.data.portHideExternalLabel as Record<string, boolean>) || {};
             const inputPorts = childNode.ports.filter(p => p.direction === 'input');
 
             inputPorts.forEach((internalPort) => {
@@ -107,12 +108,14 @@ export function syncPortsWithInternalNodes(
                     id: `${childNode.id}:${internalPort.id}`,  // Composite ID: panelId:portId
                     name: portName,
                     type: internalPort.type || 'control',
-                    direction: 'output'  // Input on panel = Output on parent
+                    direction: 'output',  // Input on panel = Output on parent
+                    hideExternalLabel: portHideExternalLabel[internalPort.id] ?? false
                 });
             });
         } else if (childNode.type === 'input-panel') {
             // Input-panel creates multiple input ports on parent (one per output port)
             const portLabels = (childNode.data.portLabels as Record<string, string>) || {};
+            const portHideExternalLabel = (childNode.data.portHideExternalLabel as Record<string, boolean>) || {};
             const outputPorts = childNode.ports.filter(p => p.direction === 'output');
 
             outputPorts.forEach((internalPort) => {
@@ -130,7 +133,8 @@ export function syncPortsWithInternalNodes(
                     id: `${childNode.id}:${internalPort.id}`,  // Composite ID: panelId:portId
                     name: portName,
                     type: internalPort.type || 'control',
-                    direction: 'input'  // Output on panel = Input on parent
+                    direction: 'input',  // Output on panel = Input on parent
+                    hideExternalLabel: portHideExternalLabel[internalPort.id] ?? false
                 });
             });
         }
@@ -228,6 +232,70 @@ export function isConnectionBundled(
     allConnections: Map<string, Connection>
 ): boolean {
     return getConnectionBundleCount(connection, nodes, allConnections) > 1;
+}
+
+// ============================================================================
+// Bundle Size Detection for Instrument Nodes
+// ============================================================================
+
+/**
+ * Get bundle size and label from a source port
+ *
+ * Used when connecting a keyboard output to an instrument input.
+ * Detects how many internal connections feed into the keyboard's output-panel port,
+ * which tells us how many ports to create on the instrument.
+ *
+ * @param sourceNodeId - The source node (e.g., keyboard)
+ * @param sourcePortId - The source port ID (may be composite like "output-panel-xxx:port-1")
+ * @param nodes - All nodes in the graph
+ * @param connections - All connections in the graph
+ * @returns Bundle size (number of internal connections) and label from source
+ */
+export function getBundleSizeFromSourcePort(
+    sourceNodeId: string,
+    sourcePortId: string,
+    nodes: Map<string, GraphNode>,
+    connections: Map<string, Connection>
+): { size: number; label: string } {
+    // Parse composite port ID: "output-panel-xxx:port-1"
+    const colonIndex = sourcePortId.indexOf(':');
+    const panelId = colonIndex !== -1 ? sourcePortId.substring(0, colonIndex) : sourcePortId;
+    const portId = colonIndex !== -1 ? sourcePortId.substring(colonIndex + 1) : null;
+
+    const sourceNode = nodes.get(sourceNodeId);
+    if (!sourceNode) return { size: 1, label: 'Input' };
+
+    // Find the output-panel node
+    const panel = nodes.get(panelId);
+    if (!panel || panel.type !== 'output-panel') {
+        // Not an output-panel, return single connection
+        return { size: 1, label: 'Input' };
+    }
+
+    // Get label from panel's portLabels
+    const portLabels = panel.data.portLabels as Record<string, string> | undefined;
+    const label = (portLabels && portId) ? (portLabels[portId] || 'Input') : 'Input';
+
+    // Count internal connections TO this panel port
+    let size = 0;
+    for (const conn of connections.values()) {
+        if (conn.targetNodeId === panelId && conn.targetPortId === portId) {
+            size++;
+        }
+    }
+
+    return { size: Math.max(1, size), label };
+}
+
+/**
+ * Check if a node is an instrument type
+ */
+export function isInstrumentNode(node: GraphNode): boolean {
+    const instrumentTypes = [
+        'piano', 'cello', 'electricCello', 'violin', 'saxophone',
+        'strings', 'keys', 'winds', 'instrument'
+    ];
+    return instrumentTypes.includes(node.type);
 }
 
 // ============================================================================
@@ -530,4 +598,92 @@ export function checkDynamicPortRemoval(
     }
 
     return { updatedNode: null };
+}
+
+// ============================================================================
+// Generic Bundle Detection and Target Expansion
+// ============================================================================
+
+/**
+ * Detect if a source port is a bundle and return its info
+ * Returns null if not a bundle (size < 1)
+ * Note: Size 1 bundles (like pedal) are valid and should create their own row
+ */
+export function detectBundleInfo(
+    sourceNodeId: string,
+    sourcePortId: string,
+    nodes: Map<string, GraphNode>,
+    connections: Map<string, Connection>
+): { size: number; label: string } | null {
+    const result = getBundleSizeFromSourcePort(sourceNodeId, sourcePortId, nodes, connections);
+    return result.size >= 1 ? result : null;
+}
+
+/**
+ * Expand a target node to receive a bundle connection
+ * Works for ANY node that has an input-panel as a special node
+ *
+ * @param targetNodeId - The target node receiving the bundle
+ * @param bundleSize - Number of ports to create
+ * @param bundleLabel - Label for the first port
+ * @param nodes - All nodes in the graph
+ * @returns Info needed to update the input-panel, or null if target doesn't support expansion
+ */
+export function expandTargetForBundle(
+    targetNodeId: string,
+    _bundleSize: number,  // Kept for API compatibility, but we create 1 port per bundle
+    bundleLabel: string,
+    nodes: Map<string, GraphNode>
+): {
+    panelId: string;
+    newPorts: PortDefinition[];
+    newPortLabels: Record<string, string>;
+    newPortHideExternalLabel: Record<string, boolean>;
+} | null {
+    const targetNode = nodes.get(targetNodeId);
+    if (!targetNode) return null;
+
+    // Find input-panel in target's children (if it has one)
+    const specialNodeIds = new Set(targetNode.specialNodes || []);
+    const inputPanel = targetNode.childIds
+        .map(id => nodes.get(id))
+        .find((n): n is GraphNode =>
+            n?.type === 'input-panel' && specialNodeIds.has(n.id)
+        );
+
+    if (!inputPanel) return null;  // Target doesn't support bundle expansion
+
+    // Create ONE port per bundle (not one per key in the bundle)
+    // The bundle size is stored in InstrumentRow.portCount for audio routing
+    const newPorts: PortDefinition[] = [];
+    const newPortLabels: Record<string, string> = {};
+    const newPortHideExternalLabel: Record<string, boolean> = {};
+    const existingOutputPorts = inputPanel.ports.filter(p =>
+        p.direction === 'output' && !p.id.startsWith('port-placeholder')
+    );
+
+    const portId = generateUniqueId('bundle-');
+    const portIndex = existingOutputPorts.length;
+    const totalCount = existingOutputPorts.length + 1;
+
+    // Calculate y position distributed evenly
+    const yPosition = 0.1 + (portIndex / Math.max(totalCount, 1)) * 0.8;
+
+    newPorts.push({
+        id: portId,
+        name: bundleLabel,
+        type: 'control',
+        direction: 'output',  // Output on input-panel = Input on parent
+        position: { x: 1, y: Math.min(yPosition, 0.92) }
+    });
+
+    newPortLabels[portId] = bundleLabel;
+    newPortHideExternalLabel[portId] = false;
+
+    return {
+        panelId: inputPanel.id,
+        newPorts,
+        newPortLabels,
+        newPortHideExternalLabel
+    };
 }

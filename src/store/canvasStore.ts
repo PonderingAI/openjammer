@@ -14,6 +14,8 @@ export interface ConnectionSource {
 interface HoverTarget {
     nodeId: string;
     portId?: string;
+    portType?: 'audio' | 'control' | 'universal';
+    portDirection?: 'input' | 'output';
 }
 
 interface CanvasStore {
@@ -50,7 +52,7 @@ interface CanvasStore {
     stopConnecting: () => void;
     clearPendingDisconnect: () => void;
     getPendingDisconnect: () => string | null;
-    setHoverTarget: (nodeId: string | null, portId?: string) => void;
+    setHoverTarget: (nodeId: string | null, portId?: string, portType?: 'audio' | 'control' | 'universal', portDirection?: 'input' | 'output') => void;
     toggleGhostMode: () => void;
 
     // Coordinate Transforms
@@ -150,11 +152,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     getPendingDisconnect: () => get().pendingDisconnect,
 
-    setHoverTarget: (nodeId, portId) => {
+    setHoverTarget: (nodeId, portId, portType, portDirection) => {
         if (nodeId === null) {
             set({ hoverTarget: null });
         } else {
-            set({ hoverTarget: { nodeId, portId } });
+            set({ hoverTarget: { nodeId, portId, portType, portDirection } });
         }
     },
 

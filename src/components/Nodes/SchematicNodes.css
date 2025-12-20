@@ -410,6 +410,202 @@
     padding: 0;
 }
 
+/* Simplified instrument body layout - matching sketch */
+.instrument-schematic-body.simple {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-md);
+}
+
+.instrument-rows-simple {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    flex: 1;
+}
+
+.instrument-row-simple {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+}
+
+/* Row divider - horizontal line between rows */
+.instrument-row-simple.with-divider {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 2px;
+    padding-top: var(--space-xs);
+}
+
+/* Empty state - centered input port */
+.instrument-row-simple.empty-state {
+    min-height: 32px;
+    justify-content: flex-start;
+}
+
+.row-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid var(--sketch-black);
+    flex-shrink: 0;
+}
+
+.row-value {
+    font-family: var(--font-sketch);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.row-value.note-value {
+    min-width: 16px;
+}
+
+.row-value.octave-value {
+    min-width: 12px;
+}
+
+.row-value.offset-value {
+    min-width: 28px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.empty-rows-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-style: italic;
+    padding: var(--space-xs) 0;
+}
+
+/* Output port on right side of instrument */
+.instrument-output-port {
+    width: 16px;
+    height: 16px;
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--audio-output);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.instrument-output-port:hover {
+    transform: scale(1.2);
+    filter: brightness(1.2);
+}
+
+.instrument-output-port.connected {
+    background: var(--audio-connected);
+    box-shadow: 0 0 6px var(--audio-connected);
+}
+
+/* Pedal row */
+.pedal-row {
+    margin-top: var(--space-xs);
+    padding-top: var(--space-xs);
+    border-top: 1px dashed var(--border-subtle);
+}
+
+.pedal-input-port {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--control-input);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.pedal-input-port:hover {
+    transform: scale(1.2);
+    filter: brightness(1.2);
+}
+
+.pedal-input-port.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}
+
+.pedal-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-family: var(--font-sketch);
+}
+
+/* Bundle input port for instrument */
+.bundle-input-port {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--sketch-black);
+    border-radius: 50%;
+    background: var(--control-input);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.bundle-input-port:hover {
+    transform: scale(1.2);
+    filter: brightness(1.2);
+}
+
+.bundle-input-port.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}
+
+.bundle-input-port.empty {
+    border-style: dashed;
+    background: transparent;
+}
+
+.bundle-input-port.empty:hover {
+    background: var(--control-input);
+    border-style: solid;
+}
+
+.empty-row {
+    opacity: 0.6;
+}
+
+.empty-port-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Pedal row styling */
+.instrument-row-simple.pedal-row {
+    border-top: 1px dashed var(--border-subtle);
+    margin-top: var(--space-xs);
+    padding-top: var(--space-xs);
+}
+
+.instrument-row-simple .pedal-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    font-style: italic;
+    margin-left: var(--space-sm);
+}
+
+.bundle-input-port.pedal {
+    border-color: #888;
+    background: #f0f0f0;
+}
+
+.bundle-input-port.pedal.connected {
+    background: #888;
+    box-shadow: 0 0 4px #888;
+}
+
 .note-grid {
     display: flex;
     flex-direction: column;
@@ -1807,8 +2003,8 @@
 
 .output-panel-node {
     position: absolute;
-    min-width: 140px;
-    background: var(--control-output);
+    width: 140px;
+    background: var(--bg-node);
     border: 2px solid var(--sketch-black);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-md);
@@ -1833,7 +2029,7 @@
 /* Header */
 .output-panel-header {
     padding: var(--space-xs) var(--space-sm);
-    background: var(--sketch-grid);
+    background: var(--bg-tertiary);
     border-bottom: 2px solid var(--sketch-black);
     cursor: grab;
 }
@@ -1855,6 +2051,16 @@
     flex-direction: column;
     padding: var(--space-sm) var(--space-xs);
     gap: var(--space-sm);
+    min-height: 40px;
+}
+
+/* Empty state */
+.output-panel-empty {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-align: center;
+    padding: var(--space-xs);
+    font-style: italic;
 }
 
 /* Individual port row */
@@ -1871,16 +2077,18 @@
     background: var(--sketch-grid);
 }
 
-/* Port marker */
+/* Port marker - rainbow when unconnected to show universal compatibility */
 .output-panel-port-marker {
     width: 14px;
     height: 14px;
     min-width: 14px;
     border: 2px solid var(--sketch-black);
     border-radius: 50%;
-    background: var(--control-input);
+    background: linear-gradient(135deg, #FF6B6B, #FFE66D, #4ECB71, #4DB8FF, #9B59B6);
+    background-size: 200% 200%;
+    animation: rainbow-shift 3s ease infinite;
     cursor: crosshair;
-    transition: all var(--transition-fast);
+    transition: transform var(--transition-fast), filter var(--transition-fast);
 }
 
 .output-panel-port-marker:hover {
@@ -1891,19 +2099,25 @@
 .output-panel-port-marker.connected {
     background: var(--control-connected);
     box-shadow: 0 0 4px var(--control-connected);
+    animation: none;
 }
 
 /* Label */
 .output-panel-label {
     flex: 1;
+    width: 0;
+    min-height: 1.2em;
+    line-height: 1.2;
     font-size: var(--text-sm);
     font-family: inherit;
-    color: var(--sketch-ink);
+    color: var(--text-primary);
     cursor: text;
     padding: 2px 4px;
     border-radius: var(--radius-xs);
     transition: background var(--transition-fast);
-    min-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .output-panel-label:hover {
@@ -1913,20 +2127,31 @@
 /* Label input for editing - seamless inline editing */
 .output-panel-label-input {
     flex: 1;
+    width: 0;
     font-size: var(--text-sm);
     font-family: inherit;
-    color: var(--sketch-ink);
+    color: var(--text-primary);
     padding: 2px 4px;
     border: none;
     border-radius: var(--radius-xs);
-    background: transparent;
+    background: rgba(0, 0, 0, 0.05);
     outline: none;
-    min-width: 60px;
     caret-color: var(--accent-primary);
 }
 
 .output-panel-label-input::selection {
     background: var(--accent-primary-alpha);
+}
+
+/* Focus styles for accessibility */
+.output-panel-label:focus {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
+}
+
+.output-panel-port-marker:focus {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
 }
 
 /* ============================================================================
@@ -1936,8 +2161,8 @@
 
 .input-panel-node {
     position: absolute;
-    min-width: 140px;
-    background: var(--control-input);
+    width: 140px;
+    background: var(--bg-node);
     border: 2px solid var(--sketch-black);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-md);
@@ -1962,7 +2187,7 @@
 /* Header */
 .input-panel-header {
     padding: var(--space-xs) var(--space-sm);
-    background: rgba(0, 0, 0, 0.1);
+    background: var(--bg-tertiary);
     border-bottom: 2px solid var(--sketch-black);
     cursor: grab;
 }
@@ -1990,7 +2215,7 @@
 /* Empty state */
 .input-panel-empty {
     font-size: var(--text-xs);
-    color: var(--sketch-gray);
+    color: var(--text-muted);
     text-align: center;
     padding: var(--space-xs);
     font-style: italic;
@@ -2011,16 +2236,18 @@
     background: rgba(0, 0, 0, 0.05);
 }
 
-/* Port marker on right side */
+/* Port marker on right side - rainbow when unconnected to show universal compatibility */
 .input-panel-port-marker {
     width: 14px;
     height: 14px;
     min-width: 14px;
     border: 2px solid var(--sketch-black);
     border-radius: 50%;
-    background: var(--control-output);
+    background: linear-gradient(135deg, #FF6B6B, #FFE66D, #4ECB71, #4DB8FF, #9B59B6);
+    background-size: 200% 200%;
+    animation: rainbow-shift 3s ease infinite;
     cursor: crosshair;
-    transition: all var(--transition-fast);
+    transition: transform var(--transition-fast), filter var(--transition-fast);
 }
 
 .input-panel-port-marker:hover {
@@ -2031,20 +2258,26 @@
 .input-panel-port-marker.connected {
     background: var(--control-connected);
     box-shadow: 0 0 4px var(--control-connected);
+    animation: none;
 }
 
 /* Label on left side */
 .input-panel-label {
     flex: 1;
+    width: 0;
+    min-height: 1.2em;
+    line-height: 1.2;
     font-size: var(--text-sm);
     font-family: inherit;
-    color: var(--sketch-ink);
+    color: var(--text-primary);
     cursor: text;
     padding: 2px 4px;
     border-radius: var(--radius-xs);
     transition: background var(--transition-fast);
-    min-width: 60px;
     text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .input-panel-label:hover {
@@ -2054,21 +2287,32 @@
 /* Label input for editing - seamless inline editing */
 .input-panel-label-input {
     flex: 1;
+    width: 0;
     font-size: var(--text-sm);
     font-family: inherit;
-    color: var(--sketch-ink);
+    color: var(--text-primary);
     padding: 2px 4px;
     border: none;
     border-radius: var(--radius-xs);
-    background: transparent;
+    background: rgba(0, 0, 0, 0.05);
     outline: none;
-    min-width: 60px;
     caret-color: var(--accent-primary);
     text-align: left;
 }
 
 .input-panel-label-input::selection {
     background: var(--accent-primary-alpha);
+}
+
+/* Focus styles for accessibility */
+.input-panel-label:focus {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
+}
+
+.input-panel-port-marker:focus {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
 }
 
 /* ============================================

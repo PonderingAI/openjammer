@@ -123,6 +123,22 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         dimensions: { width: 660, height: 280 }
     },
 
+    'instrument-visual': {
+        type: 'instrument-visual',
+        category: 'instruments',
+        name: 'Instrument',
+        description: 'Visual instrument with row configuration (internal node)',
+        defaultPorts: [
+            // Input ports on left (connected from input-panel rows)
+            { id: 'row-in', name: 'Rows', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } },
+            // Audio output on right (connects to output-panel)
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {},
+        dimensions: { width: 500, height: 300 },
+        canEnter: false  // Cannot enter this internal visual node
+    },
+
     microphone: {
         type: 'microphone',
         category: 'input',
@@ -229,11 +245,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
 
     // Category Aliases / Defaults - inherit layout from their base type
     strings: {
-        type: 'cello', // Default string instrument
+        type: 'strings', // Category alias for string instruments (defaults to cello sampler)
         category: 'instruments',
         name: 'Strings',
         description: 'String Ensemble',
-        defaultPorts: [],
+        defaultPorts: [
+            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
+            { id: 'pedal', name: 'Pedal', type: 'control', direction: 'input' },
+            { id: 'audio-out', name: 'Output', type: 'audio', direction: 'output' }
+        ],
         defaultData: {
             offsets: { 'input-1': -12 },
             activeInputs: ['input-1']
@@ -246,11 +266,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         }
     },
     keys: {
-        type: 'piano', // Default key instrument
+        type: 'keys', // Category alias for keyboard instruments (defaults to piano sampler)
         category: 'instruments',
         name: 'Keys',
         description: 'Keyboards',
-        defaultPorts: [],
+        defaultPorts: [
+            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
+            { id: 'pedal', name: 'Pedal', type: 'control', direction: 'input' },
+            { id: 'audio-out', name: 'Output', type: 'audio', direction: 'output' }
+        ],
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
@@ -263,11 +287,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         }
     },
     winds: {
-        type: 'saxophone', // Default wind instrument
+        type: 'winds', // Category alias for wind instruments (defaults to saxophone sampler)
         category: 'instruments',
         name: 'Winds',
         description: 'Wind Instruments',
-        defaultPorts: [],
+        defaultPorts: [
+            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
+            { id: 'pedal', name: 'Pedal', type: 'control', direction: 'input' },
+            { id: 'audio-out', name: 'Output', type: 'audio', direction: 'output' }
+        ],
         defaultData: {
             offsets: { 'input-1': 0 },
             activeInputs: ['input-1']
@@ -287,10 +315,9 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         name: 'Instrument',
         description: 'Generic sampled instrument',
         defaultPorts: [
-            { id: 'bundle-in', name: 'Keys Bundle', type: 'control', direction: 'input', isBundled: true, position: { x: 0, y: 0.25 } },
-            { id: 'input-1', name: 'In 1', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } },
-            { id: 'control-in', name: 'Control', type: 'control', direction: 'input', position: { x: 0, y: 0.75 } },
-            { ...audioOutput, position: { x: 1, y: 0.5 } }
+            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
+            { id: 'pedal', name: 'Pedal', type: 'control', direction: 'input' },
+            { id: 'audio-out', name: 'Output', type: 'audio', direction: 'output' }
         ],
         defaultData: {
             offsets: { 'input-1': 0 },
@@ -507,16 +534,6 @@ export interface MenuCategory {
     items: NodeType[];
 }
 
-// ============================================================================
-// Menu Structure (ComfyUI-style hierarchical)
-// ============================================================================
-
-export interface MenuCategory {
-    name: string;
-    icon: string;
-    items: NodeType[];
-}
-
 export const menuCategories: MenuCategory[] = [
     {
         name: 'Input',
@@ -566,26 +583,21 @@ export function canConnect(
     // Signal coercion/interpretation happens at the receiving node
     // This follows modular synth conventions where "it's all just voltage"
 
-    // Universal ports can connect to anything (they adapt to the connected type)
-    if (sourcePort.type === 'universal' || targetPort.type === 'universal') {
-        // Still enforce direction (can't connect output→output)
-        if (sourcePort.direction === targetPort.direction) {
-            return false;
-        }
-        return true;
+    // FIRST: Enforce direction for ALL connection types
+    // Can't connect output→output or input→input regardless of signal type
+    if (sourcePort.direction === targetPort.direction) {
+        return false;
     }
 
-    // Only restriction: For audio signals, enforce direction
-    // (can't connect output→output or input→input for audio)
-    if (sourcePort.type === 'audio' && targetPort.type === 'audio') {
-        if (sourcePort.direction === targetPort.direction) {
-            return false; // Can't connect same-direction audio ports
-        }
+    // Universal ports can connect to anything (they adapt to the connected type)
+    if (sourcePort.type === 'universal' || targetPort.type === 'universal') {
+        return true;
     }
 
     // All other connections are allowed:
     // - audio → control (audio modulates a parameter)
     // - control → audio (control signal as audio, interesting effects)
     // - control → control (normal parameter routing)
+    // - audio → audio (normal audio routing)
     return true;
 }

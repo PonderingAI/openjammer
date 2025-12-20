@@ -13,6 +13,8 @@ interface KarplusNote {
   feedbackGain: GainNode;
   filterNode: BiquadFilterNode;
   outputGain: GainNode;
+  decayTimeout?: ReturnType<typeof setTimeout>;
+  cleanupTimeout?: ReturnType<typeof setTimeout>;
 }
 
 export class KarplusStrongInstrument extends SampledInstrument {
@@ -105,43 +107,12 @@ export class KarplusStrongInstrument extends SampledInstrument {
     const noteData: KarplusNote = { delayNode, feedbackGain, filterNode, outputGain };
     this.activeNotes.set(note, noteData);
 
-    // Natural decay (8 seconds)
-    setTimeout(() => {
+    // Natural decay (8 seconds) - store timeout so it can be canceled
+    noteData.decayTimeout = setTimeout(() => {
       if (this.activeNotes.get(note) === noteData) {
         this.stopNoteImpl(note);
       }
     }, 8000);
-  }
-
-  protected stopNoteImpl(note: string): void {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-
-    const noteData = this.activeNotes.get(note) as KarplusNote | undefined;
-    if (noteData) {
-      const now = ctx.currentTime;
-
-      // Use setTargetAtTime for natural plucked string release
-      // Time constant of 0.08s (appropriate for acoustic guitar)
-      const timeConstant = 0.08;
-
-      noteData.feedbackGain.gain.setValueAtTime(noteData.feedbackGain.gain.value, now);
-      noteData.feedbackGain.gain.setTargetAtTime(0, now, timeConstant);
-
-      noteData.outputGain.gain.setValueAtTime(noteData.outputGain.gain.value, now);
-      noteData.outputGain.gain.setTargetAtTime(0, now, timeConstant);
-
-      // Cleanup after 5x time constant (99% decay)
-      const cleanupTime = timeConstant * 5 * 1000; // Convert to ms
-      setTimeout(() => {
-        noteData.delayNode.disconnect();
-        noteData.filterNode.disconnect();
-        noteData.feedbackGain.disconnect();
-        noteData.outputGain.disconnect();
-      }, cleanupTime);
-
-      this.activeNotes.delete(note);
-    }
   }
 
   // Override: already loaded (no samples)
@@ -152,5 +123,57 @@ export class KarplusStrongInstrument extends SampledInstrument {
   async load(): Promise<void> {
     this.loadingState = 'loaded';
     return Promise.resolve();
+  }
+
+  // Track cleanup timeouts separately since they persist after note deletion
+  private cleanupTimeouts: Set<ReturnType<typeof setTimeout>> = new Set();
+
+  // Override stopNoteImpl to track cleanup timeouts
+  protected override stopNoteImpl(note: string): void {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const noteData = this.activeNotes.get(note) as KarplusNote | undefined;
+    if (noteData) {
+      // Clear decay timeout if note is stopped early
+      if (noteData.decayTimeout) {
+        clearTimeout(noteData.decayTimeout);
+      }
+
+      const now = ctx.currentTime;
+      const timeConstant = 0.08;
+
+      noteData.feedbackGain.gain.setValueAtTime(noteData.feedbackGain.gain.value, now);
+      noteData.feedbackGain.gain.setTargetAtTime(0, now, timeConstant);
+
+      noteData.outputGain.gain.setValueAtTime(noteData.outputGain.gain.value, now);
+      noteData.outputGain.gain.setTargetAtTime(0, now, timeConstant);
+
+      // Cleanup after 5x time constant - track timeout for cleanup on disconnect
+      const cleanupTime = timeConstant * 5 * 1000;
+      const cleanupTimeout = setTimeout(() => {
+        noteData.delayNode.disconnect();
+        noteData.filterNode.disconnect();
+        noteData.feedbackGain.disconnect();
+        noteData.outputGain.disconnect();
+        this.cleanupTimeouts.delete(cleanupTimeout);
+      }, cleanupTime);
+      this.cleanupTimeouts.add(cleanupTimeout);
+
+      this.activeNotes.delete(note);
+    }
+  }
+
+  // Override disconnect to clean up all pending timeouts
+  override disconnect(): void {
+    // Clear all decay and cleanup timeouts
+    this.activeNotes.forEach((noteData) => {
+      const kNote = noteData as KarplusNote;
+      if (kNote.decayTimeout) clearTimeout(kNote.decayTimeout);
+    });
+    this.cleanupTimeouts.forEach((timeout) => clearTimeout(timeout));
+    this.cleanupTimeouts.clear();
+
+    super.disconnect();
   }
 }

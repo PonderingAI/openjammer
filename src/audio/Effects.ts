@@ -44,6 +44,9 @@ export abstract class Effect {
     disconnect(): void {
         this.outputNode?.disconnect();
         this.inputNode?.disconnect();
+        // Nullify references to prevent stale node access after disconnect
+        this.outputNode = null;
+        this.inputNode = null;
     }
 }
 
@@ -95,6 +98,12 @@ export class DistortionEffect extends Effect {
             this.updateCurve();
         }
     }
+
+    override disconnect(): void {
+        this.waveShaperNode?.disconnect();
+        this.waveShaperNode = null;
+        super.disconnect();
+    }
 }
 
 /**
@@ -139,6 +148,12 @@ export class PitchShiftEffect extends Effect {
             this.params.semitones = value;
             this.updatePitch();
         }
+    }
+
+    override disconnect(): void {
+        this.delayNode?.disconnect();
+        this.delayNode = null;
+        super.disconnect();
     }
 }
 
@@ -214,6 +229,16 @@ export class ReverbEffect extends Effect {
             this.generateImpulseResponse();
         }
     }
+
+    override disconnect(): void {
+        this.convolverNode?.disconnect();
+        this.dryNode?.disconnect();
+        this.wetNode?.disconnect();
+        this.convolverNode = null;
+        this.dryNode = null;
+        this.wetNode = null;
+        super.disconnect();
+    }
 }
 
 /**
@@ -275,6 +300,18 @@ export class DelayEffect extends Effect {
         } else if (key === 'mix') {
             this.updateMix();
         }
+    }
+
+    override disconnect(): void {
+        this.delayNode?.disconnect();
+        this.feedbackNode?.disconnect();
+        this.dryNode?.disconnect();
+        this.wetNode?.disconnect();
+        this.delayNode = null;
+        this.feedbackNode = null;
+        this.dryNode = null;
+        this.wetNode = null;
+        super.disconnect();
     }
 }
 

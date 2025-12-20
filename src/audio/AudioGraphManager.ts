@@ -12,15 +12,15 @@ import { InstrumentLoader } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, NodeData } from '../engine/types';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData } from '../engine/types';
 
 // Type guard for instrument node data
 function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
     if (typeof data !== 'object' || data === null) return false;
-    if (!('offsets' in data)) return false;
-
-    const offsets = (data as InstrumentNodeData).offsets;
-    return typeof offsets === 'object' && offsets !== null;
+    // Accept data with either rows (new system) or offsets (legacy system)
+    const hasRows = 'rows' in data && Array.isArray((data as InstrumentNodeData).rows);
+    const hasOffsets = 'offsets' in data && typeof (data as InstrumentNodeData).offsets === 'object';
+    return hasRows || hasOffsets;
 }
 import { useGraphStore } from '../store/graphStore';
 import { TonePianoInstrument } from './samplers/TonePianoAdapter';
@@ -1259,24 +1259,62 @@ class AudioGraphManager {
                 const instrumentData = targetNode.data;
 
                 const targetPortId = connection.targetPortId;
-                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
-                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
-                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
-                // Calculate final note
-                const finalOctave = baseOctave + octaveOffset;
-                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+                // NEW: Check for row-based system first
+                const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
 
-                // Convert to note name string (e.g., "C4", "D#4")
-                const noteName = getNoteName(finalNoteIndex, finalOctave);
+                let noteName: string;
+                let finalVelocity = velocity;
 
-                // Get the instrument and play the note with normalized velocity
+                if (instrumentRow) {
+                    // New row-based system: calculate note using spread
+                    // Spread-based offset: baseOffset + (keyIndex * spread)
+                    const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
+                    const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
+                    const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
+                    noteName = getNoteName(noteIndex, finalOctave);
+
+                    // Apply per-key gain from keyGains array
+                    const keyGain = instrumentRow.keyGains?.[keyIndex] ?? 1;
+                    // Scale velocity by keyGain (keyGain of 1 = normal, 2 = double, etc.)
+                    // Clamp to 0-1 range
+                    finalVelocity = Math.max(0, Math.min(1, velocity * (keyGain / 2)));
+                } else {
+                    // Legacy system: use per-port offsets
+                    const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                    // Calculate final note
+                    const finalOctave = baseOctave + octaveOffset;
+                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                    // Convert to note name string (e.g., "C4", "D#4")
+                    noteName = getNoteName(finalNoteIndex, finalOctave);
+                }
+
+                // Get the instrument and play the note with adjusted velocity
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument) {
-                    instrument.playNote(noteName, velocity);
+                    instrument.playNote(noteName, finalVelocity);
                 }
             }
         }
+    }
+
+    /**
+     * Find the instrument row that corresponds to a source keyboard and port
+     */
+    private findInstrumentRow(instrumentData: InstrumentNodeData, sourceNodeId: string, sourcePortId: string): InstrumentRow | undefined {
+        if (!instrumentData.rows || instrumentData.rows.length === 0) {
+            return undefined;
+        }
+
+        // Find row that matches BOTH the source node AND port
+        return instrumentData.rows.find(row =>
+            row.sourceNodeId === sourceNodeId &&
+            (row.sourcePortId === sourcePortId || sourcePortId.includes(row.sourcePortId))
+        );
     }
 
     /**
@@ -1335,16 +1373,30 @@ class AudioGraphManager {
                 const instrumentData = targetNode.data;
 
                 const targetPortId = connection.targetPortId;
-                const semitoneOffset = instrumentData.offsets[targetPortId] ?? 0;
-                const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
-                const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
 
-                // Calculate final note (same as trigger)
-                const finalOctave = baseOctave + octaveOffset;
-                const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+                // NEW: Check for row-based system first
+                const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
 
-                // Convert to note name string
-                const noteName = getNoteName(finalNoteIndex, finalOctave);
+                let noteName: string;
+                if (instrumentRow) {
+                    // New row-based system: calculate note using spread
+                    const spreadOffset = instrumentRow.baseOffset + (keyIndex * instrumentRow.spread);
+                    const finalOctave = instrumentRow.baseOctave + Math.floor(spreadOffset / 12);
+                    const noteIndex = instrumentRow.baseNote + (spreadOffset % 12);
+                    noteName = getNoteName(noteIndex, finalOctave);
+                } else {
+                    // Legacy system: use per-port offsets
+                    const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;
+                    const octaveOffset = instrumentData.octaveOffsets?.[targetPortId] ?? 0;
+                    const noteOffset = instrumentData.noteOffsets?.[targetPortId] ?? 0;
+
+                    // Calculate final note (same as trigger)
+                    const finalOctave = baseOctave + octaveOffset;
+                    const finalNoteIndex = keyIndex + noteOffset + semitoneOffset;
+
+                    // Convert to note name string
+                    noteName = getNoteName(finalNoteIndex, finalOctave);
+                }
 
                 // Get the instrument and stop the note
                 const instrument = this.getInstrument(targetNodeId);
