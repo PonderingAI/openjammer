@@ -16,6 +16,9 @@ import './InstrumentVisualNode.css';
 /** Debounce interval for wheel events (ms) */
 const WHEEL_DEBOUNCE_MS = 16; // ~60fps
 
+/** Precision factor for rounding (100 = 2 decimal places) */
+const PRECISION_FACTOR = 100;
+
 const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /**
@@ -96,8 +99,8 @@ const EditableValue = memo(function EditableValue({
 
         const delta = e.deltaY > 0 ? -step : step;
         const newVal = Math.max(min, Math.min(max, value + delta));
-        // Round to avoid floating point issues
-        const rounded = Math.round(newVal * 100) / 100;
+        // Round to avoid floating point issues (2 decimal places)
+        const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
         if (rounded !== value) onChange(rounded);
     }, [value, onChange, min, max, step, disabled]);
 
@@ -116,7 +119,7 @@ const EditableValue = memo(function EditableValue({
         } else {
             const parsed = parseFloat(editValue);
             if (!isNaN(parsed) && parsed >= min && parsed <= max) {
-                onChange(Math.round(parsed * 100) / 100);
+                onChange(Math.round(parsed * PRECISION_FACTOR) / PRECISION_FACTOR);
             }
         }
         setEditing(false);

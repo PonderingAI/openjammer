@@ -74,11 +74,21 @@ export class TonePianoInstrument extends SampledInstrument {
       }) as PianoInstance;
 
       // Wait for samples to load with timeout
+      // Properly clean up timeout to prevent dangling timer (memory leak fix)
       const loadPromise = this.piano.load();
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Piano sample loading timeout (${SAMPLE_LOAD_TIMEOUT_MS / 1000}s)`)), SAMPLE_LOAD_TIMEOUT_MS)
-      );
-      await Promise.race([loadPromise, timeoutPromise]);
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Piano sample loading timeout (${SAMPLE_LOAD_TIMEOUT_MS / 1000}s)`)),
+          SAMPLE_LOAD_TIMEOUT_MS
+        );
+      });
+
+      try {
+        await Promise.race([loadPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId!);
+      }
 
       // Create Tone.Gain for piano output (Tone.js nodes work with Piano)
       this.toneGain = new Tone.Gain(1);

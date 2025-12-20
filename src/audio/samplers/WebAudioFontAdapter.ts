@@ -13,15 +13,31 @@ import type { EnvelopeConfig } from './types';
 /** Timeout for preset loading (30 seconds) */
 const PRESET_LOAD_TIMEOUT_MS = 30000;
 
-/** WebAudioFont CDN URL with version lock */
+/**
+ * WebAudioFont CDN URL
+ *
+ * SECURITY NOTE: This CDN doesn't provide versioned URLs or stable content hashes.
+ * The script can change without notice, which is a supply chain risk.
+ *
+ * RECOMMENDED MITIGATIONS (in order of preference):
+ * 1. Self-host: Download WebAudioFontPlayer.js to /public and serve locally
+ * 2. Use npm: Install webaudiofont via npm and bundle it (requires build config)
+ * 3. Pin to commit: Use jsDelivr with a specific commit hash
+ *    e.g., https://cdn.jsdelivr.net/gh/surikov/webaudiofont@COMMIT_HASH/npm/dist/WebAudioFontPlayer.js
+ *
+ * For now, we use the CDN as a fallback but acknowledge the risk.
+ */
 const WEBAUDIOFONT_CDN_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
 
 /**
  * Subresource Integrity hash for WebAudioFont script
- * Note: This hash must be updated if the CDN script changes
- * Generate with: shasum -b -a 384 WebAudioFontPlayer.js | awk '{ print $1 }' | xxd -r -p | base64
+ *
+ * This is empty because the CDN serves mutable content (no versioning).
+ * If you self-host or use a pinned version, generate the hash with:
+ *   curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A
+ * Then set: `sha384-<hash>`
  */
-const WEBAUDIOFONT_SRI_HASH = ''; // CDN doesn't provide stable hashes - script changes without version
+const WEBAUDIOFONT_SRI_HASH = '';
 
 // ============================================================================
 // Script Loading State (Module-level singleton)

@@ -14,9 +14,23 @@ import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData } from '../engine/types';
 
+// Validation constants for instrument row data
+const VALIDATION_BOUNDS = {
+    MIN_PORT_COUNT: 1,
+    MAX_PORT_COUNT: 128,  // Reasonable upper bound for MIDI
+    MIN_NOTE: 0,          // C
+    MAX_NOTE: 11,         // B
+    MIN_OCTAVE: 0,
+    MAX_OCTAVE: 8,
+    MIN_OFFSET: -48,      // 4 octaves down
+    MAX_OFFSET: 48,       // 4 octaves up
+    MIN_SPREAD: 0,
+    MAX_SPREAD: 12,       // Max 1 octave spread per key
+} as const;
+
 /**
  * Type guard for instrument node data with runtime validation
- * Validates both structure and content of rows array
+ * Validates both structure and content of rows array including value ranges
  */
 function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
     if (typeof data !== 'object' || data === null) return false;
@@ -25,19 +39,33 @@ function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
 
     // Check for new row-based system
     if ('rows' in d && Array.isArray(d.rows)) {
-        // Validate each row has required fields
+        // Validate each row has required fields with valid ranges
         const rows = d.rows as unknown[];
         const isValidRows = rows.every((row): row is InstrumentRow => {
             if (typeof row !== 'object' || row === null) return false;
             const r = row as Record<string, unknown>;
-            return (
-                typeof r.rowId === 'string' &&
-                typeof r.portCount === 'number' &&
-                typeof r.baseNote === 'number' &&
-                typeof r.baseOctave === 'number' &&
-                typeof r.baseOffset === 'number' &&
-                typeof r.spread === 'number'
-            );
+
+            // Type checks
+            if (typeof r.rowId !== 'string') return false;
+            if (typeof r.portCount !== 'number') return false;
+            if (typeof r.baseNote !== 'number') return false;
+            if (typeof r.baseOctave !== 'number') return false;
+            if (typeof r.baseOffset !== 'number') return false;
+            if (typeof r.spread !== 'number') return false;
+
+            // Range validation
+            if (r.portCount < VALIDATION_BOUNDS.MIN_PORT_COUNT ||
+                r.portCount > VALIDATION_BOUNDS.MAX_PORT_COUNT) return false;
+            if (r.baseNote < VALIDATION_BOUNDS.MIN_NOTE ||
+                r.baseNote > VALIDATION_BOUNDS.MAX_NOTE) return false;
+            if (r.baseOctave < VALIDATION_BOUNDS.MIN_OCTAVE ||
+                r.baseOctave > VALIDATION_BOUNDS.MAX_OCTAVE) return false;
+            if (r.baseOffset < VALIDATION_BOUNDS.MIN_OFFSET ||
+                r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
+            if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
+                r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
+
+            return true;
         });
         return isValidRows;
     }
@@ -60,6 +88,42 @@ import { TonePianoInstrument } from './samplers/TonePianoAdapter';
 /** Valid instrument node types for keyboard triggering */
 const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'instrument'] as const;
 
+// ============================================================================
+// Audio Node Instance Types
+// ============================================================================
+
+/** Speaker node instance with audio element for device routing */
+interface SpeakerNodeInstance {
+    audioElement: HTMLAudioElement;
+    gainNode: GainNode;
+    destination: MediaStreamAudioDestinationNode;
+}
+
+/** Addition node instance - mixes two inputs */
+interface AddNodeInstance {
+    input1: GainNode;
+    input2: GainNode;
+    outputMixer: GainNode;
+}
+
+/** Subtraction node instance - phase cancellation */
+interface SubtractNodeInstance extends AddNodeInstance {
+    inverter: GainNode;
+}
+
+/** Union type for all possible audio node instance types */
+type AudioNodeInstanceType =
+    | SampledInstrument
+    | Effect
+    | Looper
+    | Recorder
+    | GainNode
+    | MediaStreamAudioSourceNode
+    | SpeakerNodeInstance
+    | AddNodeInstance
+    | SubtractNodeInstance
+    | null;
+
 /** Keyboard row bounds (1-indexed rows) */
 const MIN_KEYBOARD_ROW = 1;
 const MAX_KEYBOARD_ROW = 3;
@@ -77,11 +141,7 @@ export interface AudioNodeInstance {
     type: NodeType;
     inputNode: AudioNode | null;
     outputNode: AudioNode | null;
-    instance: SampledInstrument | Effect | Looper | Recorder | GainNode | MediaStreamAudioSourceNode |
-        { audioElement: HTMLAudioElement; gainNode: GainNode; destination: MediaStreamAudioDestinationNode } |
-        { input1: GainNode; input2: GainNode; outputMixer: GainNode } |  // Add node
-        { input1: GainNode; input2: GainNode; inverter: GainNode; outputMixer: GainNode } |  // Subtract node
-        null;
+    instance: AudioNodeInstanceType;
     gainEnvelope: GainNode | null; // For smooth connect/disconnect
 }
 
@@ -705,7 +765,7 @@ class AudioGraphManager {
                 input2.connect(outputMixer);
                 outputMixer.connect(gainEnvelope);
 
-                baseInstance.instance = { input1, input2, outputMixer } as { input1: GainNode; input2: GainNode; outputMixer: GainNode };
+                baseInstance.instance = { input1, input2, outputMixer } as AddNodeInstance;
                 baseInstance.inputNode = input1;  // Primary input
                 baseInstance.outputNode = gainEnvelope;
                 break;
@@ -730,7 +790,7 @@ class AudioGraphManager {
                 inverter.connect(outputMixer);
                 outputMixer.connect(gainEnvelope);
 
-                baseInstance.instance = { input1, input2, inverter, outputMixer } as { input1: GainNode; input2: GainNode; inverter: GainNode; outputMixer: GainNode };
+                baseInstance.instance = { input1, input2, inverter, outputMixer } as SubtractNodeInstance;
                 baseInstance.inputNode = input1;  // Primary input
                 baseInstance.outputNode = gainEnvelope;
                 break;
@@ -795,11 +855,7 @@ class AudioGraphManager {
 
         // Cleanup speaker audio element
         if (audioNode.instance && typeof audioNode.instance === 'object' && 'audioElement' in audioNode.instance) {
-            const speakerInstance = audioNode.instance as {
-                audioElement: HTMLAudioElement;
-                destination: MediaStreamAudioDestinationNode;
-                gainNode: GainNode;
-            };
+            const speakerInstance = audioNode.instance as SpeakerNodeInstance;
             speakerInstance.audioElement.pause();
             speakerInstance.audioElement.srcObject = null;
             speakerInstance.gainNode.disconnect();
@@ -1261,11 +1317,7 @@ class AudioGraphManager {
             return;
         }
 
-        const instance = audioNode.instance as {
-            audioElement: HTMLAudioElement;
-            gainNode: GainNode;
-            destination: MediaStreamAudioDestinationNode;
-        };
+        const instance = audioNode.instance as SpeakerNodeInstance;
 
         if (this.supportsSetSinkId()) {
             (instance.audioElement as any).setSinkId(deviceId)
