@@ -47,6 +47,18 @@ Do not use `npm`, `npx`, `yarn`, or `pnpm` commands anywhere in the codebase or 
 
 ## Architecture Notes
 
+### Port Types and Colors
+
+**Port type determines color:**
+- `type: 'audio'` → **Blue** (music/sound)
+- `type: 'technical'` → **Grey** (numbers/triggers)
+
+**Examples:**
+- Keyboard outputs: `technical` (sends numbers, not sound)
+- Instrument inputs: `technical` (receives triggers)
+- Instrument outputs: `audio` (makes sound)
+- Effects: `audio` (processes sound)
+
 ### Future Integrations (Design With These in Mind)
 - **MIDI support**: Node inputs should be abstracted to accept MIDI events
 - **Custom nodes**: Plugin architecture for community-contributed nodes

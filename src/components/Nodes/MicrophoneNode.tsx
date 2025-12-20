@@ -29,6 +29,7 @@ interface MicrophoneNodeProps {
 interface AudioDevice {
     deviceId: string;
     label: string;
+    isUSB?: boolean;
 }
 
 const NUM_WAVEFORM_BARS = 16;
@@ -52,6 +53,11 @@ export function MicrophoneNode({
     const data = node.data as MicrophoneNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+    const audioConfig = useAudioStore((s) => s.audioConfig);
+    const setDeviceInfo = useAudioStore((s) => s.setDeviceInfo);
+
+    // Use node-specific lowLatencyMode if set, otherwise use global setting
+    const lowLatencyMode = data.lowLatencyMode ?? audioConfig.lowLatencyMode;
 
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [, setSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
@@ -74,6 +80,14 @@ export function MicrophoneNode({
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
     const outputPortId = outputPort?.id || 'audio-out';
 
+    // Detect if device is a USB audio interface
+    const detectUSBAudioInterface = useCallback((device: MediaDeviceInfo): boolean => {
+        const label = device.label.toLowerCase();
+        const usbKeywords = ['usb', 'motu', 'focusrite', 'presonus', 'behringer',
+                             'rme', 'audio interface', 'scarlett', 'audiobox', 'babyface'];
+        return usbKeywords.some(keyword => label.includes(keyword));
+    }, []);
+
     // Fetch input devices
     useEffect(() => {
         if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -83,11 +97,21 @@ export function MicrophoneNode({
                 .filter(d => d.kind === 'audioinput')
                 .map(d => ({
                     deviceId: d.deviceId,
-                    label: d.label || `Microphone ${d.deviceId.slice(0, 4)}`
+                    label: d.label || `Microphone ${d.deviceId.slice(0, 4)}`,
+                    isUSB: detectUSBAudioInterface(d)
                 }));
             setDevices(inputs);
+
+            // Update store with USB detection
+            const usbDevice = inputs.find(d => d.isUSB);
+            if (usbDevice) {
+                setDeviceInfo({
+                    isUSBAudioInterface: true,
+                    deviceLabel: usbDevice.label
+                });
+            }
         });
-    }, []);
+    }, [detectUSBAudioInterface, setDeviceInfo]);
 
     // Click outside to close device dropdown
     useEffect(() => {
@@ -128,14 +152,26 @@ export function MicrophoneNode({
         }
 
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
+            // Use low-latency constraints if enabled
+            const constraints = lowLatencyMode ? {
+                audio: {
+                    deviceId: deviceId && deviceId !== 'default' ? { exact: deviceId } : undefined,
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    latency: 0,
+                    channelCount: 2
+                }
+            } : {
                 audio: {
                     deviceId: deviceId && deviceId !== 'default' ? { exact: deviceId } : undefined,
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
                 }
-            });
+            };
+
+            const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
             const ctx = getAudioContext();
             if (!ctx) return;
@@ -155,7 +191,7 @@ export function MicrophoneNode({
 
             // Register the analyser as output (it passes audio through)
             // This way the waveform reflects what's actually being sent out
-            audioGraphManager.setMicrophoneOutput(node.id, analyser as unknown as GainNode);
+            audioGraphManager.setMicrophoneOutput(node.id, analyser);
 
             // Update refs for cleanup
             streamRef.current = mediaStream;
@@ -171,7 +207,7 @@ export function MicrophoneNode({
         } catch (err) {
             console.error('Failed to access microphone:', err);
         }
-    }, [isAudioContextReady, node.id, data.isMuted]);
+    }, [isAudioContextReady, node.id, data.isMuted, lowLatencyMode]);
 
     // Initialize on mount
     useEffect(() => {
@@ -276,6 +312,14 @@ export function MicrophoneNode({
             {/* Header */}
             <div className="schematic-header" onMouseDown={handleHeaderMouseDown}>
                 <span className="schematic-title">Microphone</span>
+                {/* Low Latency Mode Badge */}
+                {lowLatencyMode && (
+                    <div className="mic-latency-badge" title="Low Latency Mode Active">
+                        <svg viewBox="0 0 24 24" width="12" height="12">
+                            <path d="M13 3L3 14h8v8l10-11h-8z" fill="currentColor"/>
+                        </svg>
+                    </div>
+                )}
             </div>
 
             {/* Content Container */}

@@ -5,15 +5,16 @@
  * Pressing that number key activates this keyboard's input mode
  * Q-M rows then send input to connected instruments
  *
- * Design: Compact pill-shaped node with row switching buttons
+ * Design: Hierarchical node with internal canvas structure
+ * Press E to dive into internal canvas and see key routing
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useAudioStore } from '../../store/audioStore';
-import { useGraphStore } from '../../store/graphStore';
+import type { GraphNode, KeyboardNodeData } from '../../engine/types';
 
 interface KeyboardNodeProps {
-    node: import('../../engine/types').GraphNode;
+    node: GraphNode;
     handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
     handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
     handlePortMouseEnter?: (portId: string) => void;
@@ -27,12 +28,6 @@ interface KeyboardNodeProps {
     isHoveredWithConnections?: boolean;
     incomingConnectionCount?: number;
     style?: React.CSSProperties;
-}
-
-interface KeyboardNodeData {
-    assignedKey: number; // 2-9
-    activeRow: number; // Which row is currently active (1, 2, or 3)
-    rowOctaves: number[];
 }
 
 export function KeyboardNode({
@@ -49,38 +44,21 @@ export function KeyboardNode({
     isDragging,
     style
 }: KeyboardNodeProps) {
-    const data = node.data as unknown as KeyboardNodeData;
+    const data = node.data as KeyboardNodeData;
     const activeKeyboardId = useAudioStore((s) => s.activeKeyboardId);
-    const updateNodeData = useGraphStore((s) => s.updateNodeData);
+    const controlDown = useAudioStore((s) => s.controlDown);
 
     const registerKeyboard = useAudioStore((s) => s.registerKeyboard);
     const unregisterKeyboard = useAudioStore((s) => s.unregisterKeyboard);
 
     const isActive = activeKeyboardId === node.id;
     const assignedKey = data.assignedKey ?? 2;
-    const [activeRow, setActiveRow] = useState(data.activeRow ?? 1);
 
     // Register this keyboard with its assigned number
     useEffect(() => {
         registerKeyboard(assignedKey, node.id);
         return () => unregisterKeyboard(assignedKey);
     }, [assignedKey, node.id, registerKeyboard, unregisterKeyboard]);
-
-    // Sync activeRow with external data changes (undo/redo)
-    useEffect(() => {
-        if (data.activeRow !== undefined && data.activeRow !== activeRow) {
-            setActiveRow(data.activeRow);
-        }
-    }, [data.activeRow]);
-
-    // Handle row switching
-    const handleRowClick = (row: number) => {
-        setActiveRow(row);
-        updateNodeData(node.id, { activeRow: row });
-    };
-
-    // Output ports (should match default ports in registry)
-    const outputPorts = node.ports.filter(p => p.direction === 'output');
 
     return (
         <div
@@ -98,46 +76,25 @@ export function KeyboardNode({
                 <span className="keyboard-octave">{assignedKey}</span>
             </div>
 
-            {/* Body */}
+            {/* Body - Show auto-generated ports from internal canvas */}
             <div className="keyboard-schematic-body">
-                {/* Row selector buttons: 1 2 3 */}
-                <div className="keyboard-row-numbers">
-                    {[1, 2, 3].map((row) => (
-                        <button
-                            key={row}
-                            className={`row-number ${activeRow === row ? 'active' : ''}`}
-                            onClick={() => handleRowClick(row)}
-                            title={`Row ${row} (Octave ${row + 2})`}
-                        >
-                            {row}
-                        </button>
-                    ))}
-                </div>
-
-                {/* Output port circles */}
-                <div className="keyboard-row-ports-marker">
-                    {outputPorts.map((port) => (
+                {/* Render ports dynamically (auto-synced from internal canvas-input/output nodes) */}
+                {node.ports.map((port) => (
+                    <div key={port.id} className={`port-row ${port.direction}`}>
+                        <span className="port-label">{port.name}</span>
                         <div
-                            key={port.id}
-                            className={`port-circle-marker ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            className={`port-circle-marker ${port.type}-port ${port.direction}-port ${hasConnection?.(port.id) ? 'connected' : ''} ${port.id === 'control' && isActive && controlDown ? 'control-active' : ''}`}
                             data-node-id={node.id}
                             data-port-id={port.id}
+                            data-port-type={port.type}
                             onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
                             onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
                             onMouseEnter={() => handlePortMouseEnter?.(port.id)}
                             onMouseLeave={handlePortMouseLeave}
                             title={port.name}
                         />
-                    ))}
-                    {/* Ensure we always show 3 ports visually */}
-                    {outputPorts.length < 3 && Array(3 - outputPorts.length).fill(null).map((_, i) => (
-                        <div
-                            key={`placeholder-${i}`}
-                            className="port-circle-marker disabled"
-                            title="No port"
-                        />
-                    ))}
-                </div>
+                    </div>
+                ))}
             </div>
 
             {/* Active indicator */}

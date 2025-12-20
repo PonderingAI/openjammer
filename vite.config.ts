@@ -72,7 +72,11 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': '/src'
+      '@': '/src',
+      events: 'rollup-plugin-node-polyfills/polyfills/events'
     }
+  },
+  optimizeDeps: {
+    exclude: ['@tonejs/piano', 'webaudiofont']
   }
 })

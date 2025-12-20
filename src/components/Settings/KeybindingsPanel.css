@@ -84,7 +84,7 @@
 }
 
 .keybindings-row-editing {
-    background: rgba(91, 127, 214, 0.15);
+    background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
     outline: 2px solid var(--accent-primary);
 }
 
@@ -121,7 +121,7 @@
 }
 
 .keybindings-shortcut-custom {
-    background: rgba(91, 127, 214, 0.1);
+    background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
     border-color: var(--accent-primary);
     color: var(--accent-primary);
 }
@@ -160,14 +160,14 @@
 .keybindings-reset:hover {
     border-color: var(--accent-warning);
     color: var(--accent-warning);
-    background: rgba(212, 160, 80, 0.1);
+    background: color-mix(in srgb, var(--accent-warning) 10%, transparent);
 }
 
 /* Conflict Dialog */
 .keybindings-conflict-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: color-mix(in srgb, var(--sketch-black) 50%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;

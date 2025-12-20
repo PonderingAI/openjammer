@@ -1,16 +1,16 @@
 /**
- * Instrument Node - Virtual instrument with dynamic inputs from Keyboard Node
+ * Instrument Node - Virtual instrument with row-based bundle inputs
  *
  * Design: Hand-drawn schematic with clickable instrument name to open selector dropdown
- * Shows note grid with editable scientific notation and offset values
+ * Shows row-based note grid with spread control - each bundle connection creates a row
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import type { GraphNode, InstrumentNodeData } from '../../engine/types';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
-import { createInstrument, type Instrument, type InstrumentType } from '../../audio/Instruments';
 import { nodeDefinitions } from '../../engine/registry';
+import { InstrumentLoader } from '../../audio/Instruments';
 
 interface InstrumentNodeProps {
     node: GraphNode;
@@ -29,62 +29,110 @@ interface InstrumentNodeProps {
     style?: React.CSSProperties;
 }
 
+// ============================================================================
 // Constants
+// ============================================================================
+
+/** Musical note names for display */
 const NOTE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-const MAX_INPUT_PORTS = 7;
+
+/** Minimum mouse movement before treating interaction as drag */
 const DRAG_THRESHOLD_PX = 5;
 
-// Instrument display names
-const INSTRUMENT_LABELS: Record<string, string> = {
-    piano: 'Classic Piano',
-    cello: 'Cello',
-    electricCello: 'Electric Cello',
-    violin: 'Violin',
-    saxophone: 'Saxophone',
-    strings: 'Strings',
-    keys: 'Keys',
-    winds: 'Winds'
+/** Dropdown positioning constraints */
+const DROPDOWN_LAYOUT = {
+    HEADER_HEIGHT: 36,
+    MAX_WIDTH_RATIO: 0.5,    // 50% of viewport
+    MAX_WIDTH_PX: 800,
+    MAX_HEIGHT_RATIO: 0.4,   // 40% of viewport
+    MAX_HEIGHT_PX: 600,
+    MIN_HEIGHT_PX: 150,
+    MIN_WIDTH_PX: 250,
+    EDGE_PADDING_PX: 10,
+} as const;
+
+/** Row parameter value ranges */
+const ROW_PARAM_RANGES = {
+    NOTE: { min: 0, max: 6 },       // C to B
+    OCTAVE: { min: 0, max: 8 },     // Piano range
+    OFFSET: { min: -24, max: 24 },  // +/- 2 octaves
+} as const;
+
+// Build instrument labels from loader
+const INSTRUMENT_LABELS: Record<string, string> = {};
+InstrumentLoader.getAllDefinitions().forEach(def => {
+    INSTRUMENT_LABELS[def.id] = def.name;
+});
+// Add legacy labels for backwards compatibility
+INSTRUMENT_LABELS['piano'] = 'Grand Piano';
+INSTRUMENT_LABELS['cello'] = 'Cello';
+INSTRUMENT_LABELS['electricCello'] = 'Cello';
+INSTRUMENT_LABELS['violin'] = 'Violin';
+INSTRUMENT_LABELS['saxophone'] = 'Alto Saxophone';
+INSTRUMENT_LABELS['strings'] = 'Strings';
+INSTRUMENT_LABELS['keys'] = 'Keys';
+INSTRUMENT_LABELS['winds'] = 'Winds';
+
+// Map node types to allowed instrument categories
+const NODE_TYPE_TO_CATEGORIES: Record<string, string[]> = {
+    'strings': ['strings', 'bass'],
+    'cello': ['strings'],
+    'violin': ['strings'],
+    'keys': ['piano'],
+    'piano': ['piano'],
+    'winds': ['woodwinds', 'brass', 'world'],
+    'saxophone': ['woodwinds', 'brass'],
+    'guitar': ['guitar', 'bass'],
+    'instrument': ['piano', 'strings', 'guitar', 'bass', 'woodwinds', 'brass', 'synth', 'percussion', 'world']
 };
 
-// Instrument categories with order
-const CATEGORY_ORDER = ['Keys', 'String', 'Wind'];
+// Get allowed categories for current node type
+function getAllowedCategories(nodeType: string): string[] {
+    return NODE_TYPE_TO_CATEGORIES[nodeType] || ['piano'];
+}
 
-// Sub-categories within each main category (for visual grouping with separators)
-const INSTRUMENT_SUBCATEGORIES: Record<string, string[][]> = {
-    'Keys': [['piano', 'keys']],
-    'String': [['cello', 'electricCello'], ['violin'], ['strings']],
-    'Wind': [['saxophone'], ['winds']]
-};
+// Main instrument node types to cycle through
+const INSTRUMENT_NODE_TYPES = ['strings', 'keys', 'winds'] as const;
 
-// Flat list for filtering
-const INSTRUMENT_CATEGORIES: Record<string, string[]> = {
-    'Keys': ['piano', 'keys'],
-    'String': ['cello', 'electricCello', 'violin', 'strings'],
-    'Wind': ['saxophone', 'winds']
-};
+/**
+ * Type guard to safely validate instrument node data
+ * Provides runtime type checking for data from graph store
+ */
+function isInstrumentNodeData(data: unknown): data is InstrumentNodeData {
+    if (typeof data !== 'object' || data === null) return false;
+    const d = data as Record<string, unknown>;
 
-// Get category for an instrument type
-const getInstrumentCategory = (type: string): string => {
-    for (const [category, instruments] of Object.entries(INSTRUMENT_CATEGORIES)) {
-        if (instruments.includes(type)) return category;
+    // Check for row-based system (new format)
+    if ('rows' in d) {
+        if (!Array.isArray(d.rows)) return false;
+        // Validate at least basic structure for rows
+        return d.rows.every((row: unknown) => {
+            if (typeof row !== 'object' || row === null) return false;
+            const r = row as Record<string, unknown>;
+            return typeof r.rowId === 'string';
+        });
     }
-    return CATEGORY_ORDER[0];
-};
 
-// SVG Icons for each instrument
+    // Check for legacy offset-based system
+    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
+        return true;
+    }
+
+    // Empty data object is valid (no configuration yet)
+    return Object.keys(d).length === 0;
+}
+
+// SVG Icons - keeping the icon definitions (abbreviated for brevity)
 const InstrumentIcons: Record<string, React.ReactNode> = {
     piano: (
         <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Grand piano shape */}
             <path d="M8 48 L8 24 Q8 16 16 16 L48 16 Q56 16 56 24 L56 48" strokeLinecap="round" />
             <line x1="8" y1="48" x2="56" y2="48" />
-            {/* Keys */}
             <rect x="12" y="32" width="6" height="16" fill="currentColor" opacity="0.1" />
             <rect x="20" y="32" width="6" height="16" fill="currentColor" opacity="0.1" />
             <rect x="28" y="32" width="6" height="16" fill="currentColor" opacity="0.1" />
             <rect x="36" y="32" width="6" height="16" fill="currentColor" opacity="0.1" />
             <rect x="44" y="32" width="6" height="16" fill="currentColor" opacity="0.1" />
-            {/* Black keys */}
             <rect x="16" y="32" width="4" height="10" fill="currentColor" />
             <rect x="24" y="32" width="4" height="10" fill="currentColor" />
             <rect x="40" y="32" width="4" height="10" fill="currentColor" />
@@ -93,91 +141,26 @@ const InstrumentIcons: Record<string, React.ReactNode> = {
     ),
     keys: (
         <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Keyboard/synth shape */}
             <rect x="8" y="20" width="48" height="28" rx="3" />
-            {/* Keys */}
             <line x1="16" y1="28" x2="16" y2="44" />
             <line x1="24" y1="28" x2="24" y2="44" />
             <line x1="32" y1="28" x2="32" y2="44" />
             <line x1="40" y1="28" x2="40" y2="44" />
             <line x1="48" y1="28" x2="48" y2="44" />
-            {/* Black keys */}
             <rect x="13" y="28" width="3" height="8" fill="currentColor" />
             <rect x="21" y="28" width="3" height="8" fill="currentColor" />
             <rect x="37" y="28" width="3" height="8" fill="currentColor" />
             <rect x="45" y="28" width="3" height="8" fill="currentColor" />
-            {/* Control knobs */}
             <circle cx="20" cy="16" r="2" fill="currentColor" />
             <circle cx="32" cy="16" r="2" fill="currentColor" />
             <circle cx="44" cy="16" r="2" fill="currentColor" />
         </svg>
     ),
-    cello: (
-        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Body */}
-            <path d="M24 52 Q16 48 16 40 Q14 32 20 28 Q16 24 20 18 Q24 12 32 12 Q40 12 44 18 Q48 24 44 28 Q50 32 48 40 Q48 48 40 52 Z" />
-            {/* F-holes */}
-            <path d="M26 30 Q24 34 26 38" />
-            <path d="M38 30 Q40 34 38 38" />
-            {/* Bridge */}
-            <line x1="26" y1="42" x2="38" y2="42" />
-            {/* Strings */}
-            <line x1="28" y1="16" x2="28" y2="48" strokeWidth="1" />
-            <line x1="32" y1="14" x2="32" y2="48" strokeWidth="1" />
-            <line x1="36" y1="16" x2="36" y2="48" strokeWidth="1" />
-            {/* Endpin */}
-            <line x1="32" y1="52" x2="32" y2="58" strokeWidth="3" />
-        </svg>
-    ),
-    electricCello: (
-        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Solid body - more angular/modern */}
-            <path d="M22 50 L18 38 L20 28 L24 20 L32 16 L40 20 L44 28 L46 38 L42 50 Z" />
-            {/* Pickup */}
-            <rect x="26" y="34" width="12" height="4" rx="1" fill="currentColor" opacity="0.4" />
-            {/* Bridge */}
-            <line x1="26" y1="42" x2="38" y2="42" />
-            {/* Strings */}
-            <line x1="28" y1="18" x2="28" y2="46" strokeWidth="1" />
-            <line x1="32" y1="16" x2="32" y2="46" strokeWidth="1" />
-            <line x1="36" y1="18" x2="36" y2="46" strokeWidth="1" />
-            {/* Output jack */}
-            <circle cx="42" cy="46" r="2" fill="currentColor" />
-            {/* Cable */}
-            <path d="M44 46 Q50 48 52 54 Q54 58 50 60" strokeWidth="1.5" />
-            {/* Endpin */}
-            <line x1="32" y1="50" x2="32" y2="56" strokeWidth="3" />
-        </svg>
-    ),
-    violin: (
-        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Body - smaller than cello */}
-            <path d="M26 46 Q20 43 20 36 Q18 30 23 27 Q20 24 23 20 Q26 16 32 16 Q38 16 41 20 Q44 24 41 27 Q46 30 44 36 Q44 43 38 46 Z" />
-            {/* F-holes */}
-            <path d="M28 29 Q26 32 28 35" strokeWidth="1.5" />
-            <path d="M36 29 Q38 32 36 35" strokeWidth="1.5" />
-            {/* Bridge */}
-            <line x1="28" y1="38" x2="36" y2="38" />
-            {/* Neck */}
-            <rect x="30" y="8" width="4" height="10" rx="1" />
-            {/* Scroll */}
-            <circle cx="32" cy="6" r="3" />
-            {/* Strings */}
-            <line x1="30" y1="10" x2="30" y2="44" strokeWidth="0.5" />
-            <line x1="32" y1="8" x2="32" y2="44" strokeWidth="0.5" />
-            <line x1="34" y1="10" x2="34" y2="44" strokeWidth="0.5" />
-            {/* Bow */}
-            <path d="M48 20 Q52 32 48 44" strokeWidth="1" />
-            <line x1="48" y1="20" x2="50" y2="18" strokeWidth="3" />
-        </svg>
-    ),
     strings: (
         <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Harp shape */}
             <path d="M16 52 L16 16 Q16 8 24 8 L44 8" strokeLinecap="round" />
             <path d="M44 8 Q52 8 52 16 L52 52" strokeLinecap="round" />
             <line x1="16" y1="52" x2="52" y2="52" />
-            {/* Strings */}
             <line x1="22" y1="14" x2="22" y2="52" strokeWidth="1" />
             <line x1="28" y1="12" x2="28" y2="52" strokeWidth="1" />
             <line x1="34" y1="10" x2="34" y2="52" strokeWidth="1" />
@@ -185,40 +168,29 @@ const InstrumentIcons: Record<string, React.ReactNode> = {
             <line x1="46" y1="14" x2="46" y2="52" strokeWidth="1" />
         </svg>
     ),
-    saxophone: (
-        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Bell */}
-            <path d="M20 52 Q12 48 16 40 L28 24" strokeLinecap="round" />
-            <ellipse cx="18" cy="52" rx="6" ry="4" />
-            {/* Body */}
-            <path d="M28 24 L40 12 Q44 8 48 12" strokeLinecap="round" />
-            {/* Mouthpiece */}
-            <path d="M48 12 L52 8" strokeWidth="3" strokeLinecap="round" />
-            {/* Keys */}
-            <circle cx="24" cy="36" r="3" fill="currentColor" opacity="0.3" />
-            <circle cx="28" cy="30" r="3" fill="currentColor" opacity="0.3" />
-            <circle cx="34" cy="22" r="3" fill="currentColor" opacity="0.3" />
-            <circle cx="40" cy="16" r="2" fill="currentColor" opacity="0.3" />
-        </svg>
-    ),
     winds: (
         <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2">
-            {/* Flute/clarinet */}
             <rect x="8" y="28" width="48" height="8" rx="4" />
-            {/* Tone holes */}
             <circle cx="18" cy="32" r="2" fill="currentColor" />
             <circle cx="28" cy="32" r="2" fill="currentColor" />
             <circle cx="38" cy="32" r="2" fill="currentColor" />
             <circle cx="48" cy="32" r="2" fill="currentColor" />
-            {/* Keys */}
-            <ellipse cx="23" cy="26" rx="3" ry="2" fill="currentColor" opacity="0.4" />
-            <ellipse cx="33" cy="26" rx="3" ry="2" fill="currentColor" opacity="0.4" />
-            <ellipse cx="43" cy="26" rx="3" ry="2" fill="currentColor" opacity="0.4" />
-            {/* Mouthpiece */}
             <path d="M56 32 L60 30 L60 34 Z" fill="currentColor" />
         </svg>
-    )
+    ),
 };
+
+// Helper function to get the appropriate icon for an instrument
+function getInstrumentIcon(instrumentId: string): React.ReactNode {
+    if (InstrumentIcons[instrumentId]) {
+        return InstrumentIcons[instrumentId];
+    }
+    const definition = InstrumentLoader.getDefinition(instrumentId);
+    if (definition?.category && InstrumentIcons[definition.category]) {
+        return InstrumentIcons[definition.category];
+    }
+    return InstrumentIcons.piano;
+}
 
 export function InstrumentNode({
     node,
@@ -233,42 +205,39 @@ export function InstrumentNode({
     isSelected,
     isDragging,
     isHoveredWithConnections,
-    incomingConnectionCount = 0,
     style
 }: InstrumentNodeProps) {
-    const data = node.data as unknown as InstrumentNodeData;
+    // Use type guard for safe data access
+    const data: InstrumentNodeData = isInstrumentNodeData(node.data)
+        ? node.data
+        : { rows: [] }; // Default empty data if validation fails
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
-    const connections = useGraphStore((s) => s.connections);
+    const updateNodeType = useGraphStore((s) => s.updateNodeType);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
-    // Internal audio state
-    const instrumentRef = useRef<Instrument | null>(null);
+    // Refs
     const nodeRef = useRef<HTMLDivElement>(null);
 
     // Popup state
     const [showPopup, setShowPopup] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-    const [activeCategory, setActiveCategory] = useState(() => getInstrumentCategory(node.type));
 
     // Drag state
     const [dragStartPos, setDragStartPos] = useState<{x: number, y: number} | null>(null);
+    const [wasDragging, setWasDragging] = useState(false);
 
-    // Inline editing state
-    const [editingPort, setEditingPort] = useState<string | null>(null);
-    const [editingField, setEditingField] = useState<'note' | 'octave' | 'offset' | null>(null);
-    const [editValue, setEditValue] = useState('');
+    // Get available categories for this node type
+    const availableCategories = useMemo(() => {
+        return getAllowedCategories(node.type);
+    }, [node.type]);
 
-    // Initialize instrument audio
+    // Initialize instrument audio - managed by AudioGraphManager
     useEffect(() => {
-        if (!isAudioContextReady) return;
-        const type = node.type as InstrumentType;
-        const inst = createInstrument(type);
-        instrumentRef.current = inst;
-        return () => inst.disconnect();
+        // AudioGraphManager handles instrument creation
     }, [isAudioContextReady, node.type]);
 
-    // Handle keyboard shortcuts for popup (Escape to close, Ctrl+Arrow to switch category)
+    // Handle keyboard shortcuts for popup
     useEffect(() => {
         if (!showPopup) return;
 
@@ -279,22 +248,24 @@ export function InstrumentNode({
                 setSearchQuery('');
             } else if (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 e.preventDefault();
-                const currentIndex = CATEGORY_ORDER.indexOf(activeCategory);
+                const currentIndex = INSTRUMENT_NODE_TYPES.indexOf(node.type as typeof INSTRUMENT_NODE_TYPES[number]);
+                const validIndex = currentIndex >= 0 ? currentIndex : 0;
                 let newIndex: number;
                 if (e.key === 'ArrowRight') {
-                    newIndex = (currentIndex + 1) % CATEGORY_ORDER.length;
+                    newIndex = (validIndex + 1) % INSTRUMENT_NODE_TYPES.length;
                 } else {
-                    newIndex = (currentIndex - 1 + CATEGORY_ORDER.length) % CATEGORY_ORDER.length;
+                    newIndex = (validIndex - 1 + INSTRUMENT_NODE_TYPES.length) % INSTRUMENT_NODE_TYPES.length;
                 }
-                setActiveCategory(CATEGORY_ORDER[newIndex]);
+                const newType = INSTRUMENT_NODE_TYPES[newIndex];
+                updateNodeType(node.id, newType);
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [showPopup, activeCategory]);
+    }, [showPopup, node.type, node.id, updateNodeType]);
 
-    // Click outside to close popup (no overlay)
+    // Click outside to close popup
     useEffect(() => {
         if (!showPopup) return;
 
@@ -306,7 +277,6 @@ export function InstrumentNode({
             }
         };
 
-        // Delay to avoid immediate close
         setTimeout(() => {
             document.addEventListener('mousedown', handleClickOutside);
         }, 0);
@@ -314,7 +284,7 @@ export function InstrumentNode({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [showPopup]);
 
-    // Dynamic dropdown positioning - stays within viewport
+    // Dynamic dropdown positioning
     useEffect(() => {
         if (!showPopup || !nodeRef.current) return;
 
@@ -322,143 +292,145 @@ export function InstrumentNode({
             if (!nodeRef.current) return;
 
             const nodeRect = nodeRef.current.getBoundingClientRect();
-            const headerHeight = 36; // Header height in pixels
             const viewportHeight = window.innerHeight;
             const viewportWidth = window.innerWidth;
 
-            // Available space below header to bottom of screen
-            const spaceBelow = viewportHeight - (nodeRect.top + headerHeight);
+            const spaceBelow = viewportHeight - (nodeRect.top + DROPDOWN_LAYOUT.HEADER_HEIGHT);
+            const desiredWidth = Math.min(
+                viewportWidth * DROPDOWN_LAYOUT.MAX_WIDTH_RATIO,
+                DROPDOWN_LAYOUT.MAX_WIDTH_PX
+            );
+            const desiredHeight = Math.min(
+                viewportHeight * DROPDOWN_LAYOUT.MAX_HEIGHT_RATIO,
+                DROPDOWN_LAYOUT.MAX_HEIGHT_PX
+            );
 
-            // Desired dimensions (50vw x 40vh, capped)
-            const desiredWidth = Math.min(viewportWidth * 0.5, 800);
-            const desiredHeight = Math.min(viewportHeight * 0.4, 600);
+            const actualHeight = Math.max(0, Math.min(
+                desiredHeight,
+                spaceBelow - DROPDOWN_LAYOUT.EDGE_PADDING_PX
+            ));
 
-            // Minimum size threshold - hide if too small
-            const minHeight = 150;
-            const minWidth = 250;
-
-            // Calculate actual height (constrained by viewport)
-            const actualHeight = Math.max(0, Math.min(desiredHeight, spaceBelow - 10));
-
-            if (actualHeight < minHeight) {
+            if (actualHeight < DROPDOWN_LAYOUT.MIN_HEIGHT_PX) {
                 setDropdownStyle({ display: 'none' });
                 return;
             }
 
-            // Calculate width and center it on the node
-            const actualWidth = Math.max(minWidth, desiredWidth);
+            const actualWidth = Math.max(DROPDOWN_LAYOUT.MIN_WIDTH_PX, desiredWidth);
             const leftOffset = (nodeRect.width - actualWidth) / 2;
 
             setDropdownStyle({
                 display: 'flex',
-                top: headerHeight,
+                top: DROPDOWN_LAYOUT.HEADER_HEIGHT,
                 left: leftOffset,
                 width: actualWidth,
                 height: actualHeight,
             });
         };
 
-        // Initial position
         updateDropdownPosition();
 
-        // Update on scroll/resize
         window.addEventListener('resize', updateDropdownPosition);
-
-        // Use ResizeObserver to detect node size/position changes
-        // This is more efficient than RAF loop - only fires when actual changes occur
-        const resizeObserver = new ResizeObserver(() => {
-            updateDropdownPosition();
-        });
+        const resizeObserver = new ResizeObserver(() => updateDropdownPosition());
         resizeObserver.observe(nodeRef.current);
 
-        // Also observe the canvas container for transform changes (pan/zoom)
-        const canvasContainer = nodeRef.current.closest('.node-canvas-container');
-        if (canvasContainer) {
-            resizeObserver.observe(canvasContainer);
-        }
-
-        // Fallback: throttled interval check for transforms (only if needed)
-        // Much more efficient than RAF - 100ms interval vs 16ms
-        const intervalId = window.setInterval(updateDropdownPosition, 100);
+        // ResizeObserver and resize listener are sufficient - no polling needed
 
         return () => {
             window.removeEventListener('resize', updateDropdownPosition);
             resizeObserver.disconnect();
-            clearInterval(intervalId);
         };
     }, [showPopup]);
 
-    // Clear dragStartPos on mouseup to prevent stale state
+    // Track mouse movement to detect dragging
     useEffect(() => {
         if (!dragStartPos) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            const distance = Math.sqrt(
+                Math.pow(e.clientX - dragStartPos.x, 2) +
+                Math.pow(e.clientY - dragStartPos.y, 2)
+            );
+            if (distance > DRAG_THRESHOLD_PX) {
+                setWasDragging(true);
+            }
+        };
 
         const handleMouseUp = () => {
             setDragStartPos(null);
         };
 
+        window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
-        return () => window.removeEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
     }, [dragStartPos]);
 
-    // Get persisted input ports
-    const persistedInputPorts = node.ports.filter(p => p.direction === 'input' && p.type === 'technical');
+    // Get rows data
+    const rows: InstrumentRow[] = data.rows || [];
+
+    // Get output port from the node
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
 
-    // Count connected ports
-    const connectedCount = persistedInputPorts.filter(p =>
-        Array.from(connections.values()).some(c => c.targetNodeId === node.id && c.targetPortId === p.id)
-    ).length;
-
-    // Calculate visible port count
-    const baseVisible = Math.max(1, connectedCount + 1);
-    const hoverVisible = isHoveredWithConnections ? connectedCount + incomingConnectionCount : 0;
-    const visiblePortCount = Math.min(MAX_INPUT_PORTS, Math.max(baseVisible, hoverVisible));
-
-    // Generate visible ports array (mix of persisted + ghost ports)
-    const visibleInputPorts = [];
-    for (let i = 0; i < visiblePortCount; i++) {
-        if (i < persistedInputPorts.length) {
-            visibleInputPorts.push({
-                ...persistedInputPorts[i],
-                isGhost: false
-            });
-        } else {
-            visibleInputPorts.push({
-                id: `ghost-input-${i}`,
-                name: `In ${i + 1}`,
-                type: 'technical' as const,
-                direction: 'input' as const,
-                isGhost: true
-            });
-        }
-    }
-
     // Get display name
-    const displayName = INSTRUMENT_LABELS[node.type] || nodeDefinitions[node.type]?.name || 'Instrument';
+    const instrumentData = node.data as InstrumentNodeData;
+    const instrumentId = instrumentData.instrumentId || node.type;
+    const displayName = INSTRUMENT_LABELS[instrumentId] || nodeDefinitions[node.type]?.name || 'Instrument';
 
-    // Filter instruments by search query within active category, preserving subcategories
-    const filteredSubcategories = useMemo(() => {
-        const subcategories = INSTRUMENT_SUBCATEGORIES[activeCategory] || [];
+    // Filter instruments by node type
+    const filteredInstruments = useMemo(() => {
+        let instruments: string[] = [];
+        availableCategories.forEach(category => {
+            const categoryInstruments = InstrumentLoader.getDefinitionsByCategory(category as Parameters<typeof InstrumentLoader.getDefinitionsByCategory>[0]);
+            instruments.push(...categoryInstruments.map(def => def.id));
+        });
+
         const query = searchQuery.toLowerCase().trim();
+        if (query) {
+            instruments = instruments.filter(id =>
+                INSTRUMENT_LABELS[id]?.toLowerCase().includes(query)
+            );
+        }
 
-        if (!query) return subcategories;
+        return instruments;
+    }, [searchQuery, availableCategories]);
 
-        // Filter each subcategory, keeping only non-empty ones
-        return subcategories
-            .map(group => group.filter(type =>
-                INSTRUMENT_LABELS[type]?.toLowerCase().includes(query)
-            ))
-            .filter(group => group.length > 0);
-    }, [activeCategory, searchQuery]);
+    // Group instruments by their base name
+    const groupedInstruments = useMemo(() => {
+        const groups = new Map<string, string[]>();
 
-    // Handle header mouse down - track drag start
+        filteredInstruments.forEach(id => {
+            const def = InstrumentLoader.getDefinition(id);
+            if (!def) return;
+            const baseName = def.name;
+
+            if (!groups.has(baseName)) {
+                groups.set(baseName, []);
+            }
+            groups.get(baseName)!.push(id);
+        });
+
+        return Array.from(groups.entries())
+            .map(([baseName, instruments]) => ({ baseName, instruments }))
+            .sort((a, b) => a.baseName.localeCompare(b.baseName));
+    }, [filteredInstruments]);
+
+    // Handle header mouse down
     const handleHeaderMouseDownLocal = (e: React.MouseEvent) => {
         setDragStartPos({ x: e.clientX, y: e.clientY });
+        setWasDragging(false);
         handleHeaderMouseDown?.(e);
     };
 
-    // Handle instrument name click to open popup (only if not dragging)
+    // Handle instrument name click
     const handleInstrumentNameClick = (e: React.MouseEvent) => {
+        if (isDragging || wasDragging) {
+            setWasDragging(false);
+            setDragStartPos(null);
+            return;
+        }
+
         if (dragStartPos) {
             const distance = Math.sqrt(
                 Math.pow(e.clientX - dragStartPos.x, 2) +
@@ -466,7 +438,8 @@ export function InstrumentNode({
             );
             if (distance > DRAG_THRESHOLD_PX) {
                 setDragStartPos(null);
-                return; // Was a drag, don't open popup
+                setWasDragging(true);
+                return;
             }
         }
         e.stopPropagation();
@@ -475,128 +448,42 @@ export function InstrumentNode({
         setDragStartPos(null);
     };
 
-    // Handle instrument selection from dropdown
-    const updateNodeType = useGraphStore((s) => s.updateNodeType);
-    const handleInstrumentSelect = (type: string) => {
-        if (type !== node.type) {
-            updateNodeType(node.id, type as import('../../engine/types').NodeType);
-        }
+    // Handle instrument selection
+    const handleInstrumentSelect = (instId: string) => {
+        const currentData = node.data as InstrumentNodeData;
+        updateNodeData(node.id, {
+            ...currentData,
+            instrumentId: instId
+        });
         setShowPopup(false);
         setSearchQuery('');
     };
 
-    // Get base note index for a port
-    const getBaseNoteIndex = (index: number): number => {
-        return index % NOTE_NAMES.length;
-    };
-
-    // Get display note (base + offset, wrapped 0-6)
-    const getDisplayNoteIndex = (portId: string, index: number): number => {
-        const noteOffset = data.noteOffsets?.[portId] ?? 0;
-        const baseNote = getBaseNoteIndex(index);
-        // Wrap around 0-6
-        return ((baseNote + noteOffset) % 7 + 7) % 7;
-    };
-
-    // Get note name for display
-    const getDisplayNoteName = (portId: string, index: number): string => {
-        return NOTE_NAMES[getDisplayNoteIndex(portId, index)];
-    };
-
-    // Get base octave for display
-    const getBaseOctave = (index: number): number => {
-        return Math.floor(index / 7) + 4;
-    };
-
-    // Get display octave (base + offset)
-    const getDisplayOctave = (portId: string, index: number): number => {
-        const octaveOffset = data.octaveOffsets?.[portId] ?? 0;
-        return getBaseOctave(index) + octaveOffset;
-    };
-
-    // Handle note wheel scroll
-    const handleNoteWheel = (portId: string, _index: number, e: React.WheelEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const currentNoteOffset = data.noteOffsets?.[portId] ?? 0;
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const newNoteOffset = currentNoteOffset + delta;
-        updateNodeData(node.id, {
-            noteOffsets: { ...(data.noteOffsets || {}), [portId]: newNoteOffset }
-        });
-    };
-
-    // Handle octave wheel scroll
-    const handleOctaveWheel = (portId: string, index: number, e: React.WheelEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const currentOctave = getDisplayOctave(portId, index);
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const newOctave = Math.max(0, Math.min(8, currentOctave + delta));
-        const octaveOffset = newOctave - getBaseOctave(index);
-        updateNodeData(node.id, {
-            octaveOffsets: { ...(data.octaveOffsets || {}), [portId]: octaveOffset }
-        });
-    };
-
-    // Handle offset wheel scroll
-    const handleOffsetWheel = (portId: string, e: React.WheelEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const currentOffset = data.offsets?.[portId] ?? 0;
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const newOffset = Math.max(-24, Math.min(24, currentOffset + delta));
-        updateNodeData(node.id, {
-            offsets: { ...(data.offsets || {}), [portId]: newOffset }
-        });
-    };
-
-    // Handle click to start editing
-    const handleValueClick = (e: React.MouseEvent, portId: string, field: 'note' | 'octave' | 'offset', currentValue: string) => {
-        e.stopPropagation();
-        setEditingPort(portId);
-        setEditingField(field);
-        setEditValue(currentValue);
-    };
-
-    // Handle blur to save edit
-    const handleValueBlur = (portId: string, field: 'note' | 'octave' | 'offset', index: number) => {
-        if (field === 'note') {
-            // Find the note index from the entered letter
-            const enteredNote = editValue.toUpperCase().trim();
-            const noteIndex = NOTE_NAMES.indexOf(enteredNote);
-            if (noteIndex !== -1) {
-                const baseNote = getBaseNoteIndex(index);
-                const noteOffset = noteIndex - baseNote;
-                updateNodeData(node.id, {
-                    noteOffsets: { ...(data.noteOffsets || {}), [portId]: noteOffset }
-                });
+    // Update row field - memoized to prevent unnecessary re-renders
+    const updateRowField = useCallback((rowId: string, field: keyof InstrumentRow, value: number) => {
+        const currentRows = data.rows || [];
+        const updatedRows = currentRows.map(row => {
+            if (row.rowId === rowId) {
+                return { ...row, [field]: value };
             }
-        } else if (field === 'octave') {
-            const newOctave = parseInt(editValue) || 4;
-            const octaveOffset = newOctave - getBaseOctave(index);
-            updateNodeData(node.id, {
-                octaveOffsets: { ...(data.octaveOffsets || {}), [portId]: octaveOffset }
-            });
-        } else {
-            const newOffset = parseFloat(editValue) || 0;
-            updateNodeData(node.id, {
-                offsets: { ...(data.offsets || {}), [portId]: newOffset }
-            });
-        }
-        setEditingPort(null);
-        setEditingField(null);
-    };
+            return row;
+        });
+        updateNodeData(node.id, { rows: updatedRows });
+    }, [data.rows, node.id, updateNodeData]);
 
-    // Handle keydown in edit input
-    const handleValueKeyDown = (e: React.KeyboardEvent, portId: string, field: 'note' | 'octave' | 'offset', index: number) => {
-        if (e.key === 'Enter') {
-            handleValueBlur(portId, field, index);
-        } else if (e.key === 'Escape') {
-            setEditingPort(null);
-            setEditingField(null);
-        }
-    };
+    // Handle wheel on row control - memoized to prevent unnecessary re-renders
+    const handleRowWheel = useCallback((rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
+        e.stopPropagation();
+        // Note: preventDefault() removed - React wheel events are passive by default
+        const row = rows.find(r => r.rowId === rowId);
+        if (!row) return;
+
+        const currentValue = row[field] as number;
+        const delta = e.deltaY > 0 ? -1 : 1;
+        const step = field === 'spread' ? 0.1 : 1;
+        const newValue = Math.max(min, Math.min(max, currentValue + delta * step));
+        updateRowField(rowId, field, newValue);
+    }, [rows, updateRowField]);
 
     return (
         <div
@@ -606,7 +493,7 @@ export function InstrumentNode({
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
         >
-            {/* Header - Drag anywhere, but only name click opens popup */}
+            {/* Header */}
             <div
                 className="schematic-header"
                 onMouseDown={handleHeaderMouseDownLocal}
@@ -619,118 +506,132 @@ export function InstrumentNode({
                 </span>
             </div>
 
-            {/* Note Grid */}
-            <div className="instrument-schematic-body">
-                <div className="note-grid">
-                    {visibleInputPorts.map((port, index) => {
-                        const offset = data.offsets?.[port.id] ?? 0;
-                        const displayOctave = getDisplayOctave(port.id, index);
-                        const displayNote = getDisplayNoteName(port.id, index);
-                        const isConnected = !port.isGhost && (hasConnection?.(port.id) ?? false);
-                        const isGhost = port.isGhost;
-                        const isEditingThis = editingPort === port.id;
+            {/* Main body - clean row layout matching mockup */}
+            <div className="instrument-schematic-body simple">
+                {/* Rows container */}
+                <div className="instrument-rows-simple">
+                    {rows.length === 0 ? (
+                        /* Empty state - find first available input port */
+                        (() => {
+                            const availablePort = node.ports.find(p =>
+                                p.direction === 'input' &&
+                                p.type === 'control'
+                            );
+                            if (!availablePort) return null;
 
-                        return (
-                            <div key={port.id} className={`note-row ${isGhost ? 'ghost-port' : ''}`}>
-                                {/* Input port circle */}
-                                <div
-                                    className={`note-input-port ${isConnected ? 'connected' : ''} ${isGhost ? 'ghost' : ''}`}
-                                    data-node-id={node.id}
-                                    data-port-id={port.id}
-                                    onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
-                                    onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
-                                    onMouseEnter={() => handlePortMouseEnter?.(port.id)}
-                                    onMouseLeave={handlePortMouseLeave}
-                                    title={port.name}
-                                />
-                                {/* Note name (editable) */}
-                                {isEditingThis && editingField === 'note' ? (
-                                    <input
-                                        className="inline-edit-input inline-edit-note"
-                                        type="text"
-                                        maxLength={1}
-                                        value={editValue}
-                                        onChange={(e) => setEditValue(e.target.value)}
-                                        onBlur={() => handleValueBlur(port.id, 'note', index)}
-                                        onKeyDown={(e) => handleValueKeyDown(e, port.id, 'note', index)}
-                                        autoFocus
+                            return (
+                                <div className="instrument-row-simple empty-state">
+                                    <div
+                                        className="bundle-input-port empty"
+                                        data-node-id={node.id}
+                                        data-port-id={availablePort.id}
+                                        onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
+                                        onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
+                                        onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
+                                        onMouseLeave={handlePortMouseLeave}
+                                        title="Connect keyboard bundle"
                                     />
-                                ) : (
-                                    <span
-                                        className="note-name editable-value"
-                                        onClick={(e) => handleValueClick(e, port.id, 'note', displayNote)}
-                                        onWheel={(e) => handleNoteWheel(port.id, index, e)}
-                                        title="Scroll or click to edit note"
-                                    >
-                                        {displayNote}
-                                    </span>
-                                )}
-                                {/* Octave (editable) */}
-                                {isEditingThis && editingField === 'octave' ? (
-                                    <input
-                                        className="inline-edit-input"
-                                        type="number"
-                                        value={editValue}
-                                        onChange={(e) => setEditValue(e.target.value)}
-                                        onBlur={() => handleValueBlur(port.id, 'octave', index)}
-                                        onKeyDown={(e) => handleValueKeyDown(e, port.id, 'octave', index)}
-                                        autoFocus
-                                    />
-                                ) : (
-                                    <span
-                                        className="note-octave editable-value"
-                                        onClick={(e) => handleValueClick(e, port.id, 'octave', String(displayOctave))}
-                                        onWheel={(e) => handleOctaveWheel(port.id, index, e)}
-                                        title="Scroll or click to edit octave"
-                                    >
-                                        {displayOctave}
-                                    </span>
-                                )}
-                                {/* Offset (editable) */}
-                                {isEditingThis && editingField === 'offset' ? (
-                                    <input
-                                        className="inline-edit-input"
-                                        type="number"
-                                        step="1"
-                                        value={editValue}
-                                        onChange={(e) => setEditValue(e.target.value)}
-                                        onBlur={() => handleValueBlur(port.id, 'offset', index)}
-                                        onKeyDown={(e) => handleValueKeyDown(e, port.id, 'offset', index)}
-                                        autoFocus
-                                    />
-                                ) : (
-                                    <span
-                                        className="note-offset editable-value"
-                                        onClick={(e) => handleValueClick(e, port.id, 'offset', String(offset))}
-                                        onWheel={(e) => handleOffsetWheel(port.id, e)}
-                                        title="Scroll or click to edit offset"
-                                    >
-                                        {offset >= 0 ? `+${offset}` : offset}
-                                    </span>
-                                )}
-                            </div>
-                        );
-                    })}
+                                </div>
+                            );
+                        })()
+                    ) : (
+                        /* Show rows with connections */
+                        <>
+                            {rows.map((row, index) => {
+                                const rowPort = node.ports.find(p => p.id === row.targetPortId);
+                                const isPedal = row.portCount === 1;  // Pedal is a size-1 bundle
+
+                                return (
+                                    <div key={row.rowId} className={`instrument-row-simple ${index > 0 ? 'with-divider' : ''} ${isPedal ? 'pedal-row' : ''}`}>
+                                        {/* Input port for this row's bundle */}
+                                        <div
+                                            className={`bundle-input-port ${isPedal ? 'pedal' : ''} ${rowPort && hasConnection?.(rowPort.id) ? 'connected' : ''}`}
+                                            data-node-id={node.id}
+                                            data-port-id={rowPort?.id || 'bundle-in'}
+                                            onMouseDown={(e) => handlePortMouseDown?.(rowPort?.id || 'bundle-in', e)}
+                                            onMouseUp={(e) => handlePortMouseUp?.(rowPort?.id || 'bundle-in', e)}
+                                            onMouseEnter={() => handlePortMouseEnter?.(rowPort?.id || 'bundle-in')}
+                                            onMouseLeave={handlePortMouseLeave}
+                                            title={row.label || 'Bundle input'}
+                                        />
+
+                                        {isPedal ? (
+                                            /* Pedal row - just show label (Note/Octave/Offset don't apply) */
+                                            <span className="pedal-label">Pedal</span>
+                                        ) : (
+                                            /* Key row - show Note, Octave, Offset */
+                                            <>
+                                                <span
+                                                    className="row-value note-value editable-value"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, ROW_PARAM_RANGES.NOTE.min, ROW_PARAM_RANGES.NOTE.max)}
+                                                    title={`Note (C-B) - scroll to change`}
+                                                >
+                                                    {NOTE_NAMES[row.baseNote] || 'C'}
+                                                </span>
+                                                <span
+                                                    className="row-value octave-value editable-value"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOctave', e, ROW_PARAM_RANGES.OCTAVE.min, ROW_PARAM_RANGES.OCTAVE.max)}
+                                                    title={`Octave (${ROW_PARAM_RANGES.OCTAVE.min}-${ROW_PARAM_RANGES.OCTAVE.max}) - scroll to change`}
+                                                >
+                                                    {row.baseOctave}
+                                                </span>
+                                                <span
+                                                    className="row-value offset-value editable-value"
+                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOffset', e, ROW_PARAM_RANGES.OFFSET.min, ROW_PARAM_RANGES.OFFSET.max)}
+                                                    title={`Offset (${ROW_PARAM_RANGES.OFFSET.min} to +${ROW_PARAM_RANGES.OFFSET.max}) - scroll to change`}
+                                                >
+                                                    {row.baseOffset >= 0 ? `+${row.baseOffset}` : row.baseOffset}
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {/* Empty row for adding new connections - find first available input port */}
+                            {(() => {
+                                const connectedPorts = new Set(rows.map(r => r.targetPortId));
+                                const availablePort = node.ports.find(p =>
+                                    p.direction === 'input' &&
+                                    p.type === 'control' &&
+                                    !connectedPorts.has(p.id)
+                                );
+                                if (!availablePort) return null;
+
+                                return (
+                                    <div className="instrument-row-simple empty-row with-divider">
+                                        <div
+                                            className="bundle-input-port empty"
+                                            data-node-id={node.id}
+                                            data-port-id={availablePort.id}
+                                            onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
+                                            onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
+                                            onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
+                                            onMouseLeave={handlePortMouseLeave}
+                                            title="Connect keyboard bundle"
+                                        />
+                                    </div>
+                                );
+                            })()}
+                        </>
+                    )}
                 </div>
 
-                {/* Output port */}
+                {/* Output port on right bottom */}
                 {outputPort && (
-                    <div className="instrument-output">
-                        <div
-                            className={`output-port ${hasConnection?.(outputPort.id) ? 'connected' : ''}`}
-                            data-node-id={node.id}
-                            data-port-id={outputPort.id}
-                            onMouseDown={(e) => handlePortMouseDown?.(outputPort.id, e)}
-                            onMouseUp={(e) => handlePortMouseUp?.(outputPort.id, e)}
-                            onMouseEnter={() => handlePortMouseEnter?.(outputPort.id)}
-                            onMouseLeave={handlePortMouseLeave}
-                            title={outputPort.name}
-                        />
-                    </div>
+                    <div
+                        className={`instrument-output-port ${hasConnection?.(outputPort.id) ? 'connected' : ''}`}
+                        data-node-id={node.id}
+                        data-port-id={outputPort.id}
+                        onMouseDown={(e) => handlePortMouseDown?.(outputPort.id, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(outputPort.id, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(outputPort.id)}
+                        onMouseLeave={handlePortMouseLeave}
+                        title="Audio output"
+                    />
                 )}
             </div>
 
-            {/* Instrument Selector Dropdown - rendered inside node so it moves with canvas */}
+            {/* Instrument Selector Dropdown */}
             {showPopup && (
                 <div
                     className="instrument-selector-dropdown"
@@ -746,33 +647,46 @@ export function InstrumentNode({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
                     />
-                    <div className="instrument-grid-container">
-                        {filteredSubcategories.map((group, groupIndex) => (
-                            <div key={groupIndex} className="instrument-subcategory">
-                                {groupIndex > 0 && <div className="subcategory-separator" />}
-                                <div className="instrument-grid">
-                                    {group.map(type => (
-                                        <div
-                                            key={type}
-                                            className={`instrument-card ${node.type === type ? 'selected' : ''}`}
-                                            onClick={() => handleInstrumentSelect(type)}
-                                        >
-                                            <div className="instrument-icon">
-                                                {InstrumentIcons[type]}
-                                            </div>
-                                            <div className="instrument-name">
-                                                {INSTRUMENT_LABELS[type]}
-                                            </div>
-                                        </div>
-                                    ))}
+                    <div
+                        className="instrument-grid-container"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
+                        <div className="instrument-grid-grouped">
+                            {groupedInstruments.map((group, groupIndex) => (
+                                <div key={group.baseName} className="instrument-group">
+                                    {groupIndex > 0 && <div className="instrument-group-separator" />}
+                                    {groupedInstruments.length > 1 && (
+                                        <div className="instrument-group-label">{group.baseName}</div>
+                                    )}
+                                    <div className="instrument-group-items">
+                                        {group.instruments.map(instId => {
+                                            const currentInstrumentId = (node.data as InstrumentNodeData).instrumentId || node.type;
+                                            return (
+                                                <div
+                                                    key={instId}
+                                                    className={`instrument-card ${currentInstrumentId === instId ? 'selected' : ''}`}
+                                                    onClick={() => handleInstrumentSelect(instId)}
+                                                >
+                                                    <div className="instrument-icon">
+                                                        {getInstrumentIcon(instId)}
+                                                    </div>
+                                                    <div className="instrument-name">
+                                                        {INSTRUMENT_LABELS[instId]}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                        {filteredSubcategories.length === 0 && (
+                            ))}
+                        </div>
+                        {filteredInstruments.length === 0 && (
                             <div className="no-results">No instruments found</div>
                         )}
                     </div>
-                    <div className="category-nav-hint">Ctrl + ← → to switch categories</div>
+                    <div className="category-nav-hint">
+                        {node.type.charAt(0).toUpperCase() + node.type.slice(1)} | Ctrl + ← → to switch type
+                    </div>
                 </div>
             )}
         </div>

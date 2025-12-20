@@ -48,6 +48,10 @@ export function SpeakerNode({
 
     const [devices, setDevices] = useState<AudioDevice[]>([]);
     const [showDevices, setShowDevices] = useState(false);
+    const [supportsSinkId] = useState(() => {
+        const audio = document.createElement('audio');
+        return typeof (audio as any).setSinkId === 'function';
+    });
     const isMuted = data.isMuted ?? false;
 
     // Fetch output devices
@@ -92,6 +96,9 @@ export function SpeakerNode({
     const handleDeviceSelect = (deviceId: string) => {
         updateNodeData<SpeakerNodeData>(node.id, { deviceId });
         setShowDevices(false);
+
+        // Apply device change immediately
+        audioGraphManager.updateSpeakerDevice(node.id, deviceId);
     };
 
     // Handle mute toggle
@@ -118,16 +125,23 @@ export function SpeakerNode({
                 onMouseDown={handleHeaderMouseDown}
             >
                 <span className="schematic-title">Speaker</span>
+                {/* Warning badge if browser doesn't support setSinkId and non-default device selected */}
+                {!supportsSinkId && currentDeviceId !== 'default' && (
+                    <div className="speaker-warning" title="Browser doesn't support output device selection">
+                        ⚠️
+                    </div>
+                )}
             </div>
 
             {/* Visual Container */}
             <div className="speaker-body">
-                {/* Input Port */}
+                {/* Input Port - positioned in top left corner under header */}
                 {inputPort && (
                     <div
                         className={`speaker-input-port ${hasConnection?.(inputPort.id) ? 'connected' : ''}`}
                         data-node-id={node.id}
                         data-port-id={inputPort.id}
+                        data-port-type={inputPort.type}
                         onMouseDown={(e) => handlePortMouseDown?.(inputPort.id, e)}
                         onMouseUp={(e) => handlePortMouseUp?.(inputPort.id, e)}
                         onMouseEnter={() => handlePortMouseEnter?.(inputPort.id)}

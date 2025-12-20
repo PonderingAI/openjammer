@@ -8,16 +8,50 @@ import type {
     GraphNode,
     Connection,
     Position,
-    NodeType
+    NodeType,
+    PortDefinition
 } from '../engine/types';
 import { getNodeDefinition, canConnect } from '../engine/registry';
+import { createDefaultInternalStructure } from '../utils/nodeInternals';
+import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval, isInstrumentNode, detectBundleInfo, expandTargetForBundle } from '../utils/portSync';
+import { useUIFeedbackStore } from './uiFeedbackStore';
+import { useCanvasNavigationStore } from './canvasNavigationStore';
+import type { InstrumentRow, InstrumentNodeData } from '../engine/types';
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Node dimension constants - extracted for maintainability */
+const NODE_DIMENSIONS = {
+    // Keyboard node
+    KEYBOARD_WIDTH: 160,
+    KEYBOARD_HEIGHT: 120,
+
+    // Speaker node
+    SPEAKER_WIDTH: 140,
+    SPEAKER_HEIGHT: 160,
+
+    // Looper node
+    LOOPER_WIDTH: 240,
+    LOOPER_HEIGHT: 120,
+
+    // Instrument nodes (dynamic height)
+    INSTRUMENT_WIDTH: 180,
+    INSTRUMENT_BASE_HEIGHT: 60,
+    INSTRUMENT_PORT_HEIGHT: 28,
+
+    // Default/standard nodes
+    DEFAULT_WIDTH: 200,
+    DEFAULT_HEIGHT: 150,
+} as const;
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
 function generateId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
 /**
@@ -26,11 +60,20 @@ function generateId(): string {
 export function getNodeDimensions(node: GraphNode): { width: number; height: number } {
     switch (node.type) {
         case 'keyboard':
-            return { width: 160, height: 120 };
+            return {
+                width: NODE_DIMENSIONS.KEYBOARD_WIDTH,
+                height: NODE_DIMENSIONS.KEYBOARD_HEIGHT
+            };
         case 'speaker':
-            return { width: 140, height: 160 };
+            return {
+                width: NODE_DIMENSIONS.SPEAKER_WIDTH,
+                height: NODE_DIMENSIONS.SPEAKER_HEIGHT
+            };
         case 'looper':
-            return { width: 240, height: 120 }; // Updated for schematic looper
+            return {
+                width: NODE_DIMENSIONS.LOOPER_WIDTH,
+                height: NODE_DIMENSIONS.LOOPER_HEIGHT
+            };
         case 'piano':
         case 'cello':
         case 'electricCello':
@@ -41,10 +84,16 @@ export function getNodeDimensions(node: GraphNode): { width: number; height: num
         case 'winds':
             // Instrument nodes: height varies by number of input ports
             const inputPorts = node.ports.filter(p => p.direction === 'input').length;
-            return { width: 180, height: 60 + (inputPorts * 28) };
+            return {
+                width: NODE_DIMENSIONS.INSTRUMENT_WIDTH,
+                height: NODE_DIMENSIONS.INSTRUMENT_BASE_HEIGHT + (inputPorts * NODE_DIMENSIONS.INSTRUMENT_PORT_HEIGHT)
+            };
         default:
             // Standard nodes (microphone, effect, amplifier, recorder)
-            return { width: 200, height: 150 };
+            return {
+                width: NODE_DIMENSIONS.DEFAULT_WIDTH,
+                height: NODE_DIMENSIONS.DEFAULT_HEIGHT
+            };
     }
 }
 
@@ -72,24 +121,37 @@ const MAX_HISTORY_SIZE = 50;
 // Store Interface
 // ============================================================================
 
+interface ClipboardData {
+    nodes: [string, GraphNode][];
+    connections: Connection[];
+}
+
 interface GraphStore {
-    // State
+    // State (all nodes/connections at all levels, flat)
     nodes: Map<string, GraphNode>;
     connections: Map<string, Connection>;
+    rootNodeIds: string[];  // IDs of nodes where parentId === null
     selectedNodeIds: Set<string>;
     selectedConnectionIds: Set<string>;
+
+    // Clipboard
+    clipboard: ClipboardData | null;
 
     // History
     history: HistoryState[];
     historyIndex: number;
 
     // Node Actions
-    addNode: (type: NodeType, position: Position) => string;
+    addNode: (type: NodeType, position: Position, parentId?: string | null) => string;
     removeNode: (nodeId: string) => void;
     updateNodePosition: (nodeId: string, position: Position) => void;
     updateNodeData: <T extends object>(nodeId: string, data: Partial<T>) => void;
     updateNodePorts: (nodeId: string, ports: import('../engine/types').PortDefinition[]) => void;
     updateNodeType: (nodeId: string, type: NodeType) => void;
+
+    // Instrument Row Actions
+    updateInstrumentRow: (nodeId: string, rowId: string, updates: Partial<InstrumentRow>) => void;
+    updateKeyGain: (nodeId: string, rowId: string, keyIndex: number, gain: number) => void;
 
     // Connection Actions
     addConnection: (
@@ -115,6 +177,10 @@ interface GraphStore {
     clearGraph: () => void;
     loadGraph: (nodes: GraphNode[], connections: Connection[]) => void;
 
+    // Clipboard Actions
+    copySelected: () => void;
+    pasteClipboard: (position?: Position) => void;
+
     // History Actions
     undo: () => void;
     redo: () => void;
@@ -128,6 +194,14 @@ interface GraphStore {
     // Subscription helpers for AudioGraphManager
     getNodes: () => Map<string, GraphNode>;
     getConnections: () => Map<string, Connection>;
+
+    // Hierarchy traversal helpers (flat normalized structure)
+    getNodeChildren: (nodeId: string) => GraphNode[];
+    getNodeParent: (nodeId: string) => GraphNode | null;
+    getNodeDepth: (nodeId: string) => number;
+    getRootNodes: () => GraphNode[];
+    getNodesAtLevel: (parentId: string | null) => GraphNode[];  // null = root level
+    getConnectionsAtLevel: (parentId: string | null) => Connection[];  // Connections between nodes at this level
 }
 
 // ============================================================================
@@ -137,11 +211,13 @@ interface GraphStore {
 export const useGraphStore = create<GraphStore>()(
     persist(
         (set, get) => ({
-            // Initial State
+            // Initial State (flat normalized structure)
             nodes: new Map(),
             connections: new Map(),
+            rootNodeIds: [],  // IDs of top-level nodes
             selectedNodeIds: new Set(),
             selectedConnectionIds: new Set(),
+            clipboard: null,
             history: [],
             historyIndex: -1,
 
@@ -214,25 +290,148 @@ export const useGraphStore = create<GraphStore>()(
             },
 
             // Node Actions
-            addNode: (type, position) => {
+            addNode: (type, position, parentId = null) => {
                 get().pushHistory();
 
                 const definition = getNodeDefinition(type);
                 const id = generateId();
 
+                // Create node with flat structure (parentId and childIds)
                 const node: GraphNode = {
                     id,
                     type,
                     category: definition.category,
                     position,
                     data: { ...definition.defaultData },
-                    ports: [...definition.defaultPorts]
+                    ports: [...definition.defaultPorts],
+                    parentId,
+                    childIds: [],
+                    specialNodes: []
                 };
+
+                // Auto-assign next available key for keyboard nodes
+                if (type === 'keyboard') {
+                    const state = get();
+                    const existingKeyboards = Array.from(state.nodes.values())
+                        .filter(n => n.type === 'keyboard');
+                    const usedKeys = new Set(
+                        existingKeyboards.map(kb => (kb.data as { assignedKey?: number }).assignedKey ?? 2)
+                    );
+
+                    // Find next available key (2-9)
+                    let nextKey = 2;
+                    while (usedKeys.has(nextKey) && nextKey <= 9) {
+                        nextKey++;
+                    }
+
+                    // Assign the key (wrap to 2 if all 2-9 are used)
+                    node.data = {
+                        ...node.data,
+                        assignedKey: nextKey <= 9 ? nextKey : 2
+                    };
+                }
+
+                // Get default internal structure (returns flat arrays now)
+                const internalStructure = createDefaultInternalStructure(node);
+
+                // Add all internal nodes to flat structure with correct parentId
+                const allNodesToAdd: GraphNode[] = [node];
+                const allConnectionsToAdd: Connection[] = [];
+
+                internalStructure.internalNodes.forEach((internalNode: GraphNode) => {
+                    // Set parentId to point to this node
+                    internalNode.parentId = id;
+                    internalNode.childIds = [];
+                    allNodesToAdd.push(internalNode);
+                    node.childIds.push(internalNode.id);
+                });
+
+                // Store special node IDs
+                node.specialNodes = internalStructure.specialNodes;
+
+                // Copy port visibility configuration
+                node.showEmptyInputPorts = internalStructure.showEmptyInputPorts;
+                node.showEmptyOutputPorts = internalStructure.showEmptyOutputPorts;
+
+                // Add internal connections to flat structure
+                internalStructure.internalConnections.forEach((conn: Connection) => {
+                    allConnectionsToAdd.push(conn);
+                });
+
+                // Sync ports from internal canvas-input/output nodes
+                // Use onlyConnected: true so only ports with connections show on parent
+                const syncedPorts = syncPortsWithInternalNodes(
+                    node,
+                    Array.from(internalStructure.internalNodes.values()),
+                    internalStructure.internalConnections,
+                    true  // onlyConnected: only show ports that have connections
+                );
+                if (syncedPorts.length > 0) {
+                    node.ports = syncedPorts;
+                }
 
                 set((state) => {
                     const newNodes = new Map(state.nodes);
-                    newNodes.set(id, node);
-                    return { nodes: newNodes };
+                    const newConnections = new Map(state.connections);
+                    const newRootNodeIds = [...state.rootNodeIds];
+
+                    // Add all nodes
+                    allNodesToAdd.forEach(n => newNodes.set(n.id, n));
+
+                    // Add all connections
+                    allConnectionsToAdd.forEach(c => newConnections.set(c.id, c));
+
+                    // Update parent's childIds if this is a child node
+                    if (parentId) {
+                        const parent = newNodes.get(parentId);
+                        if (parent) {
+                            newNodes.set(parentId, {
+                                ...parent,
+                                childIds: [...parent.childIds, id]
+                            });
+                        }
+                    } else {
+                        // Root level node
+                        newRootNodeIds.push(id);
+                    }
+
+                    // Check for dynamic port addition (for pre-wired internal connections)
+                    // This ensures empty ports appear on output-panel and input-panel
+                    const { updatedNode } = checkDynamicPortAddition(id, newNodes, newConnections);
+                    if (updatedNode) {
+                        const existingNode = newNodes.get(updatedNode.id);
+                        if (existingNode) {
+                            newNodes.set(updatedNode.id, {
+                                ...existingNode,
+                                ports: updatedNode.ports,
+                                data: updatedNode.data
+                            });
+
+                            // Re-sync parent's ports after adding dynamic port
+                            const nodeToSync = newNodes.get(id);
+                            if (nodeToSync) {
+                                const childNodes = nodeToSync.childIds
+                                    .map(cid => newNodes.get(cid))
+                                    .filter((n): n is GraphNode => n !== undefined);
+
+                                const syncedPorts = syncPortsWithInternalNodes(
+                                    nodeToSync,
+                                    childNodes,
+                                    newConnections,
+                                    true  // onlyConnected: only show ports that have connections
+                                );
+                                if (syncedPorts.length > 0) {
+                                    newNodes.set(id, { ...nodeToSync, ports: syncedPorts });
+                                }
+                            }
+                        }
+                    }
+
+                    return {
+                        nodes: newNodes,
+                        connections: newConnections,
+                        rootNodeIds: newRootNodeIds
+                    };
                 });
 
                 return id;
@@ -242,24 +441,57 @@ export const useGraphStore = create<GraphStore>()(
                 get().pushHistory();
 
                 set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
                     const newNodes = new Map(state.nodes);
                     const newConnections = new Map(state.connections);
                     const newSelectedNodes = new Set(state.selectedNodeIds);
+                    let newRootNodeIds = [...state.rootNodeIds];
 
-                    // Remove all connections to/from this node
+                    // Collect all node IDs to delete (this node + all descendants)
+                    const nodesToDelete = new Set<string>();
+                    const collectDescendants = (id: string) => {
+                        nodesToDelete.add(id);
+                        const n = newNodes.get(id);
+                        if (n?.childIds) {
+                            n.childIds.forEach(childId => collectDescendants(childId));
+                        }
+                    };
+                    collectDescendants(nodeId);
+
+                    // Remove all connections involving any deleted node
                     state.connections.forEach((conn, connId) => {
-                        if (conn.sourceNodeId === nodeId || conn.targetNodeId === nodeId) {
+                        if (nodesToDelete.has(conn.sourceNodeId) || nodesToDelete.has(conn.targetNodeId)) {
                             newConnections.delete(connId);
                         }
                     });
 
-                    newNodes.delete(nodeId);
-                    newSelectedNodes.delete(nodeId);
+                    // Remove all nodes
+                    nodesToDelete.forEach(id => {
+                        newNodes.delete(id);
+                        newSelectedNodes.delete(id);
+                    });
+
+                    // Update parent's childIds if this node has a parent
+                    if (node.parentId) {
+                        const parent = newNodes.get(node.parentId);
+                        if (parent) {
+                            newNodes.set(node.parentId, {
+                                ...parent,
+                                childIds: parent.childIds.filter(id => id !== nodeId)
+                            });
+                        }
+                    } else {
+                        // Remove from rootNodeIds
+                        newRootNodeIds = newRootNodeIds.filter(id => id !== nodeId);
+                    }
 
                     return {
                         nodes: newNodes,
                         connections: newConnections,
-                        selectedNodeIds: newSelectedNodes
+                        selectedNodeIds: newSelectedNodes,
+                        rootNodeIds: newRootNodeIds
                     };
                 });
             },
@@ -316,6 +548,68 @@ export const useGraphStore = create<GraphStore>()(
                 });
             },
 
+            // Instrument Row Actions
+            updateInstrumentRow: (nodeId, rowId, updates) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const instrumentData = node.data as InstrumentNodeData;
+                    const rows = instrumentData.rows || [];
+                    const rowIndex = rows.findIndex(r => r.rowId === rowId);
+                    if (rowIndex === -1) return state;
+
+                    const updatedRow = { ...rows[rowIndex], ...updates };
+
+                    // If spread changed, recalculate keyGains
+                    if (updates.spread !== undefined && updates.spread !== rows[rowIndex].spread) {
+                        const newSpread = updates.spread;
+                        updatedRow.keyGains = Array.from(
+                            { length: updatedRow.portCount },
+                            (_, i) => i * newSpread
+                        );
+                    }
+
+                    const newRows = [...rows];
+                    newRows[rowIndex] = updatedRow;
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, rows: newRows }
+                    });
+                    return { nodes: newNodes };
+                });
+            },
+
+            updateKeyGain: (nodeId, rowId, keyIndex, gain) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node) return state;
+
+                    const instrumentData = node.data as InstrumentNodeData;
+                    const rows = instrumentData.rows || [];
+                    const rowIndex = rows.findIndex(r => r.rowId === rowId);
+                    if (rowIndex === -1) return state;
+
+                    const row = rows[rowIndex];
+                    if (keyIndex < 0 || keyIndex >= row.keyGains.length) return state;
+
+                    const newKeyGains = [...row.keyGains];
+                    newKeyGains[keyIndex] = gain;
+
+                    const newRows = [...rows];
+                    newRows[rowIndex] = { ...row, keyGains: newKeyGains };
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, rows: newRows }
+                    });
+                    return { nodes: newNodes };
+                });
+            },
+
             // Connection Actions
             addConnection: (sourceNodeId, sourcePortId, targetNodeId, targetPortId) => {
                 const state = get();
@@ -325,7 +619,23 @@ export const useGraphStore = create<GraphStore>()(
                 if (!sourceNode || !targetNode) return null;
 
                 const sourcePort = sourceNode.ports.find(p => p.id === sourcePortId);
-                const targetPort = targetNode.ports.find(p => p.id === targetPortId);
+                let targetPort = targetNode.ports.find(p => p.id === targetPortId);
+
+                // If target port not found (e.g., placeholder was replaced by previous connection),
+                // try to find any available control input port on instruments
+                if (!targetPort && isInstrumentNode(targetNode)) {
+                    const existingConnections = Array.from(state.connections.values());
+                    const connectedTargetPorts = new Set(
+                        existingConnections
+                            .filter(c => c.targetNodeId === targetNodeId)
+                            .map(c => c.targetPortId)
+                    );
+                    targetPort = targetNode.ports.find(p =>
+                        p.direction === 'input' &&
+                        p.type === 'control' &&
+                        !connectedTargetPorts.has(p.id)
+                    );
+                }
 
                 if (!sourcePort || !targetPort) return null;
                 if (!canConnect(sourcePort, targetPort)) return null;
@@ -355,30 +665,398 @@ export const useGraphStore = create<GraphStore>()(
                 }
 
                 const id = generateId();
+                const isBundled = sourcePort.isBundled || targetPort.isBundled || false;
                 const connection: Connection = {
                     id,
                     sourceNodeId,
                     sourcePortId,
                     targetNodeId,
                     targetPortId,
-                    type: sourcePort.type
+                    type: sourcePort.type,
+                    isBundled
                 };
 
                 set((state) => {
                     const newConnections = new Map(state.connections);
                     newConnections.set(id, connection);
-                    return { connections: newConnections };
+                    let newNodes = new Map(state.nodes);
+
+                    // ================================================================
+                    // Generic Bundle Expansion
+                    // When a bundle connects to ANY node with an input-panel,
+                    // expand the input-panel to match the bundle size
+                    // ================================================================
+                    const bundleInfo = detectBundleInfo(
+                        sourceNodeId,
+                        sourcePortId,
+                        newNodes,
+                        newConnections
+                    );
+
+                    if (bundleInfo) {
+                        // Try to expand target for bundle
+                        const expansion = expandTargetForBundle(
+                            targetNodeId,
+                            bundleInfo.size,
+                            bundleInfo.label,
+                            newNodes
+                        );
+
+                        if (expansion) {
+                            // Update input-panel with new ports
+                            const inputPanel = newNodes.get(expansion.panelId);
+                            if (inputPanel) {
+                                // Keep existing ports (except placeholders) and add new bundle ports
+                                const existingPorts = inputPanel.ports.filter(p =>
+                                    p.direction === 'output' && !p.id.startsWith('port-placeholder')
+                                );
+                                const existingLabels = (inputPanel.data.portLabels as Record<string, string>) || {};
+                                const existingHideLabels = (inputPanel.data.portHideExternalLabel as Record<string, boolean>) || {};
+
+                                // Add a new placeholder port at the end
+                                const placeholderPortId = `port-placeholder-${Date.now()}`;
+                                const allPorts = [
+                                    ...existingPorts,
+                                    ...expansion.newPorts,
+                                    {
+                                        id: placeholderPortId,
+                                        name: '',
+                                        type: 'control' as const,
+                                        direction: 'output' as const,
+                                        position: { x: 1, y: 0.95 }
+                                    }
+                                ];
+                                const allLabels = {
+                                    ...existingLabels,
+                                    ...expansion.newPortLabels,
+                                    [placeholderPortId]: ''
+                                };
+                                const allHideLabels = {
+                                    ...existingHideLabels,
+                                    ...expansion.newPortHideExternalLabel,
+                                    [placeholderPortId]: true
+                                };
+
+                                newNodes.set(inputPanel.id, {
+                                    ...inputPanel,
+                                    ports: allPorts,
+                                    data: {
+                                        ...inputPanel.data,
+                                        portLabels: allLabels,
+                                        portHideExternalLabel: allHideLabels
+                                    }
+                                });
+
+                                // Build composite target port ID from panel and first new port
+                                const firstNewPortId = expansion.newPorts[0]?.id || '';
+                                const bundleTargetPortId = `${expansion.panelId}:${firstNewPortId}`;
+
+                                // Update the connection to use the new bundle port
+                                const updatedConnection = { ...connection, targetPortId: bundleTargetPortId };
+                                newConnections.set(id, updatedConnection);
+
+                                // If target is an instrument, also create InstrumentRow
+                                const targetNodeForExpansion = newNodes.get(targetNodeId);
+                                if (targetNodeForExpansion && isInstrumentNode(targetNodeForExpansion)) {
+                                    const rowId = `row-${Date.now()}`;
+                                    const defaultSpread = 0.5;
+
+                                    const newRow: InstrumentRow = {
+                                        rowId,
+                                        sourceNodeId,
+                                        sourcePortId,
+                                        targetPortId: bundleTargetPortId,
+                                        label: bundleInfo.label,
+                                        spread: defaultSpread,
+                                        baseNote: 0,
+                                        baseOctave: 4,
+                                        baseOffset: 0,
+                                        portCount: bundleInfo.size,
+                                        keyGains: Array.from({ length: bundleInfo.size }, () => 1)
+                                    };
+
+                                    const instrumentData = targetNodeForExpansion.data as InstrumentNodeData;
+                                    const existingRows = instrumentData.rows || [];
+                                    newNodes.set(targetNodeId, {
+                                        ...targetNodeForExpansion,
+                                        data: {
+                                            ...targetNodeForExpansion.data,
+                                            rows: [...existingRows, newRow]
+                                        }
+                                    });
+
+                                    // === INTERNAL WIRING ===
+                                    // Find instrument-visual node and wire up the key ports
+                                    const instrumentVisual = targetNodeForExpansion.childIds
+                                        .map(cid => newNodes.get(cid))
+                                        .find(n => n?.type === 'instrument-visual');
+
+                                    if (instrumentVisual) {
+                                        // Create key input ports on instrument-visual
+                                        const newKeyPorts: PortDefinition[] = [];
+                                        for (let i = 0; i < bundleInfo.size; i++) {
+                                            const keyPortId = `${rowId}-key-${i}`;
+                                            const yPos = 0.1 + (i / bundleInfo.size) * 0.8;
+                                            newKeyPorts.push({
+                                                id: keyPortId,
+                                                name: `Key ${i + 1}`,
+                                                type: 'control',
+                                                direction: 'input',
+                                                position: { x: 0, y: yPos }
+                                            });
+                                        }
+
+                                        // Update instrument-visual with new ports
+                                        const existingVisualPorts = instrumentVisual.ports;
+                                        newNodes.set(instrumentVisual.id, {
+                                            ...instrumentVisual,
+                                            ports: [...existingVisualPorts, ...newKeyPorts]
+                                        });
+
+                                        // Create internal connections from input-panel bundle port to each key port
+                                        const bundlePortId = expansion.newPorts[0]?.id;
+                                        if (bundlePortId) {
+                                            for (let i = 0; i < bundleInfo.size; i++) {
+                                                const keyPortId = `${rowId}-key-${i}`;
+                                                const connId = `internal-conn-${generateId()}`;
+                                                newConnections.set(connId, {
+                                                    id: connId,
+                                                    sourceNodeId: expansion.panelId,
+                                                    sourcePortId: bundlePortId,
+                                                    targetNodeId: instrumentVisual.id,
+                                                    targetPortId: keyPortId,
+                                                    type: 'control'
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Re-sync parent's ports
+                                const updatedTarget = newNodes.get(targetNodeId);
+                                if (updatedTarget) {
+                                    const childNodes = updatedTarget.childIds
+                                        .map(cid => newNodes.get(cid))
+                                        .filter((n): n is GraphNode => n !== undefined);
+
+                                    const syncedPorts = syncPortsWithInternalNodes(
+                                        updatedTarget,
+                                        childNodes,
+                                        newConnections,
+                                        true
+                                    );
+                                    newNodes.set(targetNodeId, { ...updatedTarget, ports: syncedPorts });
+                                }
+                            }
+                        }
+                    }
+
+                    // Check if we need to add a dynamic port to the target's parent
+                    const targetNodeInState = newNodes.get(targetNodeId);
+                    if (targetNodeInState?.parentId) {
+                        const { newNode, updatedNode } = checkDynamicPortAddition(
+                            targetNodeInState.parentId,
+                            newNodes,
+                            newConnections
+                        );
+
+                        // Handle adding a new port to an existing output-panel
+                        if (updatedNode) {
+                            // Update the output-panel with new port
+                            const existingNode = newNodes.get(updatedNode.id);
+                            if (existingNode) {
+                                newNodes.set(updatedNode.id, {
+                                    ...existingNode,
+                                    ports: updatedNode.ports,
+                                    data: updatedNode.data
+                                });
+
+                                // Re-sync parent's ports with onlyConnected: true
+                                const parent = newNodes.get(targetNodeInState.parentId);
+                                if (parent) {
+                                    const childNodes = parent.childIds
+                                        .map(cid => newNodes.get(cid))
+                                        .filter((n): n is GraphNode => n !== undefined);
+
+                                    const syncedPorts = syncPortsWithInternalNodes(
+                                        parent,
+                                        childNodes,
+                                        newConnections,
+                                        true  // onlyConnected: only show ports that have connections
+                                    );
+                                    newNodes.set(parent.id, { ...parent, ports: syncedPorts });
+                                }
+                            }
+
+                            return { connections: newConnections, nodes: newNodes };
+                        }
+
+                        // Handle adding a new canvas-output node (legacy)
+                        if (newNode) {
+                            // Add the new node
+                            newNodes.set(newNode.id, newNode);
+
+                            // Update parent's childIds and specialNodes
+                            const parent = newNodes.get(targetNodeInState.parentId);
+                            if (parent) {
+                                newNodes.set(parent.id, {
+                                    ...parent,
+                                    childIds: [...parent.childIds, newNode.id],
+                                    specialNodes: [...(parent.specialNodes || []), newNode.id]
+                                });
+
+                                // Re-sync parent's ports with onlyConnected: true
+                                const childNodes = [...parent.childIds, newNode.id]
+                                    .map(cid => newNodes.get(cid))
+                                    .filter((n): n is GraphNode => n !== undefined);
+
+                                const syncedPorts = syncPortsWithInternalNodes(
+                                    { ...parent, specialNodes: [...(parent.specialNodes || []), newNode.id] },
+                                    childNodes,
+                                    newConnections,
+                                    true  // onlyConnected: only show ports that have connections
+                                );
+
+                                const updatedParent = newNodes.get(parent.id);
+                                if (updatedParent) {
+                                    newNodes.set(parent.id, {
+                                        ...updatedParent,
+                                        ports: syncedPorts
+                                    });
+                                }
+                            }
+
+                            return { connections: newConnections, nodes: newNodes };
+                        }
+                    }
+
+                    // Handle universal port type resolution for math nodes
+                    if (sourcePort.type === 'universal' || targetPort.type === 'universal') {
+                        // Determine the resolved type from the non-universal port
+                        let resolvedType: 'audio' | 'control' = 'control';
+                        if (sourcePort.type !== 'universal') {
+                            resolvedType = sourcePort.type as 'audio' | 'control';
+                        } else if (targetPort.type !== 'universal') {
+                            resolvedType = targetPort.type as 'audio' | 'control';
+                        }
+
+                        // Update source node if it has universal ports (add/subtract)
+                        if ((sourceNode.type === 'add' || sourceNode.type === 'subtract') &&
+                            sourcePort.type === 'universal') {
+                            const currentSource = newNodes.get(sourceNodeId) || sourceNode;
+                            newNodes.set(sourceNodeId, {
+                                ...currentSource,
+                                data: { ...currentSource.data, resolvedType }
+                            });
+                        }
+
+                        // Update target node if it has universal ports (add/subtract)
+                        if ((targetNode.type === 'add' || targetNode.type === 'subtract') &&
+                            targetPort.type === 'universal') {
+                            const currentTarget = newNodes.get(targetNodeId) || targetNode;
+                            newNodes.set(targetNodeId, {
+                                ...currentTarget,
+                                data: { ...currentTarget.data, resolvedType }
+                            });
+                        }
+                    }
+
+                    return { connections: newConnections, nodes: newNodes };
                 });
 
                 return id;
             },
 
             removeConnection: (connectionId) => {
+                get().pushHistory();  // Enable undo for connection deletion
                 set((state) => {
+                    const connection = state.connections.get(connectionId);
                     const newConnections = new Map(state.connections);
                     const newSelectedConnections = new Set(state.selectedConnectionIds);
                     newConnections.delete(connectionId);
                     newSelectedConnections.delete(connectionId);
+
+                    // Check if we need to reset universal port type for math nodes
+                    if (connection) {
+                        const newNodes = new Map(state.nodes);
+                        const nodesToCheck = [connection.sourceNodeId, connection.targetNodeId];
+                        let nodesUpdated = false;
+
+                        for (const nodeId of nodesToCheck) {
+                            const node = newNodes.get(nodeId);
+                            if (node && (node.type === 'add' || node.type === 'subtract')) {
+                                // Check if node has any remaining connections
+                                const remainingConnections = Array.from(newConnections.values()).some(
+                                    conn => conn.sourceNodeId === nodeId || conn.targetNodeId === nodeId
+                                );
+
+                                if (!remainingConnections && node.data.resolvedType !== null) {
+                                    // Reset resolvedType to null
+                                    newNodes.set(nodeId, {
+                                        ...node,
+                                        data: { ...node.data, resolvedType: null }
+                                    });
+                                    nodesUpdated = true;
+                                }
+                            }
+                        }
+
+                        // Check for dynamic port removal in parent panels
+                        const parentsToCheck = new Set<string>();
+                        const targetNode = newNodes.get(connection.targetNodeId);
+                        const sourceNode = newNodes.get(connection.sourceNodeId);
+
+                        if (targetNode?.parentId) {
+                            parentsToCheck.add(targetNode.parentId);
+                        }
+                        if (sourceNode?.parentId) {
+                            parentsToCheck.add(sourceNode.parentId);
+                        }
+
+                        for (const parentId of parentsToCheck) {
+                            const { updatedNode } = checkDynamicPortRemoval(parentId, newNodes, newConnections);
+
+                            if (updatedNode) {
+                                // Update the panel node with removed port
+                                const panelNode = newNodes.get(updatedNode.id);
+                                if (panelNode) {
+                                    newNodes.set(updatedNode.id, {
+                                        ...panelNode,
+                                        ports: updatedNode.ports,
+                                        data: updatedNode.data
+                                    });
+                                    nodesUpdated = true;
+                                }
+                            }
+
+                            // Sync parent ports with onlyConnected: true
+                            const parent = newNodes.get(parentId);
+                            if (parent) {
+                                const childNodes = parent.childIds
+                                    .map(cid => newNodes.get(cid))
+                                    .filter((n): n is GraphNode => n !== undefined);
+
+                                const syncedPorts = syncPortsWithInternalNodes(
+                                    parent,
+                                    childNodes,
+                                    newConnections,
+                                    true  // onlyConnected: only show ports that have connections
+                                );
+
+                                newNodes.set(parentId, { ...parent, ports: syncedPorts });
+                                nodesUpdated = true;
+                            }
+                        }
+
+                        if (nodesUpdated) {
+                            return {
+                                connections: newConnections,
+                                selectedConnectionIds: newSelectedConnections,
+                                nodes: newNodes
+                            };
+                        }
+                    }
+
                     return {
                         connections: newConnections,
                         selectedConnectionIds: newSelectedConnections
@@ -448,10 +1126,14 @@ export const useGraphStore = create<GraphStore>()(
             // Select nodes within a rectangle (for box selection)
             // Only selects nodes that are FULLY contained within the selection box
             selectNodesInRect: (rect) => {
-                const state = get();
+                const navStore = useCanvasNavigationStore.getState();
                 const selectedIds: string[] = [];
 
-                state.nodes.forEach((node, id) => {
+                // Get nodes at the current viewing level using flat structure
+                const currentViewNodeId = navStore.currentViewNodeId;
+                const nodesToCheck = get().getNodesAtLevel(currentViewNodeId);
+
+                nodesToCheck.forEach((node) => {
                     const { width: nodeWidth, height: nodeHeight } = getNodeDimensions(node);
 
                     // Calculate node bounds
@@ -471,7 +1153,7 @@ export const useGraphStore = create<GraphStore>()(
                         nodeRight <= maxX &&
                         node.position.y >= minY &&
                         nodeBottom <= maxY) {
-                        selectedIds.push(id);
+                        selectedIds.push(node.id);
                     }
                 });
 
@@ -491,15 +1173,50 @@ export const useGraphStore = create<GraphStore>()(
 
                 get().pushHistory();
 
-                // Delete selected connections
-                state.selectedConnectionIds.forEach(connId => {
-                    get().removeConnection(connId);
-                });
+                // Capture IDs as arrays to avoid stale closure issues
+                // (state changes after each removeNode call, but we want to process all originally selected items)
+                const nodesToDelete = Array.from(state.selectedNodeIds);
+                const connectionsToDelete = Array.from(state.selectedConnectionIds);
 
-                // Delete selected nodes
-                state.selectedNodeIds.forEach(nodeId => {
+                // Node types that cannot be deleted when inside an internal canvas
+                const UNDELETABLE_INTERNAL_TYPES = ['keyboard-visual', 'output-panel', 'input-panel'];
+
+                // With flat structure, we just use removeNode for all nodes
+                // It handles all levels uniformly
+                nodesToDelete.forEach(nodeId => {
+                    // Get fresh state each iteration since removeNode mutates state
+                    const currentState = get();
+                    const node = currentState.nodes.get(nodeId);
+                    if (!node) return;
+
+                    // Check if this node is inside an internal canvas (has a parent)
+                    if (node.parentId) {
+                        const parent = currentState.nodes.get(node.parentId);
+
+                        // Check if this is a special node (in specialNodes array)
+                        if (parent?.specialNodes?.includes(nodeId)) {
+                            console.warn(`Cannot delete special node ${nodeId}`);
+                            useUIFeedbackStore.getState().flashNode(nodeId);
+                            return;
+                        }
+
+                        // Check if this is an undeletable internal node type
+                        if (UNDELETABLE_INTERNAL_TYPES.includes(node.type)) {
+                            console.warn(`Cannot delete ${node.type} node ${nodeId}`);
+                            useUIFeedbackStore.getState().flashNode(nodeId);
+                            return;
+                        }
+                    }
+
                     get().removeNode(nodeId);
                 });
+
+                connectionsToDelete.forEach(connectionId => {
+                    get().removeConnection(connectionId);
+                });
+
+                // Clear selection after deletion
+                get().clearSelection();
             },
 
             clearGraph: () => {
@@ -507,6 +1224,7 @@ export const useGraphStore = create<GraphStore>()(
                 set({
                     nodes: new Map(),
                     connections: new Map(),
+                    rootNodeIds: [],
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set()
                 });
@@ -516,15 +1234,118 @@ export const useGraphStore = create<GraphStore>()(
                 get().pushHistory();
                 const newNodes = new Map<string, GraphNode>();
                 const newConnections = new Map<string, Connection>();
+                const newRootNodeIds: string[] = [];
 
-                nodes.forEach(node => newNodes.set(node.id, node));
+                nodes.forEach(node => {
+                    newNodes.set(node.id, node);
+                    // Collect root nodes
+                    if (node.parentId === null || node.parentId === undefined) {
+                        newRootNodeIds.push(node.id);
+                    }
+                });
                 connections.forEach(conn => newConnections.set(conn.id, conn));
 
                 set({
                     nodes: newNodes,
                     connections: newConnections,
+                    rootNodeIds: newRootNodeIds,
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set()
+                });
+            },
+
+            // Copy selected nodes and their connections to clipboard
+            copySelected: () => {
+                const state = get();
+                if (state.selectedNodeIds.size === 0) return;
+
+                const nodesToCopy: [string, GraphNode][] = [];
+                const connectionsToCopy: Connection[] = [];
+
+                // Copy selected nodes
+                state.selectedNodeIds.forEach(nodeId => {
+                    const node = state.nodes.get(nodeId);
+                    if (node) {
+                        nodesToCopy.push([nodeId, node]);
+                    }
+                });
+
+                // Copy connections between selected nodes
+                state.connections.forEach(conn => {
+                    if (state.selectedNodeIds.has(conn.sourceNodeId) &&
+                        state.selectedNodeIds.has(conn.targetNodeId)) {
+                        connectionsToCopy.push(conn);
+                    }
+                });
+
+                set({
+                    clipboard: {
+                        nodes: nodesToCopy,
+                        connections: connectionsToCopy
+                    }
+                });
+            },
+
+            // Paste clipboard contents at specified position or offset from original
+            pasteClipboard: (position?: Position) => {
+                const state = get();
+                if (!state.clipboard || state.clipboard.nodes.length === 0) return;
+
+                get().pushHistory();
+
+                const oldToNewIds = new Map<string, string>();
+                const newNodes = new Map(state.nodes);
+
+                // Calculate paste offset
+                let offsetX = 50;
+                let offsetY = 50;
+                if (position && state.clipboard.nodes.length > 0) {
+                    const firstNode = state.clipboard.nodes[0][1];
+                    offsetX = position.x - firstNode.position.x;
+                    offsetY = position.y - firstNode.position.y;
+                }
+
+                // Create new nodes with new IDs
+                state.clipboard.nodes.forEach(([oldId, node]) => {
+                    const newId = generateId();
+                    oldToNewIds.set(oldId, newId);
+
+                    const newNode: GraphNode = {
+                        ...node,
+                        id: newId,
+                        position: {
+                            x: node.position.x + offsetX,
+                            y: node.position.y + offsetY
+                        }
+                    };
+
+                    newNodes.set(newId, newNode);
+                });
+
+                // Create new connections with updated IDs
+                const newConnections = new Map(state.connections);
+                state.clipboard.connections.forEach(conn => {
+                    const newSourceId = oldToNewIds.get(conn.sourceNodeId);
+                    const newTargetId = oldToNewIds.get(conn.targetNodeId);
+
+                    if (newSourceId && newTargetId) {
+                        const newConnId = generateId();
+                        newConnections.set(newConnId, {
+                            ...conn,
+                            id: newConnId,
+                            sourceNodeId: newSourceId,
+                            targetNodeId: newTargetId
+                        });
+                    }
+                });
+
+                // Select the newly pasted nodes
+                const newSelectedIds = new Set(oldToNewIds.values());
+
+                set({
+                    nodes: newNodes,
+                    connections: newConnections,
+                    selectedNodeIds: newSelectedIds
                 });
             },
 
@@ -562,11 +1383,76 @@ export const useGraphStore = create<GraphStore>()(
 
             // Subscription helpers for AudioGraphManager
             getNodes: () => get().nodes,
-            getConnections: () => get().connections
+            getConnections: () => get().connections,
+
+            // Hierarchy traversal helpers (flat normalized structure)
+            getNodeChildren: (nodeId) => {
+                const state = get();
+                const node = state.nodes.get(nodeId);
+                if (!node?.childIds) return [];
+                return node.childIds
+                    .map(id => state.nodes.get(id))
+                    .filter((n): n is GraphNode => n !== undefined);
+            },
+
+            getNodeParent: (nodeId) => {
+                const state = get();
+                const node = state.nodes.get(nodeId);
+                if (!node?.parentId) return null;
+                return state.nodes.get(node.parentId) || null;
+            },
+
+            getNodeDepth: (nodeId) => {
+                const state = get();
+                let depth = 0;
+                let currentId: string | null = nodeId;
+
+                while (currentId) {
+                    const node = state.nodes.get(currentId);
+                    if (!node?.parentId) break;
+                    currentId = node.parentId;
+                    depth++;
+                }
+
+                return depth;
+            },
+
+            getRootNodes: () => {
+                const state = get();
+                return state.rootNodeIds
+                    .map(id => state.nodes.get(id))
+                    .filter((n): n is GraphNode => n !== undefined);
+            },
+
+            getNodesAtLevel: (parentId) => {
+                const state = get();
+                if (parentId === null) {
+                    // Root level: return nodes with no parent
+                    return Array.from(state.nodes.values()).filter(n => n.parentId === null);
+                } else {
+                    // Inside a node: return its children
+                    const parent = state.nodes.get(parentId);
+                    if (!parent?.childIds) return [];
+                    return parent.childIds
+                        .map(id => state.nodes.get(id))
+                        .filter((n): n is GraphNode => n !== undefined);
+                }
+            },
+
+            getConnectionsAtLevel: (parentId) => {
+                const state = get();
+                const nodesAtLevel = get().getNodesAtLevel(parentId);
+                const nodeIdsAtLevel = new Set(nodesAtLevel.map(n => n.id));
+
+                // Return connections where both source and target are at this level
+                return Array.from(state.connections.values()).filter(conn =>
+                    nodeIdsAtLevel.has(conn.sourceNodeId) && nodeIdsAtLevel.has(conn.targetNodeId)
+                );
+            }
         }),
         {
-            name: 'openjammer-graph',
-            // Custom serialization for Map and Set
+            name: 'openjammer-graph-v2',  // New version to avoid loading old incompatible data
+            // Custom serialization for Map and Set (flat normalized structure)
             storage: {
                 getItem: (name) => {
                     try {
@@ -581,11 +1467,51 @@ export const useGraphStore = create<GraphStore>()(
                             return null;
                         }
 
+                        // Deserialize flat node structure
+                        const nodesArray = Array.isArray(parsed.state.nodes) ? parsed.state.nodes : [];
+                        const nodes = new Map<string, GraphNode>(
+                            nodesArray.map(([id, node]: [string, GraphNode]) => {
+                                // Ensure new flat structure fields exist
+                                if (node.parentId === undefined) node.parentId = null;
+                                if (!Array.isArray(node.childIds)) node.childIds = [];
+                                if (!Array.isArray(node.specialNodes)) node.specialNodes = [];
+
+                                // MIGRATION: Rename 'technical' port types to 'control'
+                                if (Array.isArray(node.ports)) {
+                                    node.ports = node.ports.map(port => ({
+                                        ...port,
+                                        type: (port.type as string) === 'technical' ? 'control' : port.type
+                                    }));
+                                }
+
+                                return [id, node] as [string, GraphNode];
+                            })
+                        );
+
+                        // MIGRATION: Rename 'technical' connection types to 'control'
+                        const connectionsArray = Array.isArray(parsed.state.connections) ? parsed.state.connections : [];
+                        const migratedConnections = connectionsArray.map(([id, conn]: [string, Connection]) => {
+                            if ((conn.type as string) === 'technical') {
+                                conn.type = 'control';
+                            }
+                            return [id, conn] as [string, Connection];
+                        });
+
+                        // Deserialize rootNodeIds (or compute from nodes if missing)
+                        let rootNodeIds = parsed.state.rootNodeIds;
+                        if (!Array.isArray(rootNodeIds)) {
+                            // Compute from nodes
+                            rootNodeIds = Array.from(nodes.values())
+                                .filter((n: GraphNode) => n.parentId === null)
+                                .map((n: GraphNode) => n.id);
+                        }
+
                         return {
                             state: {
                                 ...parsed.state,
-                                nodes: new Map(Array.isArray(parsed.state.nodes) ? parsed.state.nodes : []),
-                                connections: new Map(Array.isArray(parsed.state.connections) ? parsed.state.connections : []),
+                                nodes,
+                                connections: new Map(migratedConnections),
+                                rootNodeIds,
                                 selectedNodeIds: new Set(Array.isArray(parsed.state.selectedNodeIds) ? parsed.state.selectedNodeIds : []),
                                 selectedConnectionIds: new Set(Array.isArray(parsed.state.selectedConnectionIds) ? parsed.state.selectedConnectionIds : []),
                                 history: Array.isArray(parsed.state.history) ? parsed.state.history : [],
@@ -598,12 +1524,16 @@ export const useGraphStore = create<GraphStore>()(
                     }
                 },
                 setItem: (name, value) => {
+                    // Serialize flat node structure (no nested Maps)
+                    const nodesArray = Array.from(value.state.nodes.entries() as Iterable<[string, GraphNode]>);
+
                     try {
                         const serialized = {
                             state: {
                                 ...value.state,
-                                nodes: Array.from(value.state.nodes.entries()),
+                                nodes: nodesArray,
                                 connections: Array.from(value.state.connections.entries()),
+                                rootNodeIds: value.state.rootNodeIds,
                                 selectedNodeIds: Array.from(value.state.selectedNodeIds),
                                 selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
                                 history: value.state.history,
@@ -619,8 +1549,9 @@ export const useGraphStore = create<GraphStore>()(
                                 const serializedWithoutHistory = {
                                     state: {
                                         ...value.state,
-                                        nodes: Array.from(value.state.nodes.entries()),
+                                        nodes: nodesArray,
                                         connections: Array.from(value.state.connections.entries()),
+                                        rootNodeIds: value.state.rootNodeIds,
                                         selectedNodeIds: Array.from(value.state.selectedNodeIds),
                                         selectedConnectionIds: Array.from(value.state.selectedConnectionIds),
                                         history: [],

@@ -9,13 +9,50 @@
 // Connection Types
 // ============================================================================
 
-export type ConnectionType = 'audio' | 'technical';
+export type ConnectionType = 'audio' | 'control' | 'universal';
 
 export interface PortDefinition {
     id: string;
     name: string;
     type: ConnectionType;
     direction: 'input' | 'output';
+    isBundled?: boolean; // True if this port represents multiple bundled signals
+
+    // Fixed position (0-1 normalized, relative to node bounds)
+    // If not specified, position is calculated from portLayout
+    position?: { x: number; y: number };
+
+    // For universal ports: what type they resolved to after connection
+    resolvedType?: 'audio' | 'control' | null;
+
+    // Hide label on parent node's external port (label still shows inside panel)
+    // Default: false (labels are shown on parent)
+    hideExternalLabel?: boolean;
+}
+
+// Port layout configuration for dynamic port positioning
+export interface PortLayoutConfig {
+    direction?: 'vertical' | 'horizontal';  // Default: 'vertical'
+
+    // Spawn areas for dynamic ports (0-1 normalized coordinates)
+    inputArea?: {
+        x: number;       // X position (0 = left, 1 = right)
+        startY: number;  // Start of vertical range
+        endY: number;    // End of vertical range
+    };
+    outputArea?: {
+        x: number;       // X position (0 = left, 1 = right)
+        startY: number;  // Start of vertical range
+        endY: number;    // End of vertical range
+    };
+}
+
+export interface KeyMapping {
+    keyId: string;             // 'key-q', 'key-w', etc.
+    sourcePort: string;        // which key port it comes from
+    note?: string;             // 'C4', 'D4', etc. (for custom mapping)
+    targetChannel?: number;    // which channel in the bundle (0-29)
+    enabled: boolean;          // can disable individual keys
 }
 
 export interface Connection {
@@ -25,6 +62,11 @@ export interface Connection {
     targetNodeId: string;
     targetPortId: string;
     type: ConnectionType;
+
+    // Bundled connection support
+    isBundled?: boolean;        // true if this represents multiple signals
+    bundleMapping?: KeyMapping[]; // only if isBundled=true
+    signalValue?: number;       // 0-1 normalized value
 }
 
 // ============================================================================
@@ -36,10 +78,14 @@ export type NodeCategory =
     | 'input'
     | 'effects'
     | 'routing'
-    | 'output';
+    | 'output'
+    | 'utility';
 
 export type NodeType =
     | 'keyboard'
+    | 'keyboard-key'    // Individual keyboard key (signal generator)
+    | 'keyboard-visual' // Visual keyboard with per-key outputs (internal node)
+    | 'instrument-visual' // Visual instrument with row configuration (internal node)
     | 'microphone'
     | 'piano'
     | 'cello'
@@ -49,11 +95,19 @@ export type NodeType =
     | 'strings'
     | 'keys'
     | 'winds'
+    | 'instrument' // Generic instrument node (uses instrumentId in data)
     | 'looper'
     | 'effect'
     | 'amplifier'
     | 'speaker'
-    | 'recorder';
+    | 'recorder'
+    | 'canvas-input'   // Input node (receives from parent level)
+    | 'canvas-output'  // Output node (sends to parent level)
+    | 'output-panel'   // Multi-port output panel with editable labels
+    | 'input-panel'    // Multi-port input panel with editable labels
+    | 'container'      // Empty container node for grouping
+    | 'add'            // Addition node (mixes signals)
+    | 'subtract';      // Subtraction node (phase cancellation)
 
 export interface Position {
     x: number;
@@ -65,12 +119,43 @@ export interface NodeData {
     [key: string]: unknown;
 }
 
+/**
+ * Instrument row configuration - represents a connected bundle from keyboard
+ */
+export interface InstrumentRow {
+    rowId: string;           // Unique row identifier
+    sourceNodeId: string;    // Which keyboard node this came from
+    sourcePortId: string;    // Which keyboard port this came from (composite ID)
+    targetPortId: string;    // Which instrument input port receives this bundle
+    label: string;           // Auto-pulled from source ("Row 1", "Pedal", etc.)
+    spread: number;          // Offset increment between ports (default 0.5)
+    baseNote: number;        // 0-6 (C-B)
+    baseOctave: number;      // 0-8
+    baseOffset: number;      // -24 to +24 semitones
+    portCount: number;       // Number of ports in this row
+    keyGains: number[];      // Per-key gain values (length = portCount)
+}
+
 export interface InstrumentNodeData extends NodeData {
-    // Instrument type is now implicit from NodeType
-    offsets: { [portId: string]: number }; // Per-input pitch offset (semitones)
+    instrumentId?: string; // ID from InstrumentDefinitions (optional, falls back to legacy type mapping)
+
+    // NEW: Row-based structure for bundle connections
+    rows?: InstrumentRow[];
+
+    // Legacy fields (kept for backwards compatibility)
+    offsets?: { [portId: string]: number }; // Per-input pitch offset (semitones)
     octaveOffsets?: { [portId: string]: number }; // Per-input octave adjustment
     noteOffsets?: { [portId: string]: number }; // Per-input note adjustment (0-6 for C-B)
-    activeInputs: string[]; // List of active input port IDs
+    activeInputs?: string[]; // List of active input port IDs
+    isLoading?: boolean; // For UI loading indicator
+}
+
+export interface KeyConfig {
+    keyCode: string;           // 'q', 'w', 'KeyA', etc.
+    note?: string;             // 'C4', 'D4', etc. (for custom mapping)
+    octaveOffset?: number;     // octave adjustment
+    velocity?: number;         // fixed velocity (0-1) for this key
+    enabled: boolean;          // can disable individual keys
 }
 
 export interface KeyboardNodeData extends NodeData {
@@ -83,6 +168,7 @@ export interface MicrophoneNodeData extends NodeData {
     isMuted: boolean;
     isActive: boolean;
     deviceId?: string;
+    lowLatencyMode?: boolean; // Override global setting per node
 }
 
 export interface LooperNodeData extends NodeData {
@@ -114,6 +200,7 @@ export interface SpeakerNodeData extends NodeData {
     volume: number; // 0-1
     isMuted: boolean;
     deviceId: string; // ID of selected output device
+    sinkIdApplied?: boolean; // Track if setSinkId succeeded
 }
 
 export interface RecorderNodeData extends NodeData {
@@ -136,9 +223,24 @@ export interface GraphNode {
     id: string;
     type: NodeType;
     category: NodeCategory;
-    position: Position;
+    position: Position;  // Position relative to parent's coordinate space
     data: NodeData;
     ports: PortDefinition[];
+
+    // Normalized hierarchical structure (flat with references)
+    parentId: string | null;  // null = root-level node, otherwise ID of parent node
+    childIds: string[];       // IDs of child nodes (empty array if leaf node)
+    specialNodes?: string[];  // IDs of special child nodes (canvas-input/output, undeletable)
+
+    // Port visibility configuration (for hierarchical nodes)
+    showEmptyInputPorts?: boolean;   // Show input-panel ports even if not connected
+    showEmptyOutputPorts?: boolean;  // Show output-panel ports even if not connected
+
+    // Per-node viewport state (preserved when navigating)
+    internalViewport?: {
+        pan: Position;
+        zoom: number;
+    };
 }
 
 // ============================================================================
@@ -146,8 +248,9 @@ export interface GraphNode {
 // ============================================================================
 
 export interface GraphState {
-    nodes: Map<string, GraphNode>;
-    connections: Map<string, Connection>;
+    nodes: Map<string, GraphNode>;           // ALL nodes at all levels (flat)
+    connections: Map<string, Connection>;    // ALL connections at all levels (flat)
+    rootNodeIds: string[];                   // IDs of top-level nodes (parentId === null)
     selectedNodeIds: Set<string>;
     selectedConnectionIds: Set<string>;
 }
@@ -191,6 +294,11 @@ export interface SerializedConnection {
     targetNodeId: string;
     targetPortId: string;
     type: ConnectionType;
+
+    // Bundled connection support (for serialization)
+    isBundled?: boolean;
+    bundleMapping?: KeyMapping[];
+    signalValue?: number;
 }
 
 // ============================================================================
@@ -204,6 +312,16 @@ export interface NodeDefinition {
     description: string;
     defaultPorts: PortDefinition[];
     defaultData: NodeData;
+
+    // Port layout configuration for this node type
+    portLayout?: PortLayoutConfig;
+
+    // Fixed dimensions (optional - for math-based port positioning)
+    dimensions?: { width: number; height: number };
+
+    // Whether this node can be entered with E key (default: true)
+    // If false, pressing E will flash red instead of entering
+    canEnter?: boolean;
 }
 
 // ============================================================================

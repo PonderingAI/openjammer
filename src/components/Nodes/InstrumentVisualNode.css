@@ -1,0 +1,234 @@
+/**
+ * Instrument Visual Node - Compact design with per-key ports
+ * Matches mockup: rows of ports with offset numbers below
+ */
+
+.instrument-visual-node.compact {
+    position: absolute;
+    background: #fdfbf7;
+    border: 2px solid #2a2a2a;
+    border-radius: 8px;
+    min-width: 200px;
+    font-family: 'Caveat', cursive;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+}
+
+.instrument-visual-node.compact.selected {
+    border-color: #4a90d9;
+    box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.3), 2px 2px 0 rgba(0, 0, 0, 0.1);
+}
+
+.instrument-visual-node.compact.dragging {
+    opacity: 0.8;
+    cursor: grabbing;
+}
+
+/* Compact header */
+.instrument-visual-header.compact {
+    padding: 4px 12px;
+    border-bottom: 2px solid #2a2a2a;
+    cursor: grab;
+    background: #f5f0e6;
+    border-radius: 6px 6px 0 0;
+}
+
+.instrument-visual-header.compact .instrument-visual-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #2a2a2a;
+}
+
+/* Main rows container */
+.instrument-rows-compact {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.no-rows-message.compact {
+    font-size: 14px;
+    color: #888;
+    font-style: italic;
+    text-align: center;
+    padding: 12px;
+}
+
+/* Individual row */
+.row-compact {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: #fdfbf7;
+}
+
+/* Row header with editable values */
+.row-header-compact {
+    display: flex;
+    gap: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px dashed #ccc;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+
+/* Editable value component */
+.editable-value {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+    user-select: none;
+}
+
+.editable-value:hover {
+    background: rgba(74, 144, 217, 0.1);
+}
+
+.editable-display {
+    font-size: 18px;
+    font-weight: bold;
+    color: #2a2a2a;
+    font-family: 'Caveat', cursive;
+}
+
+.editable-label {
+    font-size: 11px;
+    color: #666;
+    text-transform: lowercase;
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+.editable-input {
+    width: 36px;
+    font-size: 14px;
+    padding: 1px 3px;
+    text-align: center;
+    border: 1px solid #4a90d9;
+    border-radius: 3px;
+    outline: none;
+    font-family: 'Caveat', cursive;
+}
+
+.editable-input:focus {
+    box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.2);
+}
+
+/* Keys row with ports */
+.row-keys-compact {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 4px 0;
+}
+
+/* Individual key column (port + offset label) */
+.key-column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 24px;
+}
+
+/* Key port (circle) - grey styling */
+.key-port {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid #888;
+    background: #e0e0e0;
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.key-port:hover {
+    transform: scale(1.2);
+    background: #ccc;
+}
+
+.key-port.connected {
+    background: #888;
+    box-shadow: 0 0 3px #888;
+}
+
+.key-port.pedal {
+    border-color: #666;
+    background: #f0f0f0;
+}
+
+.key-port.pedal:hover {
+    background: #e0e0e0;
+}
+
+/* Offset label below port */
+.key-offset {
+    font-size: 11px;
+    color: #555;
+    font-family: 'Inter', -apple-system, sans-serif;
+    white-space: nowrap;
+}
+
+/* Pedal row */
+.pedal-row-compact {
+    display: flex;
+    gap: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed #ccc;
+}
+
+.pedal-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid #888;
+    border-radius: 4px;
+    background: #f5f5f5;
+}
+
+.pedal-label {
+    font-size: 13px;
+    color: #555;
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+/* Output port area (top right, below header, inside node) */
+.output-port-area {
+    position: absolute;
+    right: 2px;
+    top: 39px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Port styles */
+.visual-port {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #2a2a2a;
+    background: #fdfbf7;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.visual-port:hover {
+    transform: scale(1.2);
+}
+
+.visual-port.output.audio {
+    border-color: #4a90d9;
+    width: 14px;
+    height: 14px;
+}
+
+.visual-port.output.audio.connected {
+    background: #4a90d9;
+}

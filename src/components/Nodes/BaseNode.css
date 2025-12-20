@@ -18,7 +18,7 @@
 
 .node.selected {
     border-color: var(--accent-primary);
-    box-shadow: var(--shadow-node), 0 0 0 3px rgba(91, 127, 214, 0.25);
+    box-shadow: var(--shadow-node), 0 0 0 3px color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
 .node.dragging {
@@ -127,23 +127,23 @@
     background: var(--audio-output);
 }
 
-.port-dot.technical {
-    background: var(--technical-output);
+.port-dot.control {
+    background: var(--control-output);
 }
 
-.port-dot.technical-input {
-    background: var(--technical-input);
+.port-dot.control-input {
+    background: var(--control-input);
 }
 
-.port-dot.technical-output {
-    background: var(--technical-output);
+.port-dot.control-output {
+    background: var(--control-output);
 }
 
-.port-dot.technical.connected,
-.port-dot.technical-input.connected,
-.port-dot.technical-output.connected {
-    background: var(--technical-connected);
-    box-shadow: 0 0 8px var(--technical-connected);
+.port-dot.control.connected,
+.port-dot.control-input.connected,
+.port-dot.control-output.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 8px var(--control-connected);
 }
 
 .port-dot.connected {

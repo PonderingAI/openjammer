@@ -126,7 +126,8 @@ textarea:focus {
 .audio-activate-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(245, 240, 232, 0.95);
+    background: var(--bg-canvas);
+    opacity: 0.95;
     display: flex;
     flex-direction: column;
     align-items: center;

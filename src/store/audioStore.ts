@@ -4,6 +4,31 @@
 
 import { create } from 'zustand';
 import { audioGraphManager } from '../audio/AudioGraphManager';
+import { resumeAudio } from '../audio/AudioEngine';
+import { getConnectionsForRow, getConnectionsForPedal } from '../utils/connectionActivity';
+
+// ============================================================================
+// Audio Configuration Types
+// ============================================================================
+
+export interface AudioConfig {
+    sampleRate: number; // 44100, 48000, 96000
+    latencyHint: AudioContextLatencyCategory | number;
+    lowLatencyMode: boolean; // Disables echo cancellation, noise suppression, AGC
+}
+
+export interface AudioMetrics {
+    baseLatency: number; // From AudioContext.baseLatency (ms)
+    outputLatency: number; // From AudioContext.outputLatency (ms)
+    totalLatency: number; // baseLatency + outputLatency (ms)
+    lastUpdated: number; // Timestamp
+}
+
+export interface DeviceInfo {
+    isUSBAudioInterface: boolean;
+    deviceLabel: string;
+    sampleRate: number | null;
+}
 
 // ============================================================================
 // Store Interface
@@ -13,6 +38,32 @@ interface AudioStore {
     // Audio Context State
     isAudioContextReady: boolean;
     setAudioContextReady: (ready: boolean) => void;
+
+    // Audio Configuration
+    audioConfig: AudioConfig;
+    setAudioConfig: (config: Partial<AudioConfig>) => void;
+
+    // Audio Metrics
+    audioMetrics: AudioMetrics;
+    updateAudioMetrics: (metrics: Partial<AudioMetrics>) => void;
+
+    // Device Detection
+    deviceInfo: DeviceInfo;
+    setDeviceInfo: (info: Partial<DeviceInfo>) => void;
+
+    // Selected devices
+    selectedInputDevice: string | null;
+    selectedOutputDevice: string | null;
+    setSelectedInputDevice: (deviceId: string | null) => void;
+    setSelectedOutputDevice: (deviceId: string | null) => void;
+
+    // Control State (sustain pedal, switches, triggers)
+    controlDown: boolean;
+    setControlDown: (down: boolean) => void;
+
+    // Keyboard Velocity (0-1 normalized for computer keyboard)
+    defaultVelocity: number; // 0-1, default 0.8
+    setDefaultVelocity: (velocity: number) => void;
 
     // Mode Switching (key 1 = config mode, 2-9 = keyboard nodes)
     currentMode: number; // 1 = config, 2-9 = keyboard node modes
@@ -41,6 +92,10 @@ interface AudioStore {
     emitKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
     releaseKeyboardSignal: (keyboardId: string, row: number, keyIndex: number) => void;
 
+    // Control signal emission (triggers control down/up on connected instruments)
+    emitControlDown: (keyboardId: string) => void;
+    emitControlUp: (keyboardId: string) => void;
+
     // Used keyboard numbers tracking (for auto-assignment)
     usedKeyboardNumbers: Set<number>;
     claimKeyboardNumber: (num: number) => void;
@@ -52,6 +107,51 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
     // Audio Context State
     isAudioContextReady: false,
     setAudioContextReady: (ready) => set({ isAudioContextReady: ready }),
+
+    // Audio Configuration
+    audioConfig: {
+        sampleRate: 48000,
+        latencyHint: 'interactive',
+        lowLatencyMode: false
+    },
+    setAudioConfig: (config) => set((state) => ({
+        audioConfig: { ...state.audioConfig, ...config }
+    })),
+
+    // Audio Metrics
+    audioMetrics: {
+        baseLatency: 0,
+        outputLatency: 0,
+        totalLatency: 0,
+        lastUpdated: 0
+    },
+    updateAudioMetrics: (metrics) => set((state) => ({
+        audioMetrics: { ...state.audioMetrics, ...metrics }
+    })),
+
+    // Device Info
+    deviceInfo: {
+        isUSBAudioInterface: false,
+        deviceLabel: '',
+        sampleRate: null
+    },
+    setDeviceInfo: (info) => set((state) => ({
+        deviceInfo: { ...state.deviceInfo, ...info }
+    })),
+
+    // Selected Devices
+    selectedInputDevice: null,
+    selectedOutputDevice: null,
+    setSelectedInputDevice: (deviceId) => set({ selectedInputDevice: deviceId }),
+    setSelectedOutputDevice: (deviceId) => set({ selectedOutputDevice: deviceId }),
+
+    // Control State (sustain pedal, switches, triggers)
+    controlDown: false,
+    setControlDown: (down) => set({ controlDown: down }),
+
+    // Keyboard Velocity
+    defaultVelocity: 0.8,
+    setDefaultVelocity: (velocity) => set({ defaultVelocity: Math.max(0, Math.min(1, velocity)) }),
 
     // Mode Switching
     currentMode: 1, // Start in config mode
@@ -119,14 +219,22 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
 
     // Keyboard signal emission
     emitKeyboardSignal: (keyboardId, row, keyIndex) => {
+        // Ensure AudioContext is running (user gesture triggered this)
+        resumeAudio().catch(() => { /* ignore - context may not exist yet */ });
+
         // Track active key for visual feedback
         const keyId = `${keyboardId}-${row}-${keyIndex}`;
         set(state => ({
             activeKeys: new Set(state.activeKeys).add(keyId)
         }));
 
-        // Trigger note on connected instruments via AudioGraphManager
-        audioGraphManager.triggerKeyboardNote(keyboardId, row, keyIndex);
+        // Trigger note on connected instruments via AudioGraphManager with normalized velocity
+        const velocity = get().defaultVelocity;
+        audioGraphManager.triggerKeyboardNote(keyboardId, row, keyIndex, velocity);
+
+        // Activate visual feedback on connection cables
+        const connectionIds = getConnectionsForRow(keyboardId, row);
+        connectionIds.forEach(id => audioGraphManager.activateControlSignal(id));
     },
 
     releaseKeyboardSignal: (keyboardId, row, keyIndex) => {
@@ -140,6 +248,29 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
 
         // Release note on connected instruments
         audioGraphManager.releaseKeyboardNote(keyboardId, row, keyIndex);
+
+        // Release visual feedback on connection cables (fades out over 120ms)
+        const connectionIds = getConnectionsForRow(keyboardId, row);
+        connectionIds.forEach(id => audioGraphManager.releaseControlSignal(id));
+    },
+
+    // Control signal emission (sustain pedal)
+    emitControlDown: (keyboardId) => {
+        set({ controlDown: true });
+        audioGraphManager.triggerControlDown(keyboardId);
+
+        // Activate visual feedback on pedal connection cables
+        const connectionIds = getConnectionsForPedal(keyboardId);
+        connectionIds.forEach(id => audioGraphManager.activateControlSignal(id));
+    },
+
+    emitControlUp: (keyboardId) => {
+        set({ controlDown: false });
+        audioGraphManager.triggerControlUp(keyboardId);
+
+        // Release visual feedback on pedal connection cables
+        const connectionIds = getConnectionsForPedal(keyboardId);
+        connectionIds.forEach(id => audioGraphManager.releaseControlSignal(id));
     },
 
     // Keyboard Number Management
