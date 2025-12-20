@@ -95,13 +95,23 @@ export async function ensureToneStarted(): Promise<void> {
 
     // Set Tone.js to use our context (only once)
     if (!toneInitialized) {
-        Tone.setContext(audioContext);
-        toneInitialized = true;
-    }
-
-    // Start Tone.js if not running
-    if (Tone.context.state !== 'running') {
-        await Tone.start();
+        try {
+            Tone.setContext(audioContext);
+            // Start Tone.js if not running
+            if (Tone.context.state !== 'running') {
+                await Tone.start();
+            }
+            toneInitialized = true;
+        } catch (error) {
+            // Reset flag on error so retry is possible
+            toneInitialized = false;
+            throw error;
+        }
+    } else {
+        // Already initialized, just ensure it's running
+        if (Tone.context.state !== 'running') {
+            await Tone.start();
+        }
     }
 }
 
@@ -115,8 +125,19 @@ export function isToneInitialized(): boolean {
 /**
  * Reinitialize AudioContext with new configuration
  * Must be called after user gesture
+ *
+ * Safely waits for any ongoing initialization before closing the context.
  */
 export async function reinitAudioContext(config: AudioContextConfig): Promise<AudioContext> {
+    // Wait for any ongoing initialization to complete first (race condition fix)
+    if (initializationPromise) {
+        try {
+            await initializationPromise;
+        } catch {
+            // Ignore errors from previous initialization - we're reinitializing anyway
+        }
+    }
+
     // Close existing context
     if (audioContext && audioContext.state !== 'closed') {
         await audioContext.close();

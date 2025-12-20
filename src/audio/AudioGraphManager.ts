@@ -45,13 +45,13 @@ function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
             if (typeof row !== 'object' || row === null) return false;
             const r = row as Record<string, unknown>;
 
-            // Type checks
+            // Type checks (Number.isFinite rejects NaN/Infinity which would pass range checks)
             if (typeof r.rowId !== 'string') return false;
-            if (typeof r.portCount !== 'number') return false;
-            if (typeof r.baseNote !== 'number') return false;
-            if (typeof r.baseOctave !== 'number') return false;
-            if (typeof r.baseOffset !== 'number') return false;
-            if (typeof r.spread !== 'number') return false;
+            if (typeof r.portCount !== 'number' || !Number.isFinite(r.portCount)) return false;
+            if (typeof r.baseNote !== 'number' || !Number.isFinite(r.baseNote)) return false;
+            if (typeof r.baseOctave !== 'number' || !Number.isFinite(r.baseOctave)) return false;
+            if (typeof r.baseOffset !== 'number' || !Number.isFinite(r.baseOffset)) return false;
+            if (typeof r.spread !== 'number' || !Number.isFinite(r.spread)) return false;
 
             // Range validation
             if (r.portCount < VALIDATION_BOUNDS.MIN_PORT_COUNT ||
@@ -152,6 +152,11 @@ type NodeChangeCallback = (nodes: Map<string, GraphNode>) => void;
 // AudioGraphManager
 // ============================================================================
 
+/** Metadata stored separately from AudioNodeInstance to avoid unsafe type assertions */
+interface AudioNodeMetadata {
+    instrumentId?: string;
+}
+
 class AudioGraphManager {
     private audioNodes: Map<string, AudioNodeInstance> = new Map();
     private activeAudioConnections: Set<string> = new Set(); // Track "sourceId->targetId" pairs
@@ -163,6 +168,9 @@ class AudioGraphManager {
     // Store getters for accessing graph state when syncing
     private getNodesRef: (() => Map<string, GraphNode>) | null = null;
     private getConnectionsRef: (() => Map<string, Connection>) | null = null;
+
+    // Metadata storage for audio nodes (avoids unsafe type assertions)
+    private audioNodeMetadata: Map<string, AudioNodeMetadata> = new Map();
 
     // Signal level visualization (audio connections)
     private connectionAnalysers: Map<string, AnalyserNode> = new Map(); // connectionKey -> AnalyserNode
@@ -554,9 +562,10 @@ class AudioGraphManager {
                     this.audioNodes.set(nodeId, audioNode);
                 }
             } else if (INSTRUMENT_NODE_TYPES.includes(graphNode.type as typeof INSTRUMENT_NODE_TYPES[number])) {
-                // Check if instrument has changed
+                // Check if instrument has changed using metadata map (type-safe)
                 const currentInstrumentId = this.getInstrumentIdForNode(graphNode);
-                const storedInstrumentId = (existingAudioNode as AudioNodeInstance & { instrumentId?: string }).instrumentId;
+                const metadata = this.audioNodeMetadata.get(nodeId);
+                const storedInstrumentId = metadata?.instrumentId;
 
                 // Recreate if: no stored ID (legacy node) OR stored ID differs from current
                 if (!storedInstrumentId || storedInstrumentId !== currentInstrumentId) {
@@ -637,8 +646,8 @@ class AudioGraphManager {
 
                 baseInstance.instance = instrument;
                 baseInstance.outputNode = gainEnvelope;
-                // Store instrumentId to detect changes later
-                (baseInstance as AudioNodeInstance & { instrumentId?: string }).instrumentId = instrumentId;
+                // Store instrumentId in metadata map to detect changes later (type-safe)
+                this.audioNodeMetadata.set(graphNode.id, { instrumentId });
                 break;
             }
 
@@ -833,6 +842,9 @@ class AudioGraphManager {
         });
         keysToRemove.forEach(key => this.activeAudioConnections.delete(key));
 
+        // Clean up metadata (memory leak fix)
+        this.audioNodeMetadata.delete(nodeId);
+
         // Fade out before disconnecting
         if (audioNode.gainEnvelope) {
             const now = ctx.currentTime;
@@ -940,13 +952,22 @@ class AudioGraphManager {
      * Process hierarchical audio routing through internal structures
      * This enables audio to flow: Root → Internal Level 1 → Internal Level 2 → etc.
      * With flat structure, we find parent nodes by checking childIds
+     *
+     * Includes cycle detection to prevent infinite loops from corrupted graph data
      */
-    private processHierarchicalRouting(graphNodes: Map<string, GraphNode>): void {
+    private processHierarchicalRouting(graphNodes: Map<string, GraphNode>, visited: Set<string> = new Set()): void {
         const graphConnections = useGraphStore.getState().connections;
 
         // For each node that has children (is a container)
         graphNodes.forEach((node) => {
             if (!node.childIds || node.childIds.length === 0) return;
+
+            // Cycle detection: prevent infinite loops from circular parent-child references
+            if (visited.has(node.id)) {
+                console.warn(`[AudioGraphManager] Cycle detected in hierarchy at node ${node.id}, skipping`);
+                return;
+            }
+            visited.add(node.id);
 
             // Get connections between this node's children
             const childIdsSet = new Set(node.childIds);
@@ -1192,6 +1213,8 @@ class AudioGraphManager {
                     }
                     // Remove analyser for signal visualization
                     this.removeConnectionAnalyser(connectionKey);
+                    // Clean up connection generation tracking (memory leak fix)
+                    this.connectionGenerations.delete(connectionKey);
                 }
             }, this.RAMP_TIME * 1000 + this.RAMP_SAFETY_BUFFER_MS);
 
@@ -1206,6 +1229,8 @@ class AudioGraphManager {
             }
             // Remove analyser for signal visualization
             this.removeConnectionAnalyser(connectionKey);
+            // Clean up connection generation tracking (memory leak fix)
+            this.connectionGenerations.delete(connectionKey);
         }
     }
 
@@ -1377,8 +1402,9 @@ class AudioGraphManager {
     /**
      * Set the output node for a microphone (called from MicrophoneNode component)
      * This allows the component to manage its own audio stream while routing through connections
+     * Accepts any AudioNode that passes audio through (GainNode, AnalyserNode, etc.)
      */
-    setMicrophoneOutput(nodeId: string, outputNode: GainNode): void {
+    setMicrophoneOutput(nodeId: string, outputNode: AudioNode): void {
         const audioNode = this.audioNodes.get(nodeId);
         if (audioNode) {
             // Disconnect old output if exists (may throw if already disconnected)
@@ -1437,6 +1463,9 @@ class AudioGraphManager {
         if (row < MIN_KEYBOARD_ROW || row > MAX_KEYBOARD_ROW) return;
         if (keyIndex < MIN_KEY_INDEX || keyIndex > MAX_KEY_INDEX) return;
 
+        // Clamp velocity to valid range (0-1) to prevent audio damage
+        const clampedVelocity = Math.max(0, Math.min(1, velocity));
+
         const graphConnections = useGraphStore.getState().connections;
         const graphNodes = useGraphStore.getState().nodes;
 
@@ -1474,7 +1503,7 @@ class AudioGraphManager {
                 const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
 
                 let noteName: string;
-                let finalVelocity = velocity;
+                let finalVelocity = clampedVelocity;
 
                 if (instrumentRow) {
                     // New row-based system: calculate note using spread
@@ -1486,8 +1515,8 @@ class AudioGraphManager {
 
                     // Apply per-key gain from keyGains array (default 1.0 = normal, 2.0 = double)
                     const keyGain = instrumentRow.keyGains?.[keyIndex] ?? 1;
-                    // Scale velocity by keyGain, clamp to 0-1 range
-                    finalVelocity = Math.max(0, Math.min(1, velocity * keyGain));
+                    // Scale velocity by keyGain (already clamped at input)
+                    finalVelocity = Math.max(0, Math.min(1, clampedVelocity * keyGain));
                 } else {
                     // Legacy system: use per-port offsets
                     const semitoneOffset = instrumentData.offsets?.[targetPortId] ?? 0;

@@ -191,7 +191,7 @@ export function MicrophoneNode({
 
             // Register the analyser as output (it passes audio through)
             // This way the waveform reflects what's actually being sent out
-            audioGraphManager.setMicrophoneOutput(node.id, analyser as unknown as GainNode);
+            audioGraphManager.setMicrophoneOutput(node.id, analyser);
 
             // Update refs for cleanup
             streamRef.current = mediaStream;

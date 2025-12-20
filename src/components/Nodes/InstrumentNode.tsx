@@ -69,6 +69,34 @@ function getAllowedCategories(nodeType: string): string[] {
 // Main instrument node types to cycle through
 const INSTRUMENT_NODE_TYPES = ['strings', 'keys', 'winds'] as const;
 
+/**
+ * Type guard to safely validate instrument node data
+ * Provides runtime type checking for data from graph store
+ */
+function isInstrumentNodeData(data: unknown): data is InstrumentNodeData {
+    if (typeof data !== 'object' || data === null) return false;
+    const d = data as Record<string, unknown>;
+
+    // Check for row-based system (new format)
+    if ('rows' in d) {
+        if (!Array.isArray(d.rows)) return false;
+        // Validate at least basic structure for rows
+        return d.rows.every((row: unknown) => {
+            if (typeof row !== 'object' || row === null) return false;
+            const r = row as Record<string, unknown>;
+            return typeof r.rowId === 'string';
+        });
+    }
+
+    // Check for legacy offset-based system
+    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
+        return true;
+    }
+
+    // Empty data object is valid (no configuration yet)
+    return Object.keys(d).length === 0;
+}
+
 // SVG Icons - keeping the icon definitions (abbreviated for brevity)
 const InstrumentIcons: Record<string, React.ReactNode> = {
     piano: (
@@ -154,7 +182,10 @@ export function InstrumentNode({
     isHoveredWithConnections,
     style
 }: InstrumentNodeProps) {
-    const data = node.data as unknown as InstrumentNodeData;
+    // Use type guard for safe data access
+    const data: InstrumentNodeData = isInstrumentNodeData(node.data)
+        ? node.data
+        : { rows: [] }; // Default empty data if validation fails
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const updateNodeType = useGraphStore((s) => s.updateNodeType);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);

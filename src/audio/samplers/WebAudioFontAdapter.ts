@@ -283,6 +283,16 @@ export class WebAudioFontInstrument extends SampledInstrument {
       handle.gainNode.disconnect();
     });
     this.noteHandles.clear();
+
+    // Clean up preset from global scope (memory leak fix)
+    // WebAudioFont loads presets into window[presetVar] which persists forever
+    if (this.config.presetVar) {
+      const globalAny = (typeof window !== 'undefined' ? window : globalThis) as Record<string, unknown>;
+      delete globalAny[this.config.presetVar];
+    }
+    this.preset = null;
+    this.player = null;
+
     // Base class handles pendingCleanups cleanup via clearAllCleanups()
     super.disconnect();
   }
