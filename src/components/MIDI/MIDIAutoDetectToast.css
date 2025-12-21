@@ -1,0 +1,116 @@
+/**
+ * MIDI Auto-Detect Toast styles
+ */
+
+.midi-toast {
+    position: fixed;
+    top: 80px;  /* Below toolbar */
+    left: 20px;
+    background: var(--sketch-paper, #fafafa);
+    border: 3px solid var(--sketch-black, #1a1a1a);
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 280px;
+    max-width: 360px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    z-index: 900;
+    animation: slideInLeft 0.3s ease;
+}
+
+@keyframes slideInLeft {
+    from {
+        transform: translateX(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Content area */
+.midi-toast-content {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.midi-toast-icon {
+    font-size: 32px;
+    line-height: 1;
+}
+
+.midi-toast-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.midi-toast-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--sketch-black, #1a1a1a);
+}
+
+.midi-toast-device {
+    font-size: 13px;
+    color: var(--sketch-gray, #666);
+    word-break: break-word;
+}
+
+.midi-toast-preset {
+    font-size: 11px;
+    color: var(--accent-primary, #3b82f6);
+    font-weight: 500;
+}
+
+/* Actions */
+.midi-toast-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.midi-toast-btn {
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 2px solid var(--sketch-black, #1a1a1a);
+}
+
+.midi-toast-btn-primary {
+    background: var(--sketch-black, #1a1a1a);
+    color: var(--sketch-paper, #fafafa);
+    flex: 1;
+}
+
+.midi-toast-btn-primary:hover {
+    background: var(--accent-primary, #3b82f6);
+    border-color: var(--accent-primary, #3b82f6);
+}
+
+.midi-toast-btn-secondary {
+    background: transparent;
+    color: var(--sketch-black, #1a1a1a);
+}
+
+.midi-toast-btn-secondary:hover {
+    background: var(--sketch-paper, #f0f0f0);
+}
+
+.midi-toast-btn-dismiss {
+    background: transparent;
+    border: none;
+    color: var(--sketch-gray, #888);
+    font-size: 20px;
+    padding: 4px 8px;
+    line-height: 1;
+}
+
+.midi-toast-btn-dismiss:hover {
+    color: var(--sketch-black, #1a1a1a);
+}

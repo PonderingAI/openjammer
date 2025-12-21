@@ -1,0 +1,266 @@
+/**
+ * MIDI Visual Node Styles
+ */
+
+.midi-visual-node {
+    background: var(--sketch-paper, #fafafa);
+    border: 3px solid var(--sketch-black, #1a1a1a);
+    border-radius: 8px;
+    min-width: 400px;
+    position: absolute;
+}
+
+.midi-visual-node.selected {
+    border-color: var(--accent-primary, #3b82f6);
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.midi-visual-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Section styling */
+.midi-visual-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.midi-visual-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--sketch-gray, #666);
+}
+
+/* Keyboard visualization */
+.midi-visual-keyboard {
+    display: flex;
+    height: 60px;
+    border: 2px solid var(--sketch-black, #1a1a1a);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.midi-key {
+    flex: 1;
+    min-width: 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-right: 1px solid var(--sketch-gray, #ccc);
+}
+
+.midi-key:last-child {
+    border-right: none;
+}
+
+.midi-key.white {
+    background: white;
+}
+
+.midi-key.white:hover {
+    background: var(--sketch-paper, #f0f0f0);
+}
+
+.midi-key.white.connected {
+    background: var(--accent-success-light, #dcfce7);
+}
+
+.midi-key.black {
+    background: var(--sketch-black, #1a1a1a);
+    flex: 0.6;
+    height: 65%;
+    margin-left: -4px;
+    margin-right: -4px;
+    z-index: 1;
+    border-radius: 0 0 3px 3px;
+}
+
+.midi-key.black:hover {
+    background: #333;
+}
+
+.midi-key.black.connected {
+    background: var(--accent-primary, #3b82f6);
+}
+
+/* Pad grid */
+.midi-visual-pad-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.midi-pad {
+    aspect-ratio: 1;
+    background: var(--sketch-black, #1a1a1a);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--sketch-paper, #fafafa);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-height: 40px;
+}
+
+.midi-pad:hover {
+    background: #333;
+    transform: scale(0.95);
+}
+
+.midi-pad.connected {
+    background: var(--accent-primary, #3b82f6);
+}
+
+/* Knob row */
+.midi-visual-knob-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.midi-knob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.midi-knob-dial {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--sketch-black, #1a1a1a);
+    border: 3px solid var(--sketch-gray, #666);
+    position: relative;
+    transition: border-color 0.15s;
+}
+
+.midi-knob-dial::after {
+    content: '';
+    position: absolute;
+    width: 3px;
+    height: 10px;
+    background: white;
+    top: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 2px;
+}
+
+.midi-knob:hover .midi-knob-dial {
+    border-color: var(--sketch-black, #1a1a1a);
+}
+
+.midi-knob.connected .midi-knob-dial {
+    border-color: var(--accent-primary, #3b82f6);
+}
+
+.midi-knob-label {
+    font-size: 10px;
+    color: var(--sketch-gray, #666);
+}
+
+/* Fader row */
+.midi-visual-fader-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.midi-fader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.midi-fader-track {
+    width: 12px;
+    height: 60px;
+    background: var(--sketch-gray, #ddd);
+    border: 2px solid var(--sketch-black, #1a1a1a);
+    border-radius: 6px;
+    position: relative;
+}
+
+.midi-fader-thumb {
+    position: absolute;
+    width: 16px;
+    height: 12px;
+    left: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--sketch-black, #1a1a1a);
+    border-radius: 3px;
+}
+
+.midi-fader.connected .midi-fader-track {
+    border-color: var(--accent-primary, #3b82f6);
+}
+
+.midi-fader-label {
+    font-size: 10px;
+    color: var(--sketch-gray, #666);
+}
+
+/* Touch strips */
+.midi-visual-strip-row {
+    display: flex;
+    gap: 12px;
+}
+
+.midi-strip {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.midi-strip-track {
+    width: 100%;
+    height: 24px;
+    background: var(--sketch-gray, #ddd);
+    border: 2px solid var(--sketch-black, #1a1a1a);
+    border-radius: 4px;
+    position: relative;
+}
+
+.midi-strip-center {
+    position: absolute;
+    width: 2px;
+    height: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--sketch-black, #1a1a1a);
+}
+
+.midi-strip.connected .midi-strip-track {
+    border-color: var(--accent-primary, #3b82f6);
+}
+
+.midi-strip-label {
+    font-size: 10px;
+    color: var(--sketch-gray, #666);
+}
+
+/* Port list on right side */
+.midi-visual-ports {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+    border-top: 1px solid var(--sketch-gray, #ccc);
+    padding-top: 8px;
+}

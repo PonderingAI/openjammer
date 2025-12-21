@@ -2,8 +2,9 @@
  * Node Internals - Initialize default internal structure for hierarchical nodes
  */
 
-import type { GraphNode, Connection } from '../engine/types';
+import type { GraphNode, Connection, MIDIInputNodeData } from '../engine/types';
 import { generateUniqueId } from './idGenerator';
+import { getPresetRegistry } from '../midi';
 
 interface InternalStructure {
     internalNodes: Map<string, GraphNode>;
@@ -35,6 +36,9 @@ export function createDefaultInternalStructure(parentNode: GraphNode): InternalS
 
         case 'container':
             return createContainerInternals();
+
+        case 'midi':
+            return createMIDIInternals(parentNode);
 
         default:
             return createGenericInternals();
@@ -438,5 +442,370 @@ function createContainerInternals(): InternalStructure {
         specialNodes,
         showEmptyInputPorts: true,    // Show inputs (users need to see them to connect)
         showEmptyOutputPorts: true    // Show outputs (users need to see them to connect)
+    };
+}
+
+/**
+ * MIDI device internal structure:
+ * - midi-visual node showing device controls (keys, pads, knobs, faders)
+ * - output-panel with bundled outputs:
+ *   - Keys bundle (all keyboard notes)
+ *   - Pads bundle (drum pads)
+ *   - Knobs bundle (all CC knobs)
+ *   - Faders bundle (all CC faders)
+ *   - Pitch Bend (single)
+ *   - Mod Wheel (single)
+ * - input-panel for external control (future use)
+ */
+function createMIDIInternals(parentNode: GraphNode): InternalStructure {
+    const internalNodes = new Map<string, GraphNode>();
+    const internalConnections = new Map<string, Connection>();
+    const specialNodes: string[] = [];
+
+    // Get preset from node data
+    const data = parentNode.data as MIDIInputNodeData;
+    const registry = getPresetRegistry();
+    const preset = data.presetId ? registry.getPreset(data.presetId) : registry.getPreset('generic');
+
+    // Build ports dynamically from preset
+    const midiVisualPorts: Array<{
+        id: string;
+        name: string;
+        type: 'control' | 'audio' | 'universal';
+        direction: 'input' | 'output';
+        position?: { x: number; y: number };
+    }> = [];
+
+    // Track sections for output panel
+    let hasKeys = false;
+    let hasPads = false;
+    let hasKnobs = false;
+    let hasFaders = false;
+    let hasPitchBend = false;
+    let hasModWheel = false;
+
+    if (preset?.controls) {
+        // Keys - create per-key output ports
+        if (preset.controls.keys) {
+            hasKeys = true;
+            const keyRange = preset.controls.keys.range || preset.controls.keys.noteRange || [0, 127];
+            const noteCount = keyRange[1] - keyRange[0] + 1;
+            for (let i = 0; i < noteCount; i++) {
+                const note = keyRange[0] + i;
+                const y = 0.05 + (i / noteCount) * 0.3;  // Spread across 30% of height
+                midiVisualPorts.push({
+                    id: `key-${note}`,
+                    name: `Note ${note}`,
+                    type: 'control',
+                    direction: 'output',
+                    position: { x: 1, y }
+                });
+            }
+        }
+
+        // Pads - create per-pad output ports
+        if (preset.controls.pads && preset.controls.pads.length > 0) {
+            hasPads = true;
+            preset.controls.pads.forEach((pad, idx) => {
+                const y = 0.4 + (idx / preset.controls.pads!.length) * 0.15;
+                midiVisualPorts.push({
+                    id: `pad-${pad.id || idx}`,
+                    name: pad.name || `Pad ${idx + 1}`,
+                    type: 'control',
+                    direction: 'output',
+                    position: { x: 1, y }
+                });
+            });
+        }
+
+        // Knobs - create per-knob output ports
+        if (preset.controls.knobs && preset.controls.knobs.length > 0) {
+            hasKnobs = true;
+            preset.controls.knobs.forEach((knob, idx) => {
+                const y = 0.6 + (idx / preset.controls.knobs!.length) * 0.1;
+                midiVisualPorts.push({
+                    id: `knob-${knob.id || idx}`,
+                    name: knob.name || `Knob ${idx + 1}`,
+                    type: 'control',
+                    direction: 'output',
+                    position: { x: 1, y }
+                });
+            });
+        }
+
+        // Faders - create per-fader output ports
+        if (preset.controls.faders && preset.controls.faders.length > 0) {
+            hasFaders = true;
+            preset.controls.faders.forEach((fader, idx) => {
+                const y = 0.75 + (idx / preset.controls.faders!.length) * 0.1;
+                midiVisualPorts.push({
+                    id: `fader-${fader.id || idx}`,
+                    name: fader.name || `Fader ${idx + 1}`,
+                    type: 'control',
+                    direction: 'output',
+                    position: { x: 1, y }
+                });
+            });
+        }
+
+        // Pitch Bend
+        if (preset.controls.pitchBend) {
+            hasPitchBend = true;
+            midiVisualPorts.push({
+                id: 'pitch-bend',
+                name: 'Pitch Bend',
+                type: 'control',
+                direction: 'output',
+                position: { x: 1, y: 0.88 }
+            });
+        }
+
+        // Mod Wheel
+        if (preset.controls.modWheel) {
+            hasModWheel = true;
+            midiVisualPorts.push({
+                id: 'mod-wheel',
+                name: 'Mod Wheel',
+                type: 'control',
+                direction: 'output',
+                position: { x: 1, y: 0.92 }
+            });
+        }
+    }
+
+    // Position constants
+    const midiVisualX = 100;
+    const midiVisualY = 100;
+    const outputPanelX = 700;
+    const outputPanelY = 100;
+
+    // Create midi-visual node
+    const midiVisualId = generateUniqueId('midi-visual-');
+    const midiVisual: GraphNode = {
+        id: midiVisualId,
+        type: 'midi-visual',
+        category: 'input',
+        position: { x: midiVisualX, y: midiVisualY },
+        data: { presetId: data.presetId },
+        ports: midiVisualPorts,
+        parentId: null,  // Will be set by addNode
+        childIds: []
+    };
+    internalNodes.set(midiVisualId, midiVisual);
+    // NOT added to specialNodes - doesn't appear on parent
+
+    // Build output panel ports based on what's available
+    const outputPanelPorts: Array<{
+        id: string;
+        name: string;
+        type: 'control' | 'audio' | 'universal';
+        direction: 'input' | 'output';
+        position?: { x: number; y: number };
+    }> = [];
+    const portLabels: Record<string, string> = {};
+    let portIndex = 0;
+
+    if (hasKeys) {
+        outputPanelPorts.push({
+            id: 'bundle-keys',
+            name: 'Keys',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['bundle-keys'] = 'Keys';
+        portIndex++;
+    }
+
+    if (hasPads) {
+        outputPanelPorts.push({
+            id: 'bundle-pads',
+            name: 'Pads',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['bundle-pads'] = 'Pads';
+        portIndex++;
+    }
+
+    if (hasKnobs) {
+        outputPanelPorts.push({
+            id: 'bundle-knobs',
+            name: 'Knobs',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['bundle-knobs'] = 'Knobs';
+        portIndex++;
+    }
+
+    if (hasFaders) {
+        outputPanelPorts.push({
+            id: 'bundle-faders',
+            name: 'Faders',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['bundle-faders'] = 'Faders';
+        portIndex++;
+    }
+
+    if (hasPitchBend) {
+        outputPanelPorts.push({
+            id: 'pitch-bend-out',
+            name: 'Pitch Bend',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['pitch-bend-out'] = 'Pitch Bend';
+        portIndex++;
+    }
+
+    if (hasModWheel) {
+        outputPanelPorts.push({
+            id: 'mod-wheel-out',
+            name: 'Mod Wheel',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.15 + portIndex * 0.12 }
+        });
+        portLabels['mod-wheel-out'] = 'Mod Wheel';
+        portIndex++;
+    }
+
+    // Create output-panel node with bundled ports
+    const outputPanelId = generateUniqueId('output-panel-');
+    const outputPanel: GraphNode = {
+        id: outputPanelId,
+        type: 'output-panel',
+        category: 'routing',
+        position: { x: outputPanelX, y: outputPanelY },
+        data: { portLabels },
+        ports: outputPanelPorts,
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(outputPanelId, outputPanel);
+    specialNodes.push(outputPanelId);  // Added to specialNodes so its ports sync to parent
+
+    // Create input-panel node for external control (future use)
+    const inputPanelId = generateUniqueId('input-panel-');
+    const inputPanel: GraphNode = {
+        id: inputPanelId,
+        type: 'input-panel',
+        category: 'routing',
+        position: { x: midiVisualX - 200, y: midiVisualY },
+        data: {
+            portLabels: {
+                'port-1': ''  // Empty name for placeholder port
+            }
+        },
+        ports: [
+            { id: 'port-1', name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(inputPanelId, inputPanel);
+    specialNodes.push(inputPanelId);
+
+    // Create connections from midi-visual ports to output panel bundles
+    // Keys bundle
+    if (hasKeys && preset?.controls.keys) {
+        const keyRange = preset.controls.keys.range || preset.controls.keys.noteRange || [0, 127];
+        for (let i = keyRange[0]; i <= keyRange[1]; i++) {
+            const connId = generateUniqueId('conn-');
+            internalConnections.set(connId, {
+                id: connId,
+                sourceNodeId: midiVisualId,
+                sourcePortId: `key-${i}`,
+                targetNodeId: outputPanelId,
+                targetPortId: 'bundle-keys',
+                type: 'control'
+            });
+        }
+    }
+
+    // Pads bundle
+    if (hasPads && preset?.controls.pads) {
+        preset.controls.pads.forEach((pad, idx) => {
+            const connId = generateUniqueId('conn-');
+            internalConnections.set(connId, {
+                id: connId,
+                sourceNodeId: midiVisualId,
+                sourcePortId: `pad-${pad.id || idx}`,
+                targetNodeId: outputPanelId,
+                targetPortId: 'bundle-pads',
+                type: 'control'
+            });
+        });
+    }
+
+    // Knobs bundle
+    if (hasKnobs && preset?.controls.knobs) {
+        preset.controls.knobs.forEach((knob, idx) => {
+            const connId = generateUniqueId('conn-');
+            internalConnections.set(connId, {
+                id: connId,
+                sourceNodeId: midiVisualId,
+                sourcePortId: `knob-${knob.id || idx}`,
+                targetNodeId: outputPanelId,
+                targetPortId: 'bundle-knobs',
+                type: 'control'
+            });
+        });
+    }
+
+    // Faders bundle
+    if (hasFaders && preset?.controls.faders) {
+        preset.controls.faders.forEach((fader, idx) => {
+            const connId = generateUniqueId('conn-');
+            internalConnections.set(connId, {
+                id: connId,
+                sourceNodeId: midiVisualId,
+                sourcePortId: `fader-${fader.id || idx}`,
+                targetNodeId: outputPanelId,
+                targetPortId: 'bundle-faders',
+                type: 'control'
+            });
+        });
+    }
+
+    // Pitch Bend
+    if (hasPitchBend) {
+        const connId = generateUniqueId('conn-');
+        internalConnections.set(connId, {
+            id: connId,
+            sourceNodeId: midiVisualId,
+            sourcePortId: 'pitch-bend',
+            targetNodeId: outputPanelId,
+            targetPortId: 'pitch-bend-out',
+            type: 'control'
+        });
+    }
+
+    // Mod Wheel
+    if (hasModWheel) {
+        const connId = generateUniqueId('conn-');
+        internalConnections.set(connId, {
+            id: connId,
+            sourceNodeId: midiVisualId,
+            sourcePortId: 'mod-wheel',
+            targetNodeId: outputPanelId,
+            targetPortId: 'mod-wheel-out',
+            type: 'control'
+        });
+    }
+
+    return {
+        internalNodes,
+        internalConnections,
+        specialNodes,
+        showEmptyInputPorts: false,   // Only show ports with connections
+        showEmptyOutputPorts: false   // Only show ports with connections
     };
 }

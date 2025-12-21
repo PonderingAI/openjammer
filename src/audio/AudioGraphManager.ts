@@ -12,7 +12,10 @@ import { InstrumentLoader } from './Instruments';
 import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData } from '../engine/types';
+import { LocalSampleAdapter } from './samplers/LocalSampleAdapter';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData, LibraryNodeData, MIDIInputNodeData } from '../engine/types';
+import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
+import type { MIDIEvent } from '../midi/types';
 
 // Validation constants for instrument row data
 const VALIDATION_BOUNDS = {
@@ -132,6 +135,7 @@ type AudioNodeInstanceType =
     | Effect
     | Looper
     | Recorder
+    | LocalSampleAdapter
     | GainNode
     | MediaStreamAudioSourceNode
     | SpeakerNodeInstance
@@ -214,6 +218,9 @@ class AudioGraphManager {
     // Ramp time for smooth transitions (10ms)
     private readonly RAMP_TIME = 0.01;
 
+    // MIDI device subscriptions (nodeId -> unsubscribe function)
+    private midiSubscriptions: Map<string, () => void> = new Map();
+
     /**
      * Safety buffer (ms) added to ramp time delays.
      * Ensures the gain ramp completes before disconnecting nodes.
@@ -275,6 +282,12 @@ class AudioGraphManager {
             clearTimeout(timeoutId);
         });
         this.pendingDisconnects.clear();
+
+        // Unsubscribe from all MIDI devices
+        this.midiSubscriptions.forEach((unsubscribe) => {
+            unsubscribe();
+        });
+        this.midiSubscriptions.clear();
 
         // Clean up connection analysers
         this.connectionAnalysers.forEach((analyser) => {
@@ -690,6 +703,17 @@ class AudioGraphManager {
                 return null;
             }
 
+            // MIDI Input - subscribes to MIDI device and routes messages to instruments
+            case 'midi': {
+                // MIDI nodes don't process audio, they send control signals
+                // Subscribe to MIDI device if configured
+                const midiData = graphNode.data as MIDIInputNodeData;
+                if (midiData.deviceId && midiData.isConnected) {
+                    this.subscribeMIDINode(graphNode.id, midiData.deviceId);
+                }
+                return null;
+            }
+
             // Looper - input and output
             case 'looper': {
                 const looper = new Looper(graphNode.data.duration as number || 10);
@@ -826,6 +850,32 @@ class AudioGraphManager {
 
                 baseInstance.instance = { input1, input2, inverter, outputMixer } as SubtractNodeInstance;
                 baseInstance.inputNode = input1;  // Primary input
+                baseInstance.outputNode = gainEnvelope;
+                break;
+            }
+
+            // Sample Library Node - plays local audio samples
+            case 'library': {
+                const libraryData = graphNode.data as LibraryNodeData;
+                const adapter = new LocalSampleAdapter({
+                    playbackMode: libraryData.playbackMode || 'oneshot',
+                    volume: libraryData.volume ?? 0.8,
+                });
+
+                // Load current sample if set
+                if (libraryData.currentSampleId) {
+                    adapter.loadSample(libraryData.currentSampleId).catch(err => {
+                        console.warn('Failed to load sample:', err);
+                    });
+                }
+
+                // Connect adapter output to routing chain
+                const output = adapter.getOutput();
+                if (output) {
+                    output.connect(gainEnvelope);
+                }
+
+                baseInstance.instance = adapter;
                 baseInstance.outputNode = gainEnvelope;
                 break;
             }
@@ -1341,6 +1391,37 @@ class AudioGraphManager {
     }
 
     /**
+     * Get local sample adapter for a library node
+     */
+    getSampleAdapter(nodeId: string): LocalSampleAdapter | null {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (audioNode?.instance instanceof LocalSampleAdapter) {
+            return audioNode.instance;
+        }
+        return null;
+    }
+
+    /**
+     * Trigger a sample in a library node
+     */
+    triggerSample(nodeId: string, velocity: number = 1.0): void {
+        const adapter = this.getSampleAdapter(nodeId);
+        if (adapter) {
+            adapter.trigger(velocity);
+        }
+    }
+
+    /**
+     * Release a sample in a library node (for hold mode)
+     */
+    releaseSample(nodeId: string): void {
+        const adapter = this.getSampleAdapter(nodeId);
+        if (adapter) {
+            adapter.release();
+        }
+    }
+
+    /**
      * Update amplifier gain
      */
     updateAmplifierGain(nodeId: string, gain: number): void {
@@ -1789,6 +1870,120 @@ class AudioGraphManager {
                     (instrument as TonePianoInstrument).setPedal(false);
                 }
             }
+        }
+    }
+
+    // ============================================================================
+    // MIDI Device Integration
+    // ============================================================================
+
+    /**
+     * Subscribe a MIDI node to a device and route messages to connected instruments
+     */
+    subscribeMIDINode(midiNodeId: string, deviceId: string): void {
+        // Unsubscribe from previous device if any
+        this.unsubscribeMIDINode(midiNodeId);
+
+        const manager = getMIDIManager();
+
+        // MIDIManager already returns parsed events
+        const subscription = manager.subscribe(deviceId, (event) => {
+            // Route the parsed message to connected instruments
+            this.routeMIDIMessage(midiNodeId, event);
+        });
+
+        this.midiSubscriptions.set(midiNodeId, subscription.unsubscribe);
+    }
+
+    /**
+     * Unsubscribe a MIDI node from its device
+     */
+    unsubscribeMIDINode(midiNodeId: string): void {
+        const unsubscribe = this.midiSubscriptions.get(midiNodeId);
+        if (unsubscribe) {
+            unsubscribe();
+            this.midiSubscriptions.delete(midiNodeId);
+        }
+    }
+
+    /**
+     * Route a parsed MIDI message to connected instruments
+     */
+    private routeMIDIMessage(
+        midiNodeId: string,
+        message: MIDIEvent
+    ): void {
+
+        const graphNodes = useGraphStore.getState().nodes;
+        const graphConnections = useGraphStore.getState().connections;
+
+        // Get the MIDI node
+        const midiNode = graphNodes.get(midiNodeId);
+        if (!midiNode) return;
+
+        // Find all connections from this MIDI node's output ports
+        const midiConnections = Array.from(graphConnections.values()).filter(
+            conn => conn.sourceNodeId === midiNodeId && conn.type === 'control'
+        );
+
+        for (const connection of midiConnections) {
+            const targetNodeId = connection.targetNodeId;
+            const targetNode = graphNodes.get(targetNodeId);
+
+            if (!targetNode) continue;
+
+            // Check if target is an instrument
+            if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
+
+            // Get the instrument
+            const instrument = this.getInstrument(targetNodeId);
+            if (!instrument) continue;
+
+            // Route based on message type
+            switch (message.type) {
+                case 'noteOn': {
+                    const noteName = midiNoteToName(message.note);
+                    const velocity = normalizeMIDIValue(message.velocity);
+                    instrument.playNote(noteName, velocity);
+                    break;
+                }
+
+                case 'noteOff': {
+                    const noteName = midiNoteToName(message.note);
+                    instrument.stopNote(noteName);
+                    break;
+                }
+
+                case 'cc': {
+                    // Handle CC messages (e.g., sustain pedal CC 64)
+                    if (message.controller === 64) {
+                        // Sustain pedal
+                        if ('setPedal' in instrument) {
+                            (instrument as TonePianoInstrument).setPedal(message.value >= 64);
+                        }
+                    }
+                    // Future: Handle other CC messages (mod wheel, expression, etc.)
+                    break;
+                }
+
+                case 'pitchBend': {
+                    // Future: Handle pitch bend
+                    // Pitch bend value is -8192 to +8191, center is 0
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Update MIDI node device connection
+     * Called when device selection changes
+     */
+    updateMIDIDevice(midiNodeId: string, deviceId: string | null): void {
+        if (deviceId) {
+            this.subscribeMIDINode(midiNodeId, deviceId);
+        } else {
+            this.unsubscribeMIDINode(midiNodeId);
         }
     }
 }

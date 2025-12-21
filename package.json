@@ -20,6 +20,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "preinstall": "node -e \"if(!process.env.npm_execpath?.includes('bun')){console.error('\\x1b[31mError: Use bun to install dependencies.\\nRun: bun install\\x1b[0m');process.exit(1)}\"",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
@@ -30,12 +31,17 @@
   },
   "dependencies": {
     "@tonejs/piano": "^0.2.1",
+    "idb-keyval": "^6.2.2",
+    "lru-cache": "^11.2.4",
+    "music-metadata": "^11.10.3",
     "react": "^19.2.0",
+    "react-arborist": "^3.4.3",
     "react-dom": "^19.2.0",
     "rollup-plugin-node-polyfills": "^0.2.1",
     "smplr": "^0.16.3",
     "tone": "^15.1.22",
     "vite-plugin-pwa": "^1.2.0",
+    "web-audio-beat-detector": "^8.2.32",
     "webaudiofont": "^3.0.4",
     "workbox-window": "^7.4.0",
     "zustand": "^5.0.9"

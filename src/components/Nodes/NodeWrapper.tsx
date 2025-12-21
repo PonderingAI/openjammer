@@ -22,6 +22,9 @@ import { OutputPanelNode } from './OutputPanelNode';
 import { InputPanelNode } from './InputPanelNode';
 import { ContainerNode } from './ContainerNode';
 import { MathNode } from './MathNode';
+import { LibraryNode } from './LibraryNode';
+import { MIDINode } from './MIDINode';
+import { MIDIVisualNode } from './MIDIVisualNode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -33,6 +36,8 @@ const SCHEMATIC_TYPES = [
     'keyboard',
     'keyboard-visual',
     'instrument-visual',
+    'midi',
+    'midi-visual',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
@@ -43,7 +48,8 @@ const SCHEMATIC_TYPES = [
     'input-panel',
     'container',
     'add',
-    'subtract'
+    'subtract',
+    'library'
 ];
 
 export function NodeWrapper({ node }: NodeWrapperProps) {
@@ -330,6 +336,10 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <KeyboardVisualNode {...schematicProps} />;
             case 'instrument-visual':
                 return <InstrumentVisualNode {...schematicProps} />;
+            case 'midi':
+                return <MIDINode {...schematicProps} />;
+            case 'midi-visual':
+                return <MIDIVisualNode {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':
@@ -357,6 +367,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             case 'add':
             case 'subtract':
                 return <MathNode {...schematicProps} />;
+            case 'library':
+                return <LibraryNode {...schematicProps} />;
         }
     }
 

@@ -153,6 +153,39 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         canEnter: false  // Atomic node - no internal structure
     },
 
+    midi: {
+        type: 'midi',
+        category: 'input',
+        name: 'MIDI Input',
+        description: 'Connect MIDI controllers (keyboards, pads, knobs)',
+        defaultPorts: [], // Ports generated from preset via internal structure
+        defaultData: {
+            deviceId: null,
+            presetId: 'generic',
+            isConnected: false,
+            activeChannel: 0, // 0 = omni (all channels)
+            midiLearnMode: false,
+            learnTarget: null,
+            learnedMappings: {}
+        },
+        dimensions: { width: 180, height: 140 },
+        portLayout: {
+            direction: 'vertical',
+            outputArea: { x: 1, startY: 0.15, endY: 0.85 }
+        }
+    },
+
+    'midi-visual': {
+        type: 'midi-visual',
+        category: 'input',
+        name: 'MIDI Device',
+        description: 'Visual MIDI device representation (internal node)',
+        defaultPorts: [], // Ports generated dynamically from preset
+        defaultData: {},
+        dimensions: { width: 400, height: 250 },
+        canEnter: false  // Cannot enter this internal visual node
+    },
+
     // Instruments - all share similar layout: inputs on left, audio out on right
     piano: {
         type: 'piano',
@@ -523,6 +556,28 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         },
         dimensions: { width: 120, height: 80 },
         canEnter: false  // Cannot be entered - flashes red on E key
+    },
+
+    // Sample Library Node
+    library: {
+        type: 'library',
+        category: 'input',
+        name: 'Sample Library',
+        description: 'Local audio file library for samples, loops, and sound effects',
+        defaultPorts: [
+            { id: 'trigger', name: 'Trigger', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {
+            libraryId: undefined,
+            currentSampleId: undefined,
+            sampleRefs: [],
+            playbackMode: 'oneshot',
+            volume: 1,
+            missingSampleIds: []
+        },
+        dimensions: { width: 280, height: 200 },
+        canEnter: false  // Sample browser is inline, not a sub-canvas
     }
 };
 
@@ -540,7 +595,7 @@ export const menuCategories: MenuCategory[] = [
     {
         name: 'Input',
         icon: '⌨️',
-        items: ['keyboard', 'microphone']
+        items: ['keyboard', 'midi', 'microphone', 'library']
     },
     {
         name: 'Instruments',

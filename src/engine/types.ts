@@ -87,6 +87,8 @@ export type NodeType =
     | 'keyboard-visual' // Visual keyboard with per-key outputs (internal node)
     | 'instrument-visual' // Visual instrument with row configuration (internal node)
     | 'microphone'
+    | 'midi'            // MIDI input device
+    | 'midi-visual'     // Visual MIDI device representation (internal node)
     | 'piano'
     | 'cello'
     | 'electricCello'
@@ -107,7 +109,8 @@ export type NodeType =
     | 'input-panel'    // Multi-port input panel with editable labels
     | 'container'      // Empty container node for grouping
     | 'add'            // Addition node (mixes signals)
-    | 'subtract';      // Subtraction node (phase cancellation)
+    | 'subtract'       // Subtraction node (phase cancellation)
+    | 'library';       // Sample library node for local audio files
 
 export interface Position {
     x: number;
@@ -213,6 +216,52 @@ export interface RecordingData {
     buffer: ArrayBuffer | null;
     duration: number;
     timestamp: number;
+}
+
+export interface LibrarySampleRef {
+    id: string;
+    relativePath: string;
+    displayName: string;
+    libraryId: string;
+}
+
+export interface LibraryNodeData extends NodeData {
+    // Library reference
+    libraryId?: string;
+
+    // Current sample selection
+    currentSampleId?: string;
+
+    // Samples used in this node (for workflow persistence)
+    sampleRefs: LibrarySampleRef[];
+
+    // Playback mode
+    playbackMode: 'oneshot' | 'loop' | 'hold';
+
+    // Volume (0-1)
+    volume: number;
+
+    // Missing samples detected on load
+    missingSampleIds?: string[];
+}
+
+export interface MIDILearnedMapping {
+    type: 'note' | 'cc' | 'pitchBend';
+    channel: number;
+    noteOrCC: number;  // Note number or CC number
+}
+
+export interface MIDIInputNodeData extends NodeData {
+    // Device configuration
+    deviceId: string | null;           // Selected MIDI input device ID
+    presetId: string;                  // Preset ID (e.g., "arturia-minilab-3" or "generic")
+    isConnected: boolean;              // Whether device is currently connected
+    activeChannel: number;             // 0 = omni (all channels), 1-16 for specific
+
+    // MIDI Learn state
+    midiLearnMode: boolean;
+    learnTarget: string | null;        // Port ID being learned
+    learnedMappings: Record<string, MIDILearnedMapping>;
 }
 
 // ============================================================================
