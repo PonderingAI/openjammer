@@ -16,6 +16,7 @@ import { LocalSampleAdapter } from './samplers/LocalSampleAdapter';
 import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData, LibraryNodeData, MIDIInputNodeData } from '../engine/types';
 import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
 import type { MIDIEvent } from '../midi/types';
+import { useMIDIStore } from '../store/midiStore';
 
 // Validation constants for instrument row data
 const VALIDATION_BOUNDS = {
@@ -1888,6 +1889,8 @@ class AudioGraphManager {
 
         // MIDIManager already returns parsed events
         const subscription = manager.subscribe(deviceId, (event) => {
+            // Update the store's lastMessage for visual components
+            useMIDIStore.getState().handleMIDIMessage(event);
             // Route the parsed message to connected instruments
             this.routeMIDIMessage(midiNodeId, event);
         });

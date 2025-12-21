@@ -1,0 +1,484 @@
+/**
+ * MiniLab 3 Visual Styles
+ * Accurate representation of Arturia MiniLab 3
+ * Aspect ratio: 355:220 (1.61:1)
+ * No wood panels - that's MiniLab MkII
+ */
+
+.minilab3-visual {
+    position: relative;
+    width: 650px;
+    height: 400px;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+/* Main body - Mint green color (no wood panels on MiniLab 3) */
+.minilab3-body {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        180deg,
+        #6BAF9E 0%,
+        #5A9E8D 50%,
+        #4A8E7D 100%
+    );
+    border-radius: 12px;
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+    padding: 10px 15px;
+}
+
+/* Top controls section - positioned above pads row */
+.minilab3-controls {
+    display: flex;
+    gap: 10px;
+    height: 110px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+    position: relative;
+}
+
+/* Left section - buttons on top, touch strips extend down to branding */
+.minilab3-left-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 70px;
+    flex-shrink: 0;
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 165px;
+}
+
+.minilab3-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+}
+
+.minilab3-button {
+    background: #2A2A2A;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #888;
+    font-size: 7px;
+    font-weight: 600;
+    padding: 5px 3px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.1s;
+    text-align: center;
+}
+
+.minilab3-button:hover {
+    background: #3A3A3A;
+    color: #AAA;
+}
+
+.minilab3-button.minilab3-shift {
+    background: #333;
+    color: #FFF;
+}
+
+/* Touch strips - vertical below buttons */
+.minilab3-touch-strips {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    flex: 1;
+}
+
+.minilab3-touch-strip {
+    flex: 1;
+    background: #1A1A1A;
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+
+.minilab3-strip-indicator {
+    position: absolute;
+    bottom: 2px;
+    left: 2px;
+    right: 2px;
+    height: 8px;
+    background: linear-gradient(180deg, #7FB8A8 0%, #5A9E8D 100%);
+    border-radius: 2px;
+    transition: bottom 0.05s ease-out, height 0.05s ease-out;
+    box-shadow: 0 0 6px rgba(127, 184, 168, 0.5);
+}
+
+/* Display section */
+.minilab3-display-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 70px;
+    flex-shrink: 0;
+    padding-top: 5px;
+    margin-left: 80px;
+}
+
+.minilab3-oled {
+    width: 55px;
+    height: 35px;
+    background: #000;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #1a1a1a;
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+}
+
+.minilab3-oled-text {
+    color: #4FC3F7;
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.minilab3-main-encoder {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(145deg, #F5F5F5 0%, #E0E0E0 50%, #BDBDBD 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+        0 3px 6px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+}
+
+.minilab3-encoder-cap {
+    width: 34px;
+    height: 34px;
+    background: linear-gradient(145deg, #FAFAFA 0%, #E8E8E8 100%);
+    border-radius: 50%;
+    position: relative;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.minilab3-encoder-indicator {
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 3px;
+    height: 8px;
+    background: #333;
+    border-radius: 1px;
+}
+
+/* Knobs section - 2 rows of 4 */
+.minilab3-knobs-section {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 8px;
+    flex: 1;
+    padding: 5px;
+    max-width: 180px;
+}
+
+.minilab3-knob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+}
+
+.minilab3-knob-cap {
+    width: 28px;
+    height: 28px;
+    background: linear-gradient(145deg, #2A2A2A 0%, #1A1A1A 100%);
+    border-radius: 50%;
+    position: relative;
+    box-shadow:
+        0 3px 6px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    transition: transform 0.05s;
+}
+
+.minilab3-knob-indicator {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 3px;
+    height: 6px;
+    background: #FFF;
+    border-radius: 1px;
+}
+
+.minilab3-knob-label {
+    font-size: 7px;
+    color: rgba(0, 0, 0, 0.6);
+    font-weight: 600;
+}
+
+/* Faders section - 4 vertical faders */
+.minilab3-faders-section {
+    display: flex;
+    gap: 12px;
+    width: 120px;
+    padding: 5px 20px 5px 5px;
+    align-items: flex-start;
+    flex-shrink: 0;
+}
+
+.minilab3-fader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+}
+
+.minilab3-fader-track {
+    width: 5px;
+    height: 85px;
+    background: #1A1A1A;
+    border-radius: 3px;
+    position: relative;
+    border: 1px solid #333;
+}
+
+.minilab3-fader-thumb {
+    position: absolute;
+    left: -6px;
+    width: 17px;
+    height: 20px;
+    background: linear-gradient(
+        90deg,
+        #2A2A2A 0%,
+        #3A3A3A 50%,
+        #2A2A2A 100%
+    );
+    border-radius: 3px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    transition: bottom 0.05s ease-out;
+}
+
+.minilab3-fader-label {
+    font-size: 7px;
+    color: rgba(0, 0, 0, 0.6);
+    font-weight: 600;
+}
+
+/* Middle row - pads in single horizontal line above keyboard */
+.minilab3-middle-row {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 6px;
+    padding: 0 10px;
+}
+
+/* Pads section - single row of 8, positioned above keyboard */
+.minilab3-pads-section {
+    display: flex;
+    gap: 8px;
+    padding: 5px;
+}
+
+.minilab3-pad {
+    width: 38px;
+    height: 38px;
+    background: #1A1A1A;
+    border-radius: 5px;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.05s;
+    box-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(59, 130, 246, 0.5);
+}
+
+.minilab3-pad::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 3px;
+    background: var(--pad-color, #3B82F6);
+    opacity: var(--pad-brightness, 0.3);
+    transition: opacity 0.05s;
+}
+
+.minilab3-pad.active {
+    transform: scale(0.95);
+    box-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.4),
+        0 0 15px var(--pad-color, #3B82F6);
+    border-color: var(--pad-color, #3B82F6);
+}
+
+.minilab3-pad.active::before {
+    opacity: calc(0.6 + var(--pad-brightness, 0.5) * 0.4);
+}
+
+/* Branding row - above keyboard */
+.minilab3-branding-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 10px;
+    margin-bottom: 4px;
+}
+
+.minilab3-logo {
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(0, 0, 0, 0.7);
+    letter-spacing: 0.5px;
+}
+
+.minilab3-logo-lab {
+    font-weight: 300;
+}
+
+/* MIDI channel indicators */
+.minilab3-midi-indicators {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+}
+
+.minilab3-midi-label {
+    font-size: 7px;
+    color: rgba(0, 0, 0, 0.5);
+    margin-right: 4px;
+}
+
+.minilab3-midi-ch {
+    width: 5px;
+    height: 5px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 1px;
+}
+
+.minilab3-midi-ch.active {
+    background: #4FC3F7;
+    box-shadow: 0 0 4px rgba(79, 195, 247, 0.5);
+}
+
+.minilab3-arturia {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(0, 0, 0, 0.7);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+/* Keyboard section - spans full width at bottom */
+.minilab3-keyboard-section {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    flex: 1;
+    padding: 0 5px 8px 5px;
+}
+
+.minilab3-keyboard {
+    position: relative;
+    height: 165px;
+    width: 100%;
+}
+
+/* Piano keys - black keys on TOP of white keys */
+.minilab3-key {
+    position: absolute;
+    top: 0;
+    cursor: pointer;
+    transition: all 0.05s;
+}
+
+.minilab3-white-key {
+    height: 160px;
+    background: linear-gradient(
+        180deg,
+        #FAFAFA 0%,
+        #F5F5F5 80%,
+        #E8E8E8 100%
+    );
+    border: 1px solid #CCC;
+    border-radius: 0 0 5px 5px;
+    z-index: 1;
+    box-shadow:
+        0 3px 4px rgba(0, 0, 0, 0.2),
+        inset 0 -3px 6px rgba(0, 0, 0, 0.05);
+    box-sizing: border-box;
+}
+
+.minilab3-white-key:hover {
+    background: linear-gradient(
+        180deg,
+        #FFF 0%,
+        #FAFAFA 80%,
+        #F0F0F0 100%
+    );
+}
+
+.minilab3-white-key.active {
+    background: linear-gradient(
+        180deg,
+        #E0E0E0 0%,
+        #D5D5D5 80%,
+        #C8C8C8 100%
+    );
+    box-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.2),
+        inset 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.minilab3-black-key {
+    height: 100px;
+    background: linear-gradient(
+        180deg,
+        #2A2A2A 0%,
+        #1A1A1A 80%,
+        #0A0A0A 100%
+    );
+    z-index: 2;
+    border-radius: 0 0 4px 4px;
+    box-shadow:
+        0 4px 6px rgba(0, 0, 0, 0.5),
+        inset 0 -2px 4px rgba(255, 255, 255, 0.05);
+    box-sizing: border-box;
+}
+
+.minilab3-black-key:hover {
+    background: linear-gradient(
+        180deg,
+        #3A3A3A 0%,
+        #2A2A2A 80%,
+        #1A1A1A 100%
+    );
+}
+
+.minilab3-black-key.active {
+    background: linear-gradient(
+        180deg,
+        #1A1A1A 0%,
+        #0A0A0A 80%,
+        #000 100%
+    );
+    box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.5),
+        inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}

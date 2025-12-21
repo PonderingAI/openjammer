@@ -2,7 +2,7 @@
  * OpenJammer - Node-based music generation tool
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
@@ -11,6 +11,8 @@ import { initAudioContext, isAudioReady, getLatencyMetrics } from './audio/Audio
 import { audioGraphManager } from './audio/AudioGraphManager';
 import { useAudioStore } from './store/audioStore';
 import { useGraphStore } from './store/graphStore';
+import { useProjectStore } from './store/projectStore';
+import { useCanvasStore } from './store/canvasStore';
 import { applyTheme, getSavedThemeId, getThemeById } from './styles/themes';
 import './styles/global.css';
 
@@ -84,6 +86,157 @@ function App() {
       audioGraphManager.dispose();
     };
   }, [isAudioContextReady]);
+
+  // ========================================
+  // Autosave - watches graph changes and saves to project folder
+  // ========================================
+  const projectName = useProjectStore((s) => s.name);
+  const projectHandleKey = useProjectStore((s) => s.handleKey);
+  const saveProject = useProjectStore((s) => s.saveProject);
+
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSaveHashRef = useRef<string>('');
+  const isSavingRef = useRef(false);
+
+  // Autosave when graph changes (debounced) - using subscription to avoid re-renders
+  useEffect(() => {
+    // Only autosave if a project is open
+    if (!projectName || !projectHandleKey) return;
+
+    // Initialize hash with current state to prevent immediate save on load
+    if (!lastSaveHashRef.current) {
+      const initialHash = JSON.stringify({
+        nodes: Array.from(useGraphStore.getState().nodes.values()),
+        edges: Array.from(useGraphStore.getState().connections.values()),
+      });
+      lastSaveHashRef.current = initialHash;
+    }
+
+    // Subscribe to graph changes
+    const unsubscribe = useGraphStore.subscribe((state) => {
+      const currentHash = JSON.stringify({
+        nodes: Array.from(state.nodes.values()),
+        edges: Array.from(state.connections.values()),
+      });
+
+      // Skip if nothing changed
+      if (currentHash === lastSaveHashRef.current) return;
+
+      // Clear existing timeout
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+
+      // Debounced save (3 seconds after last change)
+      saveTimeoutRef.current = setTimeout(async () => {
+        if (isSavingRef.current) return;
+
+        isSavingRef.current = true;
+        try {
+          const graphData = {
+            nodes: Array.from(useGraphStore.getState().nodes.values()),
+            edges: Array.from(useGraphStore.getState().connections.values()),
+            viewport: {
+              x: useCanvasStore.getState().pan.x,
+              y: useCanvasStore.getState().pan.y,
+              zoom: useCanvasStore.getState().zoom,
+            },
+          };
+          await saveProject(graphData);
+          lastSaveHashRef.current = currentHash;
+          console.log('[Autosave] Project saved');
+        } catch (err) {
+          console.error('[Autosave] Failed:', err);
+        } finally {
+          isSavingRef.current = false;
+        }
+      }, 3000);
+    });
+
+    return () => {
+      unsubscribe();
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [projectName, projectHandleKey, saveProject]);
+
+  // Periodic backup save every 30 seconds (checks if hash changed)
+  useEffect(() => {
+    if (!projectName || !projectHandleKey) return;
+
+    const interval = setInterval(async () => {
+      if (isSavingRef.current) return;
+
+      const currentHash = JSON.stringify({
+        nodes: Array.from(useGraphStore.getState().nodes.values()),
+        edges: Array.from(useGraphStore.getState().connections.values()),
+      });
+
+      // Skip if nothing changed since last save
+      if (currentHash === lastSaveHashRef.current) return;
+
+      isSavingRef.current = true;
+      try {
+        const graphData = {
+          nodes: Array.from(useGraphStore.getState().nodes.values()),
+          edges: Array.from(useGraphStore.getState().connections.values()),
+          viewport: {
+            x: useCanvasStore.getState().pan.x,
+            y: useCanvasStore.getState().pan.y,
+            zoom: useCanvasStore.getState().zoom,
+          },
+        };
+        await saveProject(graphData);
+        lastSaveHashRef.current = currentHash;
+        console.log('[Autosave] Periodic backup saved');
+      } catch (err) {
+        console.error('[Autosave] Periodic backup failed:', err);
+      } finally {
+        isSavingRef.current = false;
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [projectName, projectHandleKey, saveProject]);
+
+  // Save on tab close/switch
+  useEffect(() => {
+    if (!projectName || !projectHandleKey) return;
+
+    const handleVisibilityChange = async () => {
+      if (document.hidden && !isSavingRef.current) {
+        const currentHash = JSON.stringify({
+          nodes: Array.from(useGraphStore.getState().nodes.values()),
+          edges: Array.from(useGraphStore.getState().connections.values()),
+        });
+
+        // Skip if nothing changed since last save
+        if (currentHash === lastSaveHashRef.current) return;
+
+        // Save immediately when tab is hidden
+        try {
+          const graphData = {
+            nodes: Array.from(useGraphStore.getState().nodes.values()),
+            edges: Array.from(useGraphStore.getState().connections.values()),
+            viewport: {
+              x: useCanvasStore.getState().pan.x,
+              y: useCanvasStore.getState().pan.y,
+              zoom: useCanvasStore.getState().zoom,
+            },
+          };
+          await saveProject(graphData);
+          lastSaveHashRef.current = currentHash;
+          console.log('[Autosave] Saved on tab switch');
+        } catch (err) {
+          console.error('[Autosave] Failed on tab switch:', err);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [projectName, projectHandleKey, saveProject]);
 
   // Initialize audio context on user gesture
   const handleActivate = useCallback(async () => {

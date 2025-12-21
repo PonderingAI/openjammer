@@ -207,3 +207,50 @@
     border-color: var(--accent-warning);
     background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
 }
+
+/* ============================================
+ * Status Indicators
+ * ============================================ */
+
+.toolbar-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-left: var(--space-xs);
+}
+
+.toolbar-status-icon {
+    font-size: var(--text-md);
+}
+
+.toolbar-status-text {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.toolbar-unsaved {
+    color: var(--accent-warning);
+    font-weight: bold;
+}
+
+.toolbar-status-offline {
+    background: color-mix(in srgb, var(--accent-warning) 20%, var(--bg-tertiary));
+    color: var(--accent-warning);
+}
+
+.toolbar-status-offline .toolbar-status-icon {
+    animation: pulse-offline 2s ease-in-out infinite;
+}
+
+@keyframes pulse-offline {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}

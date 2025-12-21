@@ -142,7 +142,7 @@ interface GraphStore {
     historyIndex: number;
 
     // Node Actions
-    addNode: (type: NodeType, position: Position, parentId?: string | null) => string;
+    addNode: (type: NodeType, position: Position, parentId?: string | null, initialData?: Record<string, unknown>) => string;
     removeNode: (nodeId: string) => void;
     updateNodePosition: (nodeId: string, position: Position) => void;
     updateNodeData: <T extends object>(nodeId: string, data: Partial<T>) => void;
@@ -290,7 +290,7 @@ export const useGraphStore = create<GraphStore>()(
             },
 
             // Node Actions
-            addNode: (type, position, parentId = null) => {
+            addNode: (type, position, parentId = null, initialData = {}) => {
                 get().pushHistory();
 
                 const definition = getNodeDefinition(type);
@@ -302,7 +302,7 @@ export const useGraphStore = create<GraphStore>()(
                     type,
                     category: definition.category,
                     position,
-                    data: { ...definition.defaultData },
+                    data: { ...definition.defaultData, ...initialData },
                     ports: [...definition.defaultPorts],
                     parentId,
                     childIds: [],

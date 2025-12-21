@@ -123,6 +123,11 @@ interface SampleLibraryStore {
 
   // Restore libraries on startup
   restoreLibraries: () => Promise<void>;
+
+  // Project integration
+  addProjectSamplesLibrary: (projectHandle: FileSystemDirectoryHandle, projectName: string) => Promise<string | null>;
+  removeProjectLibrary: (projectName: string) => Promise<void>;
+  projectLibraryId: string | null;
 }
 
 // ============================================================================
@@ -140,6 +145,7 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
       searchQuery: '',
       filterTags: [],
       filterBpmRange: null,
+      projectLibraryId: null,
 
       // ========================================
       // Library Management
@@ -600,6 +606,83 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
               },
             }));
           }
+        }
+      },
+
+      // ========================================
+      // Project Integration
+      // ========================================
+
+      addProjectSamplesLibrary: async (projectHandle: FileSystemDirectoryHandle, projectName: string) => {
+        try {
+          // Get or create audio/samples directory
+          const audioDir = await projectHandle.getDirectoryHandle('audio', { create: true });
+          const samplesDir = await audioDir.getDirectoryHandle('samples', { create: true });
+
+          // Check if we already have this project's library
+          const existingLibrary = Object.values(get().libraries).find(
+            lib => lib.name === `${projectName} (Samples)`
+          );
+
+          if (existingLibrary) {
+            // Update the existing library's handle
+            await persistHandle(existingLibrary.handleKey, samplesDir);
+            set({
+              projectLibraryId: existingLibrary.id,
+              selectedLibraryId: existingLibrary.id,
+            });
+            return existingLibrary.id;
+          }
+
+          // Create new library for project samples
+          const id = crypto.randomUUID();
+          const handleKey = `library-project-${id}`;
+
+          await persistHandle(handleKey, samplesDir);
+
+          const library: SampleLibrary = {
+            id,
+            name: `${projectName} (Samples)`,
+            rootPath: `${projectName}/audio/samples`,
+            handleKey,
+            lastScanAt: 0,
+            sampleCount: 0,
+            status: 'ready',
+          };
+
+          set(state => ({
+            libraries: { ...state.libraries, [id]: library },
+            projectLibraryId: id,
+            selectedLibraryId: id,
+          }));
+
+          // Auto-scan the library
+          // Use setTimeout to avoid blocking the UI
+          setTimeout(() => {
+            get().scanLibrary(id, true);
+          }, 100);
+
+          return id;
+        } catch (error) {
+          console.error('Failed to add project samples library:', error);
+          return null;
+        }
+      },
+
+      removeProjectLibrary: async (projectName: string) => {
+        const library = Object.values(get().libraries).find(
+          lib => lib.name === `${projectName} (Samples)`
+        );
+
+        if (library) {
+          // Don't fully remove - just clear the project reference
+          // The library stays for when the project is reopened
+          set(state => ({
+            projectLibraryId: null,
+            selectedLibraryId: state.selectedLibraryId === library.id ? null : state.selectedLibraryId,
+          }));
+        } else {
+          set({ projectLibraryId: null });
         }
       },
     }),

@@ -40,6 +40,7 @@
     "rollup-plugin-node-polyfills": "^0.2.1",
     "smplr": "^0.16.3",
     "tone": "^15.1.22",
+    "use-debounce": "^10.0.6",
     "vite-plugin-pwa": "^1.2.0",
     "web-audio-beat-detector": "^8.2.32",
     "webaudiofont": "^3.0.4",

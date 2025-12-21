@@ -16,6 +16,8 @@ import { getConnectionBundleCount } from '../../utils/portSync';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
+import { MIDIDeviceBrowser } from '../MIDI/MIDIDeviceBrowser';
+import { useMIDIStore } from '../../store/midiStore';
 import './NodeCanvas.css';
 
 interface SelectionBox {
@@ -29,6 +31,11 @@ export function NodeCanvas() {
     const canvasRef = useRef<HTMLDivElement>(null);
     const [contextMenu, setContextMenu] = useState<Position | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+
+    // MIDI browser state - track where to create node after device selection
+    const [midiNodePosition, setMidiNodePosition] = useState<Position | null>(null);
+    const openMIDIBrowser = useMIDIStore((s) => s.openBrowser);
+    const closeMIDIBrowser = useMIDIStore((s) => s.closeBrowser);
 
     // Right-click drag state (for pan vs context menu)
     const [rightClickStart, setRightClickStart] = useState<Position | null>(null);
@@ -150,6 +157,27 @@ export function NodeCanvas() {
         // null = root level, nodeId = inside that node
         addNode(type, canvasPos, currentViewNodeId);
     }, [screenToCanvas, addNode, currentViewNodeId]);
+
+    // Handle opening MIDI browser (when 'Midi' is selected from context menu)
+    const handleOpenMIDIBrowser = useCallback((screenPos: Position) => {
+        const canvasPos = screenToCanvas(screenPos);
+        setMidiNodePosition(canvasPos);
+        openMIDIBrowser();
+    }, [screenToCanvas, openMIDIBrowser]);
+
+    // Handle MIDI device selection from browser
+    const handleMIDIDeviceSelected = useCallback((deviceId: string | null, presetId: string) => {
+        if (midiNodePosition) {
+            // Create MIDI node with selected device/preset
+            addNode('midi', midiNodePosition, currentViewNodeId, {
+                deviceId,
+                presetId,
+                isConnected: deviceId !== null
+            });
+            setMidiNodePosition(null);
+        }
+        closeMIDIBrowser();
+    }, [midiNodePosition, addNode, currentViewNodeId, closeMIDIBrowser]);
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -912,8 +940,12 @@ export function NodeCanvas() {
                     position={contextMenu}
                     onClose={() => setContextMenu(null)}
                     onAddNode={handleAddNode}
+                    onOpenMIDIBrowser={handleOpenMIDIBrowser}
                 />
             )}
+
+            {/* MIDI Device Browser */}
+            <MIDIDeviceBrowser onSelectDevice={handleMIDIDeviceSelected} />
 
             {/* Back to Action button - appears when nodes are not visible on any level */}
             {nodes.size > 0 && !nodesVisibility.visible && nodesVisibility.direction !== null && (

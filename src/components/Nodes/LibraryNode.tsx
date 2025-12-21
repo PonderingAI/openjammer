@@ -65,6 +65,17 @@ export function LibraryNode({
   const addLibrary = useSampleLibraryStore(s => s.addLibrary);
   const scanLibrary = useSampleLibraryStore(s => s.scanLibrary);
   const getSamplesByLibrary = useSampleLibraryStore(s => s.getSamplesByLibrary);
+  const projectLibraryId = useSampleLibraryStore(s => s.projectLibraryId);
+
+  // Auto-connect to project library if available and no library set
+  const effectiveLibraryId = data.libraryId || projectLibraryId;
+
+  // Auto-set the library ID if project library is available
+  useEffect(() => {
+    if (!data.libraryId && projectLibraryId) {
+      updateNodeData<LibraryNodeData>(node.id, { libraryId: projectLibraryId });
+    }
+  }, [data.libraryId, projectLibraryId, node.id, updateNodeData]);
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,13 +90,13 @@ export function LibraryNode({
   const triggerPort = node.ports.find(p => p.id === 'trigger');
   const audioOutPort = node.ports.find(p => p.id === 'audio-out');
 
-  // Get current library
-  const currentLibrary = data.libraryId ? libraries[data.libraryId] : null;
+  // Get current library (use effective library ID which falls back to project library)
+  const currentLibrary = effectiveLibraryId ? libraries[effectiveLibraryId] : null;
 
   // Get filtered samples
   const librarySamples = useMemo(() => {
-    if (!data.libraryId) return [];
-    const allSamples = getSamplesByLibrary(data.libraryId);
+    if (!effectiveLibraryId) return [];
+    const allSamples = getSamplesByLibrary(effectiveLibraryId);
 
     if (!searchQuery.trim()) return allSamples;
 
@@ -95,7 +106,7 @@ export function LibraryNode({
         s.fileName.toLowerCase().includes(query) ||
         s.tags.some(t => t.toLowerCase().includes(query))
     );
-  }, [data.libraryId, getSamplesByLibrary, searchQuery, samples]);
+  }, [effectiveLibraryId, getSamplesByLibrary, searchQuery, samples]);
 
   // Handle linking a new folder
   const handleLinkFolder = useCallback(async () => {
@@ -289,7 +300,7 @@ export function LibraryNode({
 
   // Check if scanning
   const isScanning =
-    scanProgress !== null && scanProgress.libraryId === data.libraryId && scanProgress.phase !== 'complete';
+    scanProgress !== null && scanProgress.libraryId === effectiveLibraryId && scanProgress.phase !== 'complete';
 
   return (
     <div

@@ -10,11 +10,15 @@
  *
  * This is the internal node shown when entering a MIDI node with E key.
  * Each control has its own output port for per-control connections.
+ *
+ * For known devices like the Arturia MiniLab 3, shows an accurate visual
+ * representation matching the physical device layout.
  */
 
 import { useMemo } from 'react';
 import type { GraphNode } from '../../engine/types';
 import { getPresetRegistry } from '../../midi';
+import { MiniLab3Visual } from './MiniLab3Visual';
 import './MIDIVisualNode.css';
 
 interface MIDIVisualNodeProps {
@@ -46,8 +50,10 @@ export function MIDIVisualNode({
     isDragging,
     style
 }: MIDIVisualNodeProps) {
-    // Get preset from node data
-    const presetId = (node.data as { presetId?: string }).presetId || 'generic';
+    // Get preset and device info from node data
+    const nodeData = node.data as { presetId?: string; deviceId?: string | null };
+    const presetId = nodeData.presetId || 'generic';
+    const deviceId = nodeData.deviceId || null;
     const registry = getPresetRegistry();
     const preset = useMemo(() => registry.getPreset(presetId), [presetId]);
 
@@ -59,6 +65,40 @@ export function MIDIVisualNode({
     const hasPitchBend = preset?.controls.pitchBend !== undefined;
     const hasModWheel = preset?.controls.modWheel !== undefined;
 
+    // For Arturia MiniLab 3, show the accurate visual representation
+    if (presetId === 'arturia-minilab-3') {
+        return (
+            <div
+                className={`midi-visual-node schematic-node minilab3-wrapper ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+                style={style}
+                onMouseEnter={handleNodeMouseEnter}
+                onMouseLeave={handleNodeMouseLeave}
+            >
+                <MiniLab3Visual deviceId={deviceId} />
+
+                {/* Output ports on right side */}
+                <div className="midi-visual-ports minilab3-ports">
+                    {node.ports.filter(p => p.direction === 'output').map((port) => (
+                        <div key={port.id} className="port-row output">
+                            <span className="port-label">{port.name}</span>
+                            <div
+                                className={`port-circle-marker control-port output-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                                data-node-id={node.id}
+                                data-port-id={port.id}
+                                data-port-type={port.type}
+                                onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                                onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                                onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                                onMouseLeave={handlePortMouseLeave}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    // Generic MIDI device visualization
     return (
         <div
             className={`midi-visual-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}

@@ -264,3 +264,48 @@
     border-top: 1px solid var(--sketch-gray, #ccc);
     padding-top: 8px;
 }
+
+/* ============================================================================
+ * MiniLab 3 specific styles
+ * ============================================================================ */
+
+.midi-visual-node.minilab3-wrapper {
+    min-width: auto;
+    width: auto;
+    background: transparent;
+    border: none;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 0;
+}
+
+.midi-visual-node.minilab3-wrapper.selected {
+    box-shadow: none;
+}
+
+.midi-visual-node.minilab3-wrapper .minilab3-ports {
+    position: absolute;
+    right: -120px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--sketch-paper, #fafafa);
+    border: 2px solid var(--sketch-black, #1a1a1a);
+    border-radius: 6px;
+    padding: 8px;
+    margin: 0;
+    border-top: none;
+}
+
+.midi-visual-node.minilab3-wrapper .minilab3-ports .port-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+}
+
+.midi-visual-node.minilab3-wrapper .minilab3-ports .port-label {
+    font-size: 10px;
+    color: var(--sketch-gray, #666);
+    white-space: nowrap;
+}

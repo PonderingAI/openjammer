@@ -156,7 +156,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
     midi: {
         type: 'midi',
         category: 'input',
-        name: 'MIDI Input',
+        name: 'Midi',
         description: 'Connect MIDI controllers (keyboards, pads, knobs)',
         defaultPorts: [], // Ports generated from preset via internal structure
         defaultData: {

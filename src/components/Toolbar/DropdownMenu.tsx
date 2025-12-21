@@ -21,13 +21,15 @@ import './DropdownMenu.css';
  * @property shortcut - Optional keyboard shortcut display (must be sanitized if from external source)
  * @property onClick - Callback when item is selected
  * @property disabled - Whether the item is disabled
+ * @property submenu - Optional nested submenu items
  */
 export interface MenuItem {
     id: string;
     label: string;
     shortcut?: string;
-    onClick: () => void;
+    onClick?: () => void;
     disabled?: boolean;
+    submenu?: MenuItemOrSeparator[];
 }
 
 export interface MenuSeparator {
@@ -49,6 +51,7 @@ function isSeparator(item: MenuItemOrSeparator): item is MenuSeparator {
 export function DropdownMenu({ label, items, disabled = false }: DropdownMenuProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [focusedIndex, setFocusedIndex] = useState(-1);
+    const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -59,6 +62,7 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
     const close = useCallback((restoreFocus = false) => {
         setIsOpen(false);
         setFocusedIndex(-1);
+        setOpenSubmenuId(null);
         if (restoreFocus) {
             // Restore focus to trigger button when closing via Escape or Enter/Space
             triggerRef.current?.focus();
@@ -133,7 +137,7 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
                     e.preventDefault();
                     if (focusedIndex >= 0 && focusedIndex < actionableItems.length) {
                         const item = actionableItems[focusedIndex];
-                        if (!item.disabled) {
+                        if (!item.disabled && item.onClick) {
                             item.onClick();
                             close(true); // Restore focus after action
                         }
@@ -159,7 +163,19 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
 
     const handleItemClick = (item: MenuItem) => {
         if (!item.disabled) {
-            item.onClick();
+            if (item.submenu) {
+                // Toggle submenu on click
+                setOpenSubmenuId(openSubmenuId === item.id ? null : item.id);
+            } else if (item.onClick) {
+                item.onClick();
+                close();
+            }
+        }
+    };
+
+    const handleSubmenuItemClick = (subItem: MenuItem) => {
+        if (!subItem.disabled && subItem.onClick) {
+            subItem.onClick();
             close();
         }
     };
@@ -195,20 +211,61 @@ export function DropdownMenu({ label, items, disabled = false }: DropdownMenuPro
                         actionableIndex++;
                         const currentActionableIndex = actionableIndex;
 
+                        const hasSubmenu = !!item.submenu;
+                        const isSubmenuOpen = openSubmenuId === item.id;
+
                         return (
                             <div
                                 key={item.id}
                                 ref={(el) => { itemRefs.current[currentActionableIndex] = el; }}
-                                className={`dropdown-item ${item.disabled ? 'dropdown-item-disabled' : ''} ${currentActionableIndex === focusedIndex ? 'dropdown-item-focused' : ''}`}
+                                className={`dropdown-item ${item.disabled ? 'dropdown-item-disabled' : ''} ${currentActionableIndex === focusedIndex ? 'dropdown-item-focused' : ''} ${hasSubmenu ? 'dropdown-item-has-submenu' : ''}`}
                                 onClick={() => handleItemClick(item)}
-                                onMouseEnter={() => setFocusedIndex(currentActionableIndex)}
+                                onMouseEnter={() => {
+                                    setFocusedIndex(currentActionableIndex);
+                                    if (hasSubmenu) {
+                                        setOpenSubmenuId(item.id);
+                                    } else {
+                                        setOpenSubmenuId(null);
+                                    }
+                                }}
                                 role="menuitem"
                                 tabIndex={-1}
                                 aria-disabled={item.disabled}
+                                aria-haspopup={hasSubmenu}
+                                aria-expanded={hasSubmenu ? isSubmenuOpen : undefined}
                             >
                                 <span className="dropdown-item-label">{item.label}</span>
                                 {item.shortcut && (
                                     <span className="dropdown-item-shortcut">{item.shortcut}</span>
+                                )}
+                                {hasSubmenu && (
+                                    <span className="dropdown-submenu-chevron">▸</span>
+                                )}
+                                {hasSubmenu && isSubmenuOpen && item.submenu && (
+                                    <div className="dropdown-submenu" role="menu">
+                                        {item.submenu.map((subItem, subIndex) => {
+                                            if (isSeparator(subItem)) {
+                                                return <div key={`sub-sep-${subIndex}`} className="dropdown-separator" role="separator" />;
+                                            }
+                                            return (
+                                                <div
+                                                    key={subItem.id}
+                                                    className={`dropdown-item ${subItem.disabled ? 'dropdown-item-disabled' : ''}`}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleSubmenuItemClick(subItem);
+                                                    }}
+                                                    role="menuitem"
+                                                    aria-disabled={subItem.disabled}
+                                                >
+                                                    <span className="dropdown-item-label">{subItem.label}</span>
+                                                    {subItem.shortcut && (
+                                                        <span className="dropdown-item-shortcut">{subItem.shortcut}</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 )}
                             </div>
                         );
