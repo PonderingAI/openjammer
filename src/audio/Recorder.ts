@@ -6,6 +6,7 @@
  */
 
 import { getAudioContext } from './AudioEngine';
+import { convertWebMToWAV } from './WavEncoder';
 
 // ============================================================================
 // Types
@@ -24,6 +25,54 @@ type TimeUpdateCallback = (time: number) => void;
 
 // Maximum number of recordings to keep in memory to prevent memory leaks
 const MAX_RECORDINGS = 50;
+
+// Interval in ms for collecting recording data chunks
+// Lower values = more responsive but higher overhead, higher values = more latency but efficient
+const RECORDING_CHUNK_INTERVAL_MS = 100;
+
+// Interval in ms for updating the recording time display
+const TIME_UPDATE_INTERVAL_MS = 100;
+
+// Maximum suffix attempts when checking for duplicate filenames
+const MAX_FILENAME_SUFFIX = 100;
+
+// Maximum filename length (Windows has 255 char limit for path components)
+const MAX_FILENAME_LENGTH = 200;
+
+// Windows reserved filenames that cannot be used
+const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+/**
+ * Sanitize a filename for safe filesystem usage
+ * Handles:
+ * - Unsafe characters removal
+ * - Leading/trailing dots and special chars
+ * - Windows reserved names
+ * - Length limits
+ */
+function sanitizeFilename(name: string, fallback = 'Recording'): string {
+    // Remove unsafe characters, keep alphanumeric, spaces, hyphens, underscores
+    let safe = name.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').trim();
+
+    // Remove leading/trailing dots, hyphens, and underscores
+    safe = safe.replace(/^[.\-_]+|[.\-_]+$/g, '');
+
+    // Handle Windows reserved names
+    if (WINDOWS_RESERVED_NAMES.test(safe)) {
+        safe = `file_${safe}`;
+    }
+
+    // Enforce length limit
+    if (safe.length > MAX_FILENAME_LENGTH) {
+        safe = safe.slice(0, MAX_FILENAME_LENGTH);
+        // Ensure we don't cut in the middle of a multi-byte sequence
+        // by trimming any trailing incomplete chars
+        safe = safe.replace(/[.\-_]+$/, '');
+    }
+
+    // Return fallback if empty after sanitization
+    return safe || fallback;
+}
 
 // ============================================================================
 // Recorder Class
@@ -130,7 +179,7 @@ export class Recorder {
             this.processRecording();
         };
 
-        this.mediaRecorder.start(100); // Collect data every 100ms
+        this.mediaRecorder.start(RECORDING_CHUNK_INTERVAL_MS);
 
         // Start time update interval
         this.timeUpdateInterval = window.setInterval(() => {
@@ -138,7 +187,7 @@ export class Recorder {
                 const elapsed = (Date.now() - this.startTime) / 1000;
                 this.onTimeUpdate?.(elapsed);
             }
-        }, 100);
+        }, TIME_UPDATE_INTERVAL_MS);
     }
 
     /**
@@ -191,81 +240,14 @@ export class Recorder {
 
     /**
      * Convert audio blob to WAV format
+     * Uses shared WavEncoder utility to avoid code duplication
      */
     private async convertToWav(blob: Blob): Promise<Blob> {
-        const ctx = getAudioContext();
-        if (!ctx) return blob;
-
         try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-            return this.audioBufferToWav(audioBuffer);
+            return await convertWebMToWAV(blob);
         } catch (e) {
             console.error('Failed to convert to WAV:', e);
             return blob; // Return original if conversion fails
-        }
-    }
-
-    /**
-     * Convert AudioBuffer to WAV Blob
-     */
-    private audioBufferToWav(buffer: AudioBuffer): Blob {
-        const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-
-        const bytesPerSample = bitDepth / 8;
-        const blockAlign = numChannels * bytesPerSample;
-
-        // Interleave channels
-        const length = buffer.length;
-        const interleaved = new Float32Array(length * numChannels);
-
-        for (let i = 0; i < length; i++) {
-            for (let channel = 0; channel < numChannels; channel++) {
-                const channelData = buffer.getChannelData(channel);
-                interleaved[i * numChannels + channel] = channelData[i];
-            }
-        }
-
-        // Convert to 16-bit PCM
-        const dataLength = interleaved.length * bytesPerSample;
-        const wavBuffer = new ArrayBuffer(44 + dataLength);
-        const view = new DataView(wavBuffer);
-
-        // WAV header
-        this.writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + dataLength, true);
-        this.writeString(view, 8, 'WAVE');
-        this.writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true); // Subchunk1Size
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bitDepth, true);
-        this.writeString(view, 36, 'data');
-        view.setUint32(40, dataLength, true);
-
-        // Write audio data
-        const offset = 44;
-        for (let i = 0; i < interleaved.length; i++) {
-            const sample = Math.max(-1, Math.min(1, interleaved[i]));
-            const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-            view.setInt16(offset + i * bytesPerSample, intSample, true);
-        }
-
-        return new Blob([wavBuffer], { type: 'audio/wav' });
-    }
-
-    /**
-     * Write string to DataView
-     */
-    private writeString(view: DataView, offset: number, str: string): void {
-        for (let i = 0; i < str.length; i++) {
-            view.setUint8(offset + i, str.charCodeAt(i));
         }
     }
 
@@ -307,18 +289,13 @@ export class Recorder {
                 .replace(/[:.]/g, '-')
                 .replace('T', '_')
                 .slice(0, 19);
-            // Sanitize name - remove unsafe chars, replace spaces with underscores
-            let safeName = recording.name.replace(/[^a-zA-Z0-9\s-_]/g, '').replace(/\s+/g, '_').trim();
-            // Fallback if name becomes empty after sanitization
-            if (!safeName) {
-                safeName = 'Recording';
-            }
+            // Sanitize name using comprehensive sanitization function
+            const safeName = sanitizeFilename(recording.name);
 
             // Generate unique filename - check for duplicates and add suffix if needed
             let filename = `${safeName}_${timestamp}.wav`;
             let suffix = 1;
-            const MAX_SUFFIX = 100; // Prevent infinite loop on filesystem issues
-            while (suffix < MAX_SUFFIX) {
+            while (suffix < MAX_FILENAME_SUFFIX) {
                 try {
                     // Check if file already exists
                     await recordingsDir.getFileHandle(filename, { create: false });

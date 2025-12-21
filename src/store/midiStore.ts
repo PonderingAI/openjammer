@@ -37,6 +37,9 @@ interface MIDIStoreState extends MIDIPersistedState {
     // Active subscriptions (deviceId -> unsubscribe function)
     subscriptions: Map<string, () => void>;
 
+    // Global subscription cleanup function
+    globalUnsubscribe: (() => void) | null;
+
     // Real-time data (use transient updates for high-frequency data)
     lastMessage: MIDIEvent | null;
 
@@ -53,6 +56,7 @@ interface MIDIStoreState extends MIDIPersistedState {
 interface MIDIStoreActions {
     // Initialization
     initialize: () => Promise<void>;
+    cleanup: () => void;
 
     // Device management
     subscribeToDevice: (deviceId: string, callback: (event: MIDIEvent) => void) => () => void;
@@ -103,6 +107,7 @@ export const useMIDIStore = create<MIDIStore>()(
                 inputs: new Map(),
                 outputs: new Map(),
                 subscriptions: new Map(),
+                globalUnsubscribe: null,
 
                 lastMessage: null,
 
@@ -151,14 +156,39 @@ export const useMIDIStore = create<MIDIStore>()(
 
             // Subscribe to ALL MIDI messages globally so lastMessage is always updated
             // This allows any component to use subscribeMIDIMessages to react to messages
-            manager.subscribeAll((event) => {
+            // Store the unsubscribe function to prevent memory leaks
+            const globalSubscription = manager.subscribeAll((event) => {
                 get().handleMIDIMessage(event);
             });
 
             set({
                 isInitialized: true,
                 inputs,
-                outputs
+                outputs,
+                globalUnsubscribe: globalSubscription.unsubscribe
+            });
+        },
+
+        cleanup: () => {
+            const state = get();
+
+            // Unsubscribe from global MIDI messages
+            if (state.globalUnsubscribe) {
+                state.globalUnsubscribe();
+            }
+
+            // Unsubscribe from all device-specific subscriptions
+            state.subscriptions.forEach((unsubscribe) => {
+                unsubscribe();
+            });
+
+            set({
+                isInitialized: false,
+                globalUnsubscribe: null,
+                subscriptions: new Map(),
+                inputs: new Map(),
+                outputs: new Map(),
+                lastMessage: null
             });
         },
 

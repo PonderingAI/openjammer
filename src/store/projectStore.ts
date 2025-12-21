@@ -95,6 +95,32 @@ const ENGINE_VERSION = '0.1.0';
 const PROJECT_FILE_NAME = 'project.openjammer';
 const RECENT_PROJECTS_KEY = 'openjammer-recent-projects';
 
+// Default viewport settings
+const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+
+/**
+ * Validate viewport data to prevent corrupted values from breaking the UI
+ */
+function validateViewport(viewport?: { x: number; y: number; zoom: number }): { x: number; y: number; zoom: number } {
+  if (!viewport) return DEFAULT_VIEWPORT;
+
+  const { x, y, zoom } = viewport;
+
+  // Check for invalid numbers (NaN, Infinity)
+  if (!isFinite(x) || !isFinite(y) || !isFinite(zoom)) {
+    console.warn('Invalid viewport data detected, using defaults:', viewport);
+    return DEFAULT_VIEWPORT;
+  }
+
+  // Zoom must be positive and within reasonable bounds
+  if (zoom <= 0 || zoom > 10) {
+    console.warn('Invalid zoom value detected, using defaults:', zoom);
+    return DEFAULT_VIEWPORT;
+  }
+
+  return { x, y, zoom };
+}
+
 // ============================================================================
 // Manifest Write Mutex - Prevents concurrent read-modify-write races
 // ============================================================================
@@ -514,9 +540,13 @@ export const useProjectStore = create<ProjectState>()(
           // Read current manifest
           const manifest = await readProjectManifest(handle);
 
-          // Update with new data
+          // Update with new data, validating viewport to prevent corrupted values
           manifest.modified = new Date().toISOString();
-          manifest.graph = graphData;
+          manifest.graph = {
+            nodes: graphData.nodes,
+            edges: graphData.edges,
+            viewport: validateViewport(graphData.viewport)
+          };
 
           // Write back
           await writeProjectManifest(handle, manifest);
@@ -632,9 +662,19 @@ export const useProjectStore = create<ProjectState>()(
 // Initialize on module load
 // ============================================================================
 
-// Load recent projects and reconnect sample library when store is first accessed
-if (typeof window !== 'undefined') {
-  const initializeProject = async () => {
+// Track initialization state to prevent race conditions
+let initializationPromise: Promise<void> | null = null;
+
+/**
+ * Ensure the project store is initialized.
+ * Safe to call multiple times - will only run once.
+ */
+export async function ensureProjectStoreInitialized(): Promise<void> {
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = (async () => {
     const state = useProjectStore.getState();
 
     // Load recent projects
@@ -655,7 +695,12 @@ if (typeof window !== 'undefined') {
         console.warn('Failed to reconnect project sample library:', err);
       }
     }
-  };
+  })();
 
-  initializeProject();
+  return initializationPromise;
+}
+
+// Auto-initialize when module loads in browser environment
+if (typeof window !== 'undefined') {
+  ensureProjectStoreInitialized();
 }
