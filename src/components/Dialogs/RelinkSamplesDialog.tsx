@@ -206,11 +206,20 @@ export function RelinkSamplesDialog({
   );
 }
 
-// Helper: Find a file by name in a directory (recursive)
+// Helper: Find a file by name in a directory (recursive with depth limit)
+const MAX_SEARCH_DEPTH = 50;
+
 async function findFileInDirectory(
   dirHandle: FileSystemDirectoryHandle,
-  fileName: string
+  fileName: string,
+  depth = 0
 ): Promise<FileSystemFileHandle | null> {
+  // Prevent stack overflow on deeply nested or cyclic directories
+  if (depth > MAX_SEARCH_DEPTH) {
+    console.warn(`[RelinkSamplesDialog] Max search depth ${MAX_SEARCH_DEPTH} reached`);
+    return null;
+  }
+
   // Type for iterator
   type FSEntry = FileSystemFileHandle | FileSystemDirectoryHandle;
 
@@ -226,7 +235,8 @@ async function findFileInDirectory(
     if (fsEntry.kind === 'directory') {
       const found = await findFileInDirectory(
         fsEntry as FileSystemDirectoryHandle,
-        fileName
+        fileName,
+        depth + 1
       );
       if (found) return found;
     }

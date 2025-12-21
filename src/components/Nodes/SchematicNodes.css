@@ -237,8 +237,22 @@
     padding: var(--space-md);
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: var(--space-sm);
+}
+
+/* Port rows in keyboard body - left-aligned labels, ports on right */
+.keyboard-schematic-body .port-row {
+    width: 100%;
+}
+
+.keyboard-schematic-body .port-row.output {
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+.keyboard-schematic-body .port-label {
+    text-align: left;
 }
 
 .keyboard-row-numbers {

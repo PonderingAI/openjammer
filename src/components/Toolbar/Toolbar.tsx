@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useRef, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useAudioStore } from '../../store/audioStore';
@@ -84,7 +85,7 @@ export function Toolbar() {
             loadGraph(importedNodes, importedConnections);
         } catch (err) {
             console.error('Failed to import workflow:', err);
-            alert('Failed to import workflow. Please check the file format.');
+            toast.error('Failed to import workflow. Please check the file format.');
         }
 
         e.target.value = '';
@@ -104,7 +105,7 @@ export function Toolbar() {
     // Project handlers
     const handleNewProject = useCallback(async () => {
         if (!projectIsSupported) {
-            alert('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
+            toast.error('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
             return;
         }
 
@@ -119,14 +120,14 @@ export function Toolbar() {
                 (err as Error).message !== 'Cancelled - folder already contains a project' &&
                 (err as DOMException).name !== 'AbortError') {
                 console.error('Failed to create project:', err);
-                alert('Failed to create project: ' + (err as Error).message);
+                toast.error(`Failed to create project: ${(err as Error).message}`);
             }
         }
     }, [projectIsSupported, createProject, clearGraph, resetView]);
 
     const handleOpenProject = useCallback(async () => {
         if (!projectIsSupported) {
-            alert('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
+            toast.error('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
             return;
         }
 
@@ -157,7 +158,7 @@ export function Toolbar() {
                     }
                 } else {
                     console.error('Failed to open project:', err);
-                    alert('Failed to open project: ' + message);
+                    toast.error(`Failed to open project: ${message}`);
                 }
             }
         }
@@ -179,7 +180,7 @@ export function Toolbar() {
             await saveProject(graphData);
         } catch (err) {
             console.error('Failed to save project:', err);
-            alert('Failed to save project: ' + (err as Error).message);
+            toast.error(`Failed to save project: ${(err as Error).message}`);
         }
     }, [projectName, nodes, connections, zoom, saveProject, handleNewProject]);
 
@@ -200,7 +201,7 @@ export function Toolbar() {
             resetView();
         } catch (err) {
             console.error('Failed to open recent project:', err);
-            alert('Failed to open project: ' + (err as Error).message);
+            toast.error(`Failed to open project: ${(err as Error).message}`);
         }
     }, [openRecentProject, loadGraph, clearGraph, resetView]);
 

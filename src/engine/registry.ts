@@ -158,7 +158,15 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         category: 'input',
         name: 'Midi',
         description: 'Connect MIDI controllers (keyboards, pads, knobs)',
-        defaultPorts: [], // Ports generated from preset via internal structure
+        defaultPorts: [
+            // Bundle outputs (expanded to per-control inside)
+            { id: 'keys', name: 'Keys', type: 'control', direction: 'output' },
+            { id: 'pads', name: 'Pads', type: 'control', direction: 'output' },
+            { id: 'knobs', name: 'Knobs', type: 'control', direction: 'output' },
+            { id: 'faders', name: 'Faders', type: 'control', direction: 'output' },
+            { id: 'pitch-bend', name: 'Pitch', type: 'control', direction: 'output' },
+            { id: 'mod-wheel', name: 'Mod', type: 'control', direction: 'output' },
+        ],
         defaultData: {
             deviceId: null,
             presetId: 'generic',
@@ -168,10 +176,11 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
             learnTarget: null,
             learnedMappings: {}
         },
-        dimensions: { width: 180, height: 140 },
+        dimensions: { width: 160, height: 200 },
+        canEnter: true,  // Press E to see per-control visual
         portLayout: {
             direction: 'vertical',
-            outputArea: { x: 1, startY: 0.15, endY: 0.85 }
+            outputArea: { x: 1, startY: 0.2, endY: 0.75 }
         }
     },
 
@@ -184,6 +193,74 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         defaultData: {},
         dimensions: { width: 400, height: 250 },
         canEnter: false  // Cannot enter this internal visual node
+    },
+
+    'minilab-3': {
+        type: 'minilab-3',
+        category: 'input',
+        name: 'MiniLab 3',
+        description: 'Arturia MiniLab 3 - 25 keys, 8 pads, 8 knobs, 4 faders',
+        defaultPorts: [
+            // 25 Keys (C3-C5, notes 48-72) - all output control signals (velocity 0-1)
+            { id: 'key-48', name: 'C3', type: 'control', direction: 'output' },
+            { id: 'key-49', name: 'C#3', type: 'control', direction: 'output' },
+            { id: 'key-50', name: 'D3', type: 'control', direction: 'output' },
+            { id: 'key-51', name: 'D#3', type: 'control', direction: 'output' },
+            { id: 'key-52', name: 'E3', type: 'control', direction: 'output' },
+            { id: 'key-53', name: 'F3', type: 'control', direction: 'output' },
+            { id: 'key-54', name: 'F#3', type: 'control', direction: 'output' },
+            { id: 'key-55', name: 'G3', type: 'control', direction: 'output' },
+            { id: 'key-56', name: 'G#3', type: 'control', direction: 'output' },
+            { id: 'key-57', name: 'A3', type: 'control', direction: 'output' },
+            { id: 'key-58', name: 'A#3', type: 'control', direction: 'output' },
+            { id: 'key-59', name: 'B3', type: 'control', direction: 'output' },
+            { id: 'key-60', name: 'C4', type: 'control', direction: 'output' },
+            { id: 'key-61', name: 'C#4', type: 'control', direction: 'output' },
+            { id: 'key-62', name: 'D4', type: 'control', direction: 'output' },
+            { id: 'key-63', name: 'D#4', type: 'control', direction: 'output' },
+            { id: 'key-64', name: 'E4', type: 'control', direction: 'output' },
+            { id: 'key-65', name: 'F4', type: 'control', direction: 'output' },
+            { id: 'key-66', name: 'F#4', type: 'control', direction: 'output' },
+            { id: 'key-67', name: 'G4', type: 'control', direction: 'output' },
+            { id: 'key-68', name: 'G#4', type: 'control', direction: 'output' },
+            { id: 'key-69', name: 'A4', type: 'control', direction: 'output' },
+            { id: 'key-70', name: 'A#4', type: 'control', direction: 'output' },
+            { id: 'key-71', name: 'B4', type: 'control', direction: 'output' },
+            { id: 'key-72', name: 'C5', type: 'control', direction: 'output' },
+            // 8 Pads - velocity sensitive (0-1)
+            { id: 'pad-1', name: 'Pad 1', type: 'control', direction: 'output' },
+            { id: 'pad-2', name: 'Pad 2', type: 'control', direction: 'output' },
+            { id: 'pad-3', name: 'Pad 3', type: 'control', direction: 'output' },
+            { id: 'pad-4', name: 'Pad 4', type: 'control', direction: 'output' },
+            { id: 'pad-5', name: 'Pad 5', type: 'control', direction: 'output' },
+            { id: 'pad-6', name: 'Pad 6', type: 'control', direction: 'output' },
+            { id: 'pad-7', name: 'Pad 7', type: 'control', direction: 'output' },
+            { id: 'pad-8', name: 'Pad 8', type: 'control', direction: 'output' },
+            // 8 Knobs - continuous (0-1)
+            { id: 'knob-1', name: 'Knob 1', type: 'control', direction: 'output' },
+            { id: 'knob-2', name: 'Knob 2', type: 'control', direction: 'output' },
+            { id: 'knob-3', name: 'Knob 3', type: 'control', direction: 'output' },
+            { id: 'knob-4', name: 'Knob 4', type: 'control', direction: 'output' },
+            { id: 'knob-5', name: 'Knob 5', type: 'control', direction: 'output' },
+            { id: 'knob-6', name: 'Knob 6', type: 'control', direction: 'output' },
+            { id: 'knob-7', name: 'Knob 7', type: 'control', direction: 'output' },
+            { id: 'knob-8', name: 'Knob 8', type: 'control', direction: 'output' },
+            // 4 Faders - continuous (0-1, 0 = bottom, 1 = top)
+            { id: 'fader-1', name: 'Fader 1', type: 'control', direction: 'output' },
+            { id: 'fader-2', name: 'Fader 2', type: 'control', direction: 'output' },
+            { id: 'fader-3', name: 'Fader 3', type: 'control', direction: 'output' },
+            { id: 'fader-4', name: 'Fader 4', type: 'control', direction: 'output' },
+            // Touch strips
+            { id: 'pitch-bend', name: 'Pitch', type: 'control', direction: 'output' },
+            { id: 'mod-wheel', name: 'Mod', type: 'control', direction: 'output' },
+        ],
+        defaultData: {
+            deviceId: null,
+            presetId: 'arturia-minilab-3',
+            isConnected: false,
+        },
+        dimensions: { width: 650, height: 400 },
+        canEnter: false  // Visual node - all controls are directly on the surface
     },
 
     // Instruments - all share similar layout: inputs on left, audio out on right

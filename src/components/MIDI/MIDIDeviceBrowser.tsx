@@ -42,6 +42,7 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
     }, [allPresets, searchQuery]);
 
     // Get connected devices with matched presets
+    // Group multiple ports from the same physical device into one entry
     const connectedDevices = useMemo(() => {
         const devices: Array<{
             deviceId: string;
@@ -50,12 +51,77 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
             isConnected: boolean;
         }> = [];
 
+        // Group devices by preset (physical device)
+        const devicesByPreset = new Map<string, Array<{
+            id: string;
+            name: string;
+            state: string;
+            isPreferred: boolean;
+        }>>();
+
+        // Devices without a matching preset
+        const genericDevices: Array<{
+            id: string;
+            name: string;
+            state: string;
+        }> = [];
+
         inputs.forEach((device) => {
             const matchedPreset = registry.matchDevice(device.name);
+
+            if (matchedPreset) {
+                // Group by preset ID (same physical device)
+                if (!devicesByPreset.has(matchedPreset.id)) {
+                    devicesByPreset.set(matchedPreset.id, []);
+                }
+
+                // Check if this is the preferred port
+                const isPreferred = matchedPreset.preferredPort
+                    ? device.name.includes(matchedPreset.preferredPort)
+                    : false;
+
+                devicesByPreset.get(matchedPreset.id)!.push({
+                    id: device.id,
+                    name: device.name,
+                    state: device.state,
+                    isPreferred
+                });
+            } else {
+                // No preset match - show as generic
+                genericDevices.push({
+                    id: device.id,
+                    name: device.name,
+                    state: device.state
+                });
+            }
+        });
+
+        // For each preset group, pick the best port and show as one device
+        devicesByPreset.forEach((ports, presetId) => {
+            const preset = registry.getPreset(presetId);
+            if (!preset) return;
+
+            // Pick preferred port, or first connected, or just first
+            const preferredPort = ports.find(p => p.isPreferred);
+            const connectedPort = ports.find(p => p.state === 'connected');
+            const bestPort = preferredPort || connectedPort || ports[0];
+
+            if (bestPort) {
+                devices.push({
+                    deviceId: bestPort.id,
+                    name: preset.name, // Use preset name, not port name
+                    presetId: presetId,
+                    isConnected: ports.some(p => p.state === 'connected')
+                });
+            }
+        });
+
+        // Add generic devices
+        genericDevices.forEach((device) => {
             devices.push({
                 deviceId: device.id,
                 name: device.name,
-                presetId: matchedPreset?.id || 'generic',
+                presetId: 'generic',
                 isConnected: device.state === 'connected'
             });
         });

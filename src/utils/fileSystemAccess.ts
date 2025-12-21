@@ -6,7 +6,7 @@
  * - Fallback to <input webkitdirectory> for Firefox/Safari
  */
 
-import { get, set, del } from 'idb-keyval';
+import { get, set, del, keys } from 'idb-keyval';
 
 // ============================================================================
 // Type Declarations for File System Access API
@@ -57,6 +57,10 @@ export interface WalkOptions {
   skipPatterns?: RegExp[];
   /** Progress callback */
   onProgress?: (current: number, total: number) => void;
+  /** Maximum directory depth to prevent stack overflow (default: 50) */
+  maxDepth?: number;
+  /** Estimated total for progress (use -1 for indeterminate) */
+  estimatedTotal?: number;
 }
 
 // ============================================================================
@@ -128,8 +132,6 @@ export async function removeHandle(name: string): Promise<void> {
  * List all stored handle names
  */
 export async function listStoredHandles(): Promise<string[]> {
-  // idb-keyval doesn't have keys() by default, use a workaround
-  const { keys } = await import('idb-keyval');
   const allKeys = await keys();
   return allKeys
     .filter((k): k is string =>
@@ -200,14 +202,59 @@ export async function selectLibraryFolder(): Promise<FileSystemDirectoryHandle> 
 }
 
 /**
+ * Fully decode a URL-encoded string (handles double/triple encoding)
+ */
+function fullyDecodeURIComponent(str: string): string {
+  let decoded = str;
+  let prev = '';
+  // Keep decoding until no change (handles %252e → %2e → .)
+  const maxIterations = 10; // Prevent infinite loop on malformed input
+  let iterations = 0;
+  while (decoded !== prev && iterations < maxIterations) {
+    prev = decoded;
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      // Invalid encoding, stop decoding
+      break;
+    }
+    iterations++;
+  }
+  return decoded;
+}
+
+/**
  * Get a file handle from a directory by path
  */
 export async function getFileByPath(
   rootHandle: FileSystemDirectoryHandle,
   relativePath: string
 ): Promise<FileSystemFileHandle | null> {
+  // Security: Block absolute paths
+  if (relativePath.startsWith('/') || relativePath.startsWith('\\')) {
+    console.warn('Absolute path blocked:', relativePath);
+    return null;
+  }
+
   const parts = relativePath.split('/').filter(Boolean);
   if (parts.length === 0) return null;
+
+  // Security: Block path traversal attempts (including encoded and Windows-style)
+  // Fully decode each part to catch double-encoded attacks (%252e → %2e → .)
+  if (parts.some(part => {
+    const decoded = fullyDecodeURIComponent(part);
+    return (
+      decoded === '..' ||
+      decoded === '.' ||
+      decoded.includes('\0') ||
+      decoded.includes('\\') ||           // Backslash
+      decoded.includes('/') ||            // Forward slash (was encoded)
+      /^[a-zA-Z]:/.test(decoded)          // Windows drive letter
+    );
+  })) {
+    console.warn('Path traversal attempt blocked:', relativePath);
+    return null;
+  }
 
   try {
     let currentHandle: FileSystemDirectoryHandle = rootHandle;
@@ -248,12 +295,20 @@ const AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac', '.aiff', '.aif', '.ogg', '.m4
 export async function* walkDirectory(
   handle: FileSystemDirectoryHandle,
   options: WalkOptions = {},
-  basePath = ''
+  basePath = '',
+  depth = 0
 ): AsyncGenerator<FileEntry> {
   const {
     extensions = AUDIO_EXTENSIONS,
     skipPatterns = [/^\./, /^__/, /node_modules/],
+    maxDepth = 50,
   } = options;
+
+  // Protection against infinite recursion
+  if (depth > maxDepth) {
+    console.warn(`Max depth ${maxDepth} reached at ${basePath}`);
+    return;
+  }
 
   for await (const entry of handle.values()) {
     // Cast to include kind and name (standard FileSystemHandle properties)
@@ -267,7 +322,7 @@ export async function* walkDirectory(
 
     if (fsEntry.kind === 'directory') {
       // Recursively walk subdirectories
-      yield* walkDirectory(fsEntry as FileSystemDirectoryHandle, options, relativePath);
+      yield* walkDirectory(fsEntry as FileSystemDirectoryHandle, options, relativePath, depth + 1);
     } else if (fsEntry.kind === 'file') {
       // Check extension
       const fileHandle = fsEntry as FileSystemFileHandle;
@@ -282,6 +337,8 @@ export async function* walkDirectory(
 
 /**
  * Count audio files in a directory (for progress estimation)
+ * Note: This iterates the entire tree. For large directories, consider using
+ * walkDirectoryWithProgress with estimatedTotal instead.
  */
 export async function countAudioFiles(
   handle: FileSystemDirectoryHandle,
@@ -295,21 +352,21 @@ export async function countAudioFiles(
 }
 
 /**
- * Walk directory with progress callback
+ * Walk directory with progress callback (single-pass for efficiency)
+ * Use estimatedTotal option for better progress indication without double-traversal.
+ * Pass -1 for estimatedTotal to indicate indeterminate progress.
  */
 export async function walkDirectoryWithProgress(
   handle: FileSystemDirectoryHandle,
   onFile: (entry: FileEntry, index: number, total: number) => Promise<void>,
   options: WalkOptions = {}
 ): Promise<number> {
-  // First pass: count files
-  const total = await countAudioFiles(handle, options);
+  const total = options.estimatedTotal ?? -1;
 
   if (options.onProgress) {
     options.onProgress(0, total);
   }
 
-  // Second pass: process files
   let index = 0;
   for await (const entry of walkDirectory(handle, options)) {
     await onFile(entry, index, total);
@@ -319,7 +376,7 @@ export async function walkDirectoryWithProgress(
     }
   }
 
-  return total;
+  return index;
 }
 
 // ============================================================================

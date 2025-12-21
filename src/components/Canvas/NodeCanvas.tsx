@@ -167,8 +167,19 @@ export function NodeCanvas() {
 
     // Handle MIDI device selection from browser
     const handleMIDIDeviceSelected = useCallback((deviceId: string | null, presetId: string) => {
-        if (midiNodePosition) {
-            // Create MIDI node with selected device/preset
+        // Check if browser was opened from an existing node
+        const targetNodeId = useMIDIStore.getState().browserTargetNodeId;
+
+        if (targetNodeId) {
+            // Update existing node with selected device
+            const updateNodeData = useGraphStore.getState().updateNodeData;
+            updateNodeData(targetNodeId, {
+                deviceId,
+                presetId,
+                isConnected: deviceId !== null
+            });
+        } else if (midiNodePosition) {
+            // Create new MIDI node with selected device/preset
             addNode('midi', midiNodePosition, currentViewNodeId, {
                 deviceId,
                 presetId,

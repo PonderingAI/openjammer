@@ -4,8 +4,10 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { toast } from 'sonner';
 import type { GraphNode } from '../../engine/types';
 import { useAudioStore } from '../../store/audioStore';
+import { useProjectStore } from '../../store/projectStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import type { Recording as AudioRecording } from '../../audio/Recorder';
 
@@ -18,14 +20,19 @@ interface RecordingState {
     name: string;
     duration: number;
     timestamp: number;
+    savedToProject?: boolean;
 }
 
 export function RecorderNode({ node }: RecorderNodeProps) {
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+    const projectName = useProjectStore((s) => s.name);
+    const getProjectHandle = useProjectStore((s) => s.getProjectHandle);
+    const addAudioFile = useProjectStore((s) => s.addAudioFile);
 
     const [isRecording, setIsRecording] = useState(false);
     const [recordings, setRecordings] = useState<RecordingState[]>([]);
     const [recordingTime, setRecordingTime] = useState(0);
+    const [isSaving, setIsSaving] = useState<string | null>(null);
 
     // Get the Recorder instance from AudioGraphManager
     const getRecorder = useCallback(() => {
@@ -109,6 +116,45 @@ export function RecorderNode({ node }: RecorderNodeProps) {
         setRecordings(prev => prev.filter(r => r.id !== recordingId));
     }, [getRecorder]);
 
+    // Save recording to project folder
+    const handleSaveToProject = useCallback(async (recordingId: string) => {
+        if (!projectName) {
+            toast.error('No project open. Create or open a project first.');
+            return;
+        }
+
+        const recorder = getRecorder();
+        if (!recorder) return;
+
+        setIsSaving(recordingId);
+        try {
+            const handle = await getProjectHandle();
+            if (!handle) {
+                toast.error('Could not access project folder. Please reopen the project.');
+                return;
+            }
+
+            const result = await recorder.saveRecordingToProject(recordingId, handle);
+            if (result) {
+                // Update manifest with recording metadata
+                await addAudioFile(recordingId, result);
+
+                // Mark as saved in local state
+                setRecordings(prev => prev.map(r =>
+                    r.id === recordingId ? { ...r, savedToProject: true } : r
+                ));
+                toast.success('Recording saved to project');
+            } else {
+                toast.error('Failed to save recording');
+            }
+        } catch (err) {
+            console.error('Failed to save recording:', err);
+            toast.error('Failed to save recording');
+        } finally {
+            setIsSaving(null);
+        }
+    }, [projectName, getRecorder, getProjectHandle, addAudioFile]);
+
     // Format time
     const formatTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
@@ -174,6 +220,25 @@ export function RecorderNode({ node }: RecorderNodeProps) {
                                 Recording {index + 1} ({formatTime(recording.duration)})
                             </span>
                             <div className="loop-actions">
+                                {projectName && !recording.savedToProject && (
+                                    <button
+                                        className="node-btn node-btn-success"
+                                        onClick={() => handleSaveToProject(recording.id)}
+                                        disabled={isSaving === recording.id}
+                                        style={{ padding: '2px 6px', fontSize: '10px' }}
+                                        title="Save to Project"
+                                    >
+                                        {isSaving === recording.id ? '...' : '📁'}
+                                    </button>
+                                )}
+                                {recording.savedToProject && (
+                                    <span
+                                        style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-success)' }}
+                                        title="Saved to project"
+                                    >
+                                        ✓
+                                    </span>
+                                )}
                                 <button
                                     className="node-btn node-btn-primary"
                                     onClick={() => handleDownload(recording.id)}

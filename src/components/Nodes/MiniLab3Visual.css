@@ -114,7 +114,8 @@
     height: 8px;
     background: linear-gradient(180deg, #7FB8A8 0%, #5A9E8D 100%);
     border-radius: 2px;
-    transition: bottom 0.05s ease-out, height 0.05s ease-out;
+    /* Minimal transition for near-instant response while avoiding jumpiness */
+    transition: bottom 0.016s linear;
     box-shadow: 0 0 6px rgba(127, 184, 168, 0.5);
 }
 
@@ -212,7 +213,8 @@
         0 3px 6px rgba(0, 0, 0, 0.4),
         inset 0 1px 0 rgba(255, 255, 255, 0.1);
     cursor: pointer;
-    transition: transform 0.05s;
+    /* Minimal transition for responsive real-time control */
+    transition: transform 0.016s linear;
 }
 
 .minilab3-knob-indicator {
@@ -271,7 +273,8 @@
     border-radius: 3px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
     cursor: pointer;
-    transition: bottom 0.05s ease-out;
+    /* Minimal transition for responsive real-time control */
+    transition: bottom 0.016s linear;
 }
 
 .minilab3-fader-label {
@@ -303,7 +306,8 @@
     border-radius: 5px;
     position: relative;
     cursor: pointer;
-    transition: all 0.05s;
+    /* Fast transition for responsive MIDI pad input */
+    transition: transform 0.016s linear, box-shadow 0.016s linear, border-color 0.016s linear;
     box-shadow:
         0 2px 4px rgba(0, 0, 0, 0.4),
         inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -317,19 +321,22 @@
     border-radius: 3px;
     background: var(--pad-color, #3B82F6);
     opacity: var(--pad-brightness, 0.3);
-    transition: opacity 0.05s;
+    /* Fast opacity transition for responsive glow */
+    transition: opacity 0.016s linear;
 }
 
 .minilab3-pad.active {
     transform: scale(0.95);
+    /* Pressure-based glow intensity */
     box-shadow:
         0 1px 2px rgba(0, 0, 0, 0.4),
-        0 0 15px var(--pad-color, #3B82F6);
+        0 0 calc(5px + var(--pad-brightness, 0.3) * 20px) var(--pad-color, #3B82F6);
     border-color: var(--pad-color, #3B82F6);
 }
 
 .minilab3-pad.active::before {
-    opacity: calc(0.6 + var(--pad-brightness, 0.5) * 0.4);
+    /* Direct use of brightness from velocity/pressure */
+    opacity: var(--pad-brightness, 0.5);
 }
 
 /* Branding row - above keyboard */
@@ -405,7 +412,8 @@
     position: absolute;
     top: 0;
     cursor: pointer;
-    transition: all 0.05s;
+    /* Fast transition for responsive MIDI key input */
+    transition: background 0.016s linear, box-shadow 0.016s linear, opacity 0.016s linear;
 }
 
 .minilab3-white-key {
@@ -481,4 +489,115 @@
     box-shadow:
         0 1px 3px rgba(0, 0, 0, 0.5),
         inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================================
+ * Port Markers - Small connection indicators on each control
+ * ============================================================================ */
+
+/* Base port marker style */
+.minilab3-control-port,
+.minilab3-key-port {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #1a1a1a;
+    border: 2px solid #666;
+    cursor: crosshair;
+    transition: all 0.15s ease;
+    z-index: 10;
+}
+
+.minilab3-control-port:hover,
+.minilab3-key-port:hover {
+    border-color: var(--accent-primary, #3B82F6);
+    transform: scale(1.3);
+    box-shadow: 0 0 8px var(--accent-primary, #3B82F6);
+}
+
+.minilab3-control-port.connected,
+.minilab3-key-port.connected {
+    background: var(--accent-primary, #3B82F6);
+    border-color: var(--accent-primary, #3B82F6);
+    box-shadow: 0 0 6px var(--accent-primary, #3B82F6);
+}
+
+/* Key port - positioned at bottom of each key */
+.minilab3-white-key .minilab3-key-port {
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.minilab3-black-key .minilab3-key-port {
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 6px;
+    height: 6px;
+    border-width: 1px;
+}
+
+/* Pad port - positioned at bottom-right corner */
+.minilab3-pad .minilab3-control-port {
+    bottom: 4px;
+    right: 4px;
+}
+
+/* Knob port - positioned below the knob cap */
+.minilab3-knob {
+    position: relative;
+}
+
+.minilab3-knob .minilab3-control-port {
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Fader port - positioned at the bottom */
+.minilab3-fader {
+    position: relative;
+}
+
+.minilab3-fader .minilab3-control-port {
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Touch strip port - positioned at the bottom of each strip */
+.minilab3-touch-strip {
+    position: relative;
+}
+
+.minilab3-touch-strip .strip-port {
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Interactive hover state for controls */
+.minilab3-pad:hover,
+.minilab3-knob:hover,
+.minilab3-fader:hover,
+.minilab3-touch-strip:hover,
+.minilab3-white-key:hover,
+.minilab3-black-key:hover {
+    cursor: crosshair;
+}
+
+/* Highlight control when being hovered for connection */
+.minilab3-pad:hover .minilab3-control-port,
+.minilab3-knob:hover .minilab3-control-port,
+.minilab3-fader:hover .minilab3-control-port,
+.minilab3-touch-strip:hover .minilab3-control-port,
+.minilab3-white-key:hover .minilab3-key-port,
+.minilab3-black-key:hover .minilab3-key-port {
+    border-color: var(--accent-primary, #3B82F6);
+    transform: translateX(-50%) scale(1.3);
+    box-shadow: 0 0 8px var(--accent-primary, #3B82F6);
 }

@@ -14,6 +14,7 @@ import { get as idbGet, set as idbSet } from 'idb-keyval';
 import {
   persistHandle,
   restoreHandle,
+  removeHandle,
   verifyPermission,
   isFileSystemAccessSupported,
 } from '../utils/fileSystemAccess';
@@ -61,6 +62,7 @@ export interface ProjectState {
   handleKey: string | null;
   hasUnsavedChanges: boolean;
   isLoading: boolean;
+  isSaving: boolean;
   error: string | null;
 
   // Feature detection
@@ -81,6 +83,7 @@ export interface ProjectState {
 
   // Internal
   getProjectHandle: () => Promise<FileSystemDirectoryHandle | null>;
+  addAudioFile: (fileId: string, fileInfo: { path: string; duration?: number; sampleRate?: number }) => Promise<void>;
   loadRecentProjects: () => Promise<void>;
 }
 
@@ -91,6 +94,17 @@ export interface ProjectState {
 const ENGINE_VERSION = '0.1.0';
 const PROJECT_FILE_NAME = 'project.openjammer';
 const RECENT_PROJECTS_KEY = 'openjammer-recent-projects';
+
+/**
+ * Generate a unique ID with fallback for non-secure contexts
+ */
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 
 // ============================================================================
 // Helper Functions
@@ -184,8 +198,14 @@ async function writeProjectManifest(
 ): Promise<void> {
   const fileHandle = await handle.getFileHandle(PROJECT_FILE_NAME, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(manifest, null, 2));
-  await writable.close();
+  try {
+    await writable.write(JSON.stringify(manifest, null, 2));
+    await writable.close();
+  } catch (err) {
+    // Abort the writable stream on error to prevent corruption
+    await writable.abort().catch(() => {});
+    throw err;
+  }
 }
 
 async function saveRecentProjects(projects: RecentProject[]): Promise<void> {
@@ -213,6 +233,7 @@ export const useProjectStore = create<ProjectState>()(
       handleKey: null,
       hasUnsavedChanges: false,
       isLoading: false,
+      isSaving: false,
       error: null,
       isSupported: isFileSystemAccessSupported(),
       recentProjects: [],
@@ -223,6 +244,11 @@ export const useProjectStore = create<ProjectState>()(
       createProject: async (name?: string) => {
         if (!isFileSystemAccessSupported()) {
           throw new Error('File System Access API not supported in this browser');
+        }
+
+        // Prevent concurrent operations
+        if (get().isLoading) {
+          throw new Error('Another operation is in progress');
         }
 
         set({ isLoading: true, error: null });
@@ -264,16 +290,23 @@ export const useProjectStore = create<ProjectState>()(
           await createProjectStructure(handle, projectName);
 
           // Persist handle
-          const handleKey = `project-${crypto.randomUUID()}`;
+          const handleKey = `project-${generateId()}`;
           await persistHandle(handleKey, handle);
 
-          // Update recent projects
+          // Update recent projects and clean up orphaned handles
           const recent = await loadRecentProjectsFromStorage();
           const filtered = recent.filter((p) => p.name !== projectName);
           const updated = [
             { name: projectName, handleKey, lastOpened: new Date().toISOString() },
             ...filtered,
           ].slice(0, 10);
+
+          // Clean up handles for projects being removed from recent list
+          const removed = recent.filter((p) => !updated.some(u => u.handleKey === p.handleKey));
+          for (const p of removed) {
+            await removeHandle(p.handleKey);
+          }
+
           await saveRecentProjects(updated);
 
           set({
@@ -303,6 +336,11 @@ export const useProjectStore = create<ProjectState>()(
           throw new Error('File System Access API not supported');
         }
 
+        // Prevent concurrent operations
+        if (get().isLoading) {
+          throw new Error('Another operation is in progress');
+        }
+
         set({ isLoading: true, error: null });
 
         try {
@@ -314,16 +352,23 @@ export const useProjectStore = create<ProjectState>()(
           const manifest = await readProjectManifest(handle);
 
           // Persist handle
-          const handleKey = `project-${crypto.randomUUID()}`;
+          const handleKey = `project-${generateId()}`;
           await persistHandle(handleKey, handle);
 
-          // Update recent projects
+          // Update recent projects and clean up orphaned handles
           const recent = await loadRecentProjectsFromStorage();
           const filtered = recent.filter((p) => p.name !== manifest.name);
           const updated = [
             { name: manifest.name, handleKey, lastOpened: new Date().toISOString() },
             ...filtered,
           ].slice(0, 10);
+
+          // Clean up handles for projects being removed from recent list
+          const removed = recent.filter((p) => !updated.some(u => u.handleKey === p.handleKey));
+          for (const p of removed) {
+            await removeHandle(p.handleKey);
+          }
+
           await saveRecentProjects(updated);
 
           set({
@@ -349,18 +394,34 @@ export const useProjectStore = create<ProjectState>()(
       // Open Recent Project
       // ========================================
       openRecentProject: async (project: RecentProject) => {
+        // Prevent concurrent operations
+        if (get().isLoading) {
+          throw new Error('Another operation is in progress');
+        }
+
         set({ isLoading: true, error: null });
 
         try {
           const handle = await restoreHandle(project.handleKey);
           if (!handle) {
+            // Clean up invalid handle
+            await removeHandle(project.handleKey);
             throw new Error('Project folder not found - it may have been moved or deleted');
+          }
+
+          // Validate handle is still valid (folder still exists)
+          try {
+            await handle.getDirectoryHandle('.', { create: false });
+          } catch {
+            // Handle is stale - clean it up
+            await removeHandle(project.handleKey);
+            throw new Error('Project folder no longer exists or was moved');
           }
 
           // Verify/request permission
           const hasPermission = await verifyPermission(handle, true, 'readwrite');
           if (!hasPermission) {
-            throw new Error('Permission denied - please grant access to the folder');
+            throw new Error('Permission denied. Please click the project button again to grant folder access.');
           }
 
           // Read manifest
@@ -398,32 +459,45 @@ export const useProjectStore = create<ProjectState>()(
       // Save Project
       // ========================================
       saveProject: async (graphData) => {
-        const { handleKey } = get();
+        const { handleKey, isSaving } = get();
+
+        // Prevent concurrent saves
+        if (isSaving) {
+          return;
+        }
+
         if (!handleKey) {
           throw new Error('No project open');
         }
 
-        const handle = await restoreHandle(handleKey);
-        if (!handle) {
-          throw new Error('Project folder not found');
+        set({ isSaving: true });
+
+        try {
+          const handle = await restoreHandle(handleKey);
+          if (!handle) {
+            throw new Error('Project folder not found');
+          }
+
+          const hasPermission = await verifyPermission(handle, true, 'readwrite');
+          if (!hasPermission) {
+            throw new Error('Permission denied. Please click save again to grant folder access.');
+          }
+
+          // Read current manifest
+          const manifest = await readProjectManifest(handle);
+
+          // Update with new data
+          manifest.modified = new Date().toISOString();
+          manifest.graph = graphData;
+
+          // Write back
+          await writeProjectManifest(handle, manifest);
+
+          set({ hasUnsavedChanges: false, isSaving: false });
+        } catch (err) {
+          set({ isSaving: false });
+          throw err;
         }
-
-        const hasPermission = await verifyPermission(handle, true, 'readwrite');
-        if (!hasPermission) {
-          throw new Error('Permission denied');
-        }
-
-        // Read current manifest
-        const manifest = await readProjectManifest(handle);
-
-        // Update with new data
-        manifest.modified = new Date().toISOString();
-        manifest.graph = graphData;
-
-        // Write back
-        await writeProjectManifest(handle, manifest);
-
-        set({ hasUnsavedChanges: false });
       },
 
       // ========================================
@@ -466,6 +540,37 @@ export const useProjectStore = create<ProjectState>()(
         if (!hasPermission) return null;
 
         return handle;
+      },
+
+      // ========================================
+      // Add Audio File to Manifest
+      // ========================================
+      addAudioFile: async (fileId: string, fileInfo: { path: string; duration?: number; sampleRate?: number }) => {
+        const { handleKey } = get();
+        if (!handleKey) {
+          throw new Error('No project open');
+        }
+
+        const handle = await restoreHandle(handleKey);
+        if (!handle) {
+          throw new Error('Project folder not found');
+        }
+
+        const hasPermission = await verifyPermission(handle, true, 'readwrite');
+        if (!hasPermission) {
+          throw new Error('Permission denied');
+        }
+
+        // Read current manifest
+        const manifest = await readProjectManifest(handle);
+
+        // Update audioFiles
+        manifest.audioFiles = manifest.audioFiles || {};
+        manifest.audioFiles[fileId] = fileInfo;
+        manifest.modified = new Date().toISOString();
+
+        // Write back
+        await writeProjectManifest(handle, manifest);
       },
 
       // ========================================

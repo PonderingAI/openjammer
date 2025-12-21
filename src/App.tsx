@@ -3,6 +3,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { Toaster } from 'sonner';
 import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
@@ -95,32 +96,21 @@ function App() {
   const saveProject = useProjectStore((s) => s.saveProject);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSaveHashRef = useRef<string>('');
+  const lastVersionRef = useRef<number>(useGraphStore.getState().version);
   const isSavingRef = useRef(false);
 
-  // Autosave when graph changes (debounced) - using subscription to avoid re-renders
+  // Autosave when graph changes (debounced) - using version counter for efficient change detection
   useEffect(() => {
     // Only autosave if a project is open
     if (!projectName || !projectHandleKey) return;
 
-    // Initialize hash with current state to prevent immediate save on load
-    if (!lastSaveHashRef.current) {
-      const initialHash = JSON.stringify({
-        nodes: Array.from(useGraphStore.getState().nodes.values()),
-        edges: Array.from(useGraphStore.getState().connections.values()),
-      });
-      lastSaveHashRef.current = initialHash;
-    }
+    // Initialize version ref with current state
+    lastVersionRef.current = useGraphStore.getState().version;
 
     // Subscribe to graph changes
     const unsubscribe = useGraphStore.subscribe((state) => {
-      const currentHash = JSON.stringify({
-        nodes: Array.from(state.nodes.values()),
-        edges: Array.from(state.connections.values()),
-      });
-
-      // Skip if nothing changed
-      if (currentHash === lastSaveHashRef.current) return;
+      // Skip if version hasn't changed (efficient O(1) check vs O(n) JSON.stringify)
+      if (state.version === lastVersionRef.current) return;
 
       // Clear existing timeout
       if (saveTimeoutRef.current) {
@@ -130,6 +120,9 @@ function App() {
       // Debounced save (3 seconds after last change)
       saveTimeoutRef.current = setTimeout(async () => {
         if (isSavingRef.current) return;
+
+        const currentVersion = useGraphStore.getState().version;
+        if (currentVersion === lastVersionRef.current) return;
 
         isSavingRef.current = true;
         try {
@@ -143,7 +136,7 @@ function App() {
             },
           };
           await saveProject(graphData);
-          lastSaveHashRef.current = currentHash;
+          lastVersionRef.current = currentVersion;
           console.log('[Autosave] Project saved');
         } catch (err) {
           console.error('[Autosave] Failed:', err);
@@ -161,20 +154,17 @@ function App() {
     };
   }, [projectName, projectHandleKey, saveProject]);
 
-  // Periodic backup save every 30 seconds (checks if hash changed)
+  // Periodic backup save every 30 seconds (checks if version changed)
   useEffect(() => {
     if (!projectName || !projectHandleKey) return;
 
     const interval = setInterval(async () => {
       if (isSavingRef.current) return;
 
-      const currentHash = JSON.stringify({
-        nodes: Array.from(useGraphStore.getState().nodes.values()),
-        edges: Array.from(useGraphStore.getState().connections.values()),
-      });
+      const currentVersion = useGraphStore.getState().version;
 
       // Skip if nothing changed since last save
-      if (currentHash === lastSaveHashRef.current) return;
+      if (currentVersion === lastVersionRef.current) return;
 
       isSavingRef.current = true;
       try {
@@ -188,7 +178,7 @@ function App() {
           },
         };
         await saveProject(graphData);
-        lastSaveHashRef.current = currentHash;
+        lastVersionRef.current = currentVersion;
         console.log('[Autosave] Periodic backup saved');
       } catch (err) {
         console.error('[Autosave] Periodic backup failed:', err);
@@ -206,13 +196,16 @@ function App() {
 
     const handleVisibilityChange = async () => {
       if (document.hidden && !isSavingRef.current) {
-        const currentHash = JSON.stringify({
-          nodes: Array.from(useGraphStore.getState().nodes.values()),
-          edges: Array.from(useGraphStore.getState().connections.values()),
-        });
+        // Set flag immediately to prevent race conditions
+        isSavingRef.current = true;
+
+        const currentVersion = useGraphStore.getState().version;
 
         // Skip if nothing changed since last save
-        if (currentHash === lastSaveHashRef.current) return;
+        if (currentVersion === lastVersionRef.current) {
+          isSavingRef.current = false;
+          return;
+        }
 
         // Save immediately when tab is hidden
         try {
@@ -226,10 +219,12 @@ function App() {
             },
           };
           await saveProject(graphData);
-          lastSaveHashRef.current = currentHash;
+          lastVersionRef.current = currentVersion;
           console.log('[Autosave] Saved on tab switch');
         } catch (err) {
           console.error('[Autosave] Failed on tab switch:', err);
+        } finally {
+          isSavingRef.current = false;
         }
       }
     };
@@ -237,6 +232,33 @@ function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [projectName, projectHandleKey, saveProject]);
+
+  // Emergency backup on beforeunload (tab close/refresh)
+  useEffect(() => {
+    if (!projectName || !projectHandleKey) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const currentVersion = useGraphStore.getState().version;
+      if (currentVersion !== lastVersionRef.current) {
+        // Emergency backup to localStorage
+        try {
+          localStorage.setItem('openjammer-emergency-backup', JSON.stringify({
+            timestamp: Date.now(),
+            projectName,
+            nodes: Array.from(useGraphStore.getState().nodes.values()),
+            edges: Array.from(useGraphStore.getState().connections.values()),
+          }));
+        } catch {
+          // Ignore storage errors
+        }
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [projectName, projectHandleKey]);
 
   // Initialize audio context on user gesture
   const handleActivate = useCallback(async () => {
@@ -285,6 +307,9 @@ function App() {
 
       {/* Help Panel */}
       <HelpPanel />
+
+      {/* Toast Notifications */}
+      <Toaster position="bottom-right" richColors />
     </>
   );
 }

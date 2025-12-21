@@ -87,8 +87,9 @@ export type NodeType =
     | 'keyboard-visual' // Visual keyboard with per-key outputs (internal node)
     | 'instrument-visual' // Visual instrument with row configuration (internal node)
     | 'microphone'
-    | 'midi'            // MIDI input device
+    | 'midi'            // MIDI input device (generic)
     | 'midi-visual'     // Visual MIDI device representation (internal node)
+    | 'minilab-3'       // Arturia MiniLab 3 with per-control outputs
     | 'piano'
     | 'cello'
     | 'electricCello'

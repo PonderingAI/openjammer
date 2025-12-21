@@ -53,11 +53,18 @@ export interface LibrarySample extends SampleMetadata {
   handleKey?: string;
 }
 
-// Waveform storage (separate from metadata for efficiency)
+// Storage prefixes for IndexedDB keys
 const WAVEFORM_PREFIX = 'openjammer-waveform-';
+const SAMPLE_HANDLE_PREFIX = 'openjammer-sample-handle-';
 
 async function storeWaveform(sampleId: string, peaks: Float32Array): Promise<void> {
   await idbSet(WAVEFORM_PREFIX + sampleId, peaksToBase64(peaks));
+}
+
+async function storeSampleHandle(sampleId: string, handle: FileSystemFileHandle): Promise<string> {
+  const key = SAMPLE_HANDLE_PREFIX + sampleId;
+  await idbSet(key, handle);
+  return key;
 }
 
 export async function getWaveform(sampleId: string): Promise<string | null> {
@@ -212,16 +219,43 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
       },
 
       scanLibrary: async (libraryId: string, generateWaveforms = true) => {
-        const library = get().libraries[libraryId];
-        if (!library) return;
+        // Atomically check and set scanning status to prevent race conditions
+        const libraryExists = get().libraries[libraryId];
+        if (!libraryExists) return;
 
-        // Restore handle
-        const handle = await restoreHandle(library.handleKey);
+        // Prevent concurrent scans on the same library
+        if (libraryExists.status === 'scanning') {
+          console.warn(`[SampleLibrary] Library ${libraryId} is already being scanned`);
+          return;
+        }
+
+        // Set status to scanning BEFORE any async work to close race window
+        set(state => ({
+          libraries: {
+            ...state.libraries,
+            [libraryId]: { ...state.libraries[libraryId], status: 'scanning' },
+          },
+        }));
+        // Note: From here on, always use state.libraries[libraryId] in set() callbacks
+        // to get the fresh library reference and avoid stale data
+
+        // Restore handle - use fresh library reference to get handleKey
+        const handleKey = get().libraries[libraryId]?.handleKey;
+        if (!handleKey) {
+          set(state => ({
+            libraries: {
+              ...state.libraries,
+              [libraryId]: { ...state.libraries[libraryId], status: 'error', errorMessage: 'Library not found' },
+            },
+          }));
+          return;
+        }
+        const handle = await restoreHandle(handleKey);
         if (!handle) {
           set(state => ({
             libraries: {
               ...state.libraries,
-              [libraryId]: { ...library, status: 'error', errorMessage: 'Handle not found' },
+              [libraryId]: { ...state.libraries[libraryId], status: 'error', errorMessage: 'Handle not found' },
             },
           }));
           return;
@@ -233,28 +267,31 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
           set(state => ({
             libraries: {
               ...state.libraries,
-              [libraryId]: { ...library, status: 'permission_needed' },
+              [libraryId]: { ...state.libraries[libraryId], status: 'permission_needed' },
             },
           }));
           return;
         }
 
-        // Start scanning
-        set(state => ({
-          libraries: {
-            ...state.libraries,
-            [libraryId]: { ...library, status: 'scanning' },
-          },
+        // Initialize scan progress (status already set to 'scanning' above)
+        set({
           scanProgress: {
             libraryId,
             current: 0,
             total: 0,
             phase: 'counting',
           },
-        }));
+        });
 
         const newSamples: Record<string, LibrarySample> = {};
         let audioContext: AudioContext | null = null;
+
+        // Track written data for cleanup on error
+        const writtenHandleKeys: string[] = [];
+        const writtenWaveformIds: string[] = [];
+
+        // Track per-sample errors for debugging
+        const sampleErrors: Array<{ file: string; error: string }> = [];
 
         try {
           // Get audio context for waveform generation
@@ -276,33 +313,47 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
                 },
               });
 
-              // Create sample metadata
-              const sampleId = crypto.randomUUID();
-              const metadata = await createSampleMetadata(
-                sampleId,
-                entry.file,
-                entry.relativePath,
-                libraryId
-              );
+              // Wrap per-sample processing to continue on individual errors
+              try {
+                // Create sample metadata
+                const sampleId = crypto.randomUUID();
+                const metadata = await createSampleMetadata(
+                  sampleId,
+                  entry.file,
+                  entry.relativePath,
+                  libraryId
+                );
 
-              // Store file handle for later access
-              const handleKey = `sample-${sampleId}`;
-              await idbSet(handleKey, entry.handle);
+                // Store file handle for later access (using consistent prefix)
+                const handleKey = await storeSampleHandle(sampleId, entry.handle);
+                writtenHandleKeys.push(handleKey);
 
-              // Generate waveform
-              if (generateWaveforms && audioContext) {
-                const peaks = await generateWaveformFromFile(entry.file, audioContext, 100);
-                if (peaks) {
-                  await storeWaveform(sampleId, peaks);
-                  metadata.hasWaveform = true;
+                // Generate waveform
+                if (generateWaveforms && audioContext) {
+                  try {
+                    const peaks = await generateWaveformFromFile(entry.file, audioContext, 100);
+                    if (peaks) {
+                      await storeWaveform(sampleId, peaks);
+                      writtenWaveformIds.push(sampleId);
+                      metadata.hasWaveform = true;
+                    }
+                  } catch (waveformError) {
+                    // Waveform generation failed - continue without waveform
+                    console.warn(`[SampleLibrary] Waveform failed for ${entry.relativePath}:`, waveformError);
+                  }
                 }
-              }
 
-              newSamples[sampleId] = {
-                ...metadata,
-                status: 'available',
-                handleKey,
-              };
+                newSamples[sampleId] = {
+                  ...metadata,
+                  status: 'available',
+                  handleKey,
+                };
+              } catch (sampleError) {
+                // Log error but continue scanning
+                const errorMessage = sampleError instanceof Error ? sampleError.message : 'Unknown error';
+                sampleErrors.push({ file: entry.relativePath, error: errorMessage });
+                console.warn(`[SampleLibrary] Failed to process ${entry.relativePath}:`, sampleError);
+              }
             },
             {
               onProgress: (current, total) => {
@@ -318,15 +369,21 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
             }
           );
 
-          // Update state with all new samples
+          // Log summary of errors if any
+          if (sampleErrors.length > 0) {
+            console.warn(`[SampleLibrary] ${sampleErrors.length} files failed to process:`, sampleErrors);
+          }
+
+          // Update state with all new samples - use fresh library reference
           set(state => ({
             libraries: {
               ...state.libraries,
               [libraryId]: {
-                ...library,
+                ...state.libraries[libraryId],
                 status: 'ready',
                 lastScanAt: Date.now(),
                 sampleCount: Object.keys(newSamples).length,
+                errorMessage: undefined, // Clear any previous error
               },
             },
             samples: { ...state.samples, ...newSamples },
@@ -334,11 +391,19 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
           }));
         } catch (error) {
           console.error('Scan failed:', error);
+
+          // Clean up orphaned handles and waveforms
+          await Promise.all([
+            ...writtenHandleKeys.map(k => idbDel(k).catch(() => {})),
+            ...writtenWaveformIds.map(id => idbDel(WAVEFORM_PREFIX + id).catch(() => {})),
+          ]);
+
+          // Use fresh library reference in set() callback
           set(state => ({
             libraries: {
               ...state.libraries,
               [libraryId]: {
-                ...library,
+                ...state.libraries[libraryId],
                 status: 'error',
                 errorMessage: error instanceof Error ? error.message : 'Scan failed',
               },
@@ -349,20 +414,38 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
       },
 
       rescanLibrary: async (libraryId: string) => {
+        // Check library exists first
+        if (!get().libraries[libraryId]) {
+          console.warn(`[SampleLibrary] Cannot rescan: library ${libraryId} not found`);
+          return;
+        }
+
         // Remove existing samples for this library
         const samplesToRemove = Object.values(get().samples)
-          .filter(s => s.libraryId === libraryId)
-          .map(s => s.id);
+          .filter(s => s.libraryId === libraryId);
+
+        // Clean up waveforms and handles from IndexedDB before rescanning
+        // Wrap in try/catch so cleanup errors don't prevent rescan
+        try {
+          await Promise.all(
+            samplesToRemove.flatMap(sample => [
+              idbDel(WAVEFORM_PREFIX + sample.id).catch(() => {}),
+              ...(sample.handleKey ? [idbDel(sample.handleKey).catch(() => {})] : []),
+            ])
+          );
+        } catch (cleanupError) {
+          console.warn('[SampleLibrary] Error during cleanup, continuing with rescan:', cleanupError);
+        }
 
         set(state => {
           const newSamples = { ...state.samples };
-          for (const sampleId of samplesToRemove) {
-            delete newSamples[sampleId];
+          for (const sample of samplesToRemove) {
+            delete newSamples[sample.id];
           }
           return { samples: newSamples };
         });
 
-        // Scan again
+        // Scan again - scanLibrary handles its own errors
         await get().scanLibrary(libraryId);
       },
 
@@ -440,13 +523,12 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
           return missingSampleIds;
         }
 
-        // Check each sample
-        const missingSampleIds: string[] = [];
+        // Check each sample in parallel (batched to avoid overwhelming the file system)
         const samples = Object.values(get().samples).filter(s => s.libraryId === libraryId);
+        const BATCH_SIZE = 50;
 
-        for (const sample of samples) {
+        const checkSample = async (sample: LibrarySample): Promise<string | null> => {
           try {
-            // Try to access the file
             const parts = sample.relativePath.split('/').filter(Boolean);
             let current: FileSystemDirectoryHandle = handle;
 
@@ -457,9 +539,18 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
 
             // Try to get file
             await current.getFileHandle(parts[parts.length - 1]);
+            return null; // File exists
           } catch {
-            missingSampleIds.push(sample.id);
+            return sample.id; // File missing
           }
+        };
+
+        // Process in batches to avoid overwhelming the file system
+        const missingSampleIds: string[] = [];
+        for (let i = 0; i < samples.length; i += BATCH_SIZE) {
+          const batch = samples.slice(i, i + BATCH_SIZE);
+          const results = await Promise.all(batch.map(checkSample));
+          missingSampleIds.push(...results.filter((id): id is string => id !== null));
         }
 
         // Update sample statuses
@@ -482,12 +573,19 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
       relinkSample: async (sampleId: string, newHandle: FileSystemFileHandle) => {
         const file = await newHandle.getFile();
 
-        // Update handle in IndexedDB
-        const handleKey = `sample-${sampleId}`;
-        await idbSet(handleKey, newHandle);
+        // Get the old handle key to clean up orphaned data
+        const sample = get().samples[sampleId];
+        const oldHandleKey = sample?.handleKey;
+
+        // Update handle in IndexedDB (using consistent prefix)
+        const handleKey = await storeSampleHandle(sampleId, newHandle);
+
+        // Clean up old handle if it's different from the new one
+        if (oldHandleKey && oldHandleKey !== handleKey) {
+          await idbDel(oldHandleKey).catch(() => {});
+        }
 
         // Update sample metadata
-        const sample = get().samples[sampleId];
         if (sample) {
           get().updateSample(sampleId, {
             fileName: file.name,
@@ -656,11 +754,14 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
             selectedLibraryId: id,
           }));
 
-          // Auto-scan the library
-          // Use setTimeout to avoid blocking the UI
-          setTimeout(() => {
-            get().scanLibrary(id, true);
-          }, 100);
+          // Auto-scan the library and await completion
+          // This allows callers to know when scan is done
+          try {
+            await get().scanLibrary(id, true);
+          } catch (scanError) {
+            console.warn('[SampleLibrary] Project library scan failed:', scanError);
+            // Don't fail the whole operation - library is still registered
+          }
 
           return id;
         } catch (error) {

@@ -22,6 +22,9 @@ export interface Recording {
 type RecordingCallback = (recording: Recording) => void;
 type TimeUpdateCallback = (time: number) => void;
 
+// Maximum number of recordings to keep in memory to prevent memory leaks
+const MAX_RECORDINGS = 50;
+
 // ============================================================================
 // Recorder Class
 // ============================================================================
@@ -174,6 +177,15 @@ export class Recorder {
         };
 
         this.recordings.push(recording);
+
+        // Enforce memory limit - remove oldest recordings if we exceed the limit
+        while (this.recordings.length > MAX_RECORDINGS) {
+            const removed = this.recordings.shift();
+            if (removed) {
+                console.warn(`[Recorder] Removed old recording "${removed.name}" to stay under memory limit`);
+            }
+        }
+
         this.onRecordingComplete?.(recording);
     }
 
@@ -272,6 +284,85 @@ export class Recorder {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+    /**
+     * Save a recording to the project folder
+     * Returns the relative path of the saved file, or null on failure
+     */
+    async saveRecordingToProject(
+        recordingId: string,
+        projectHandle: FileSystemDirectoryHandle
+    ): Promise<{ path: string; duration: number; sampleRate: number } | null> {
+        const recording = this.recordings.find(r => r.id === recordingId);
+        if (!recording) return null;
+
+        try {
+            // Navigate to audio/recordings folder
+            const audioDir = await projectHandle.getDirectoryHandle('audio', { create: true });
+            const recordingsDir = await audioDir.getDirectoryHandle('recordings', { create: true });
+
+            // Generate filename with timestamp
+            const timestamp = new Date(recording.timestamp).toISOString()
+                .replace(/[:.]/g, '-')
+                .replace('T', '_')
+                .slice(0, 19);
+            // Sanitize name - remove unsafe chars, replace spaces with underscores
+            let safeName = recording.name.replace(/[^a-zA-Z0-9\s-_]/g, '').replace(/\s+/g, '_').trim();
+            // Fallback if name becomes empty after sanitization
+            if (!safeName) {
+                safeName = 'Recording';
+            }
+
+            // Generate unique filename - check for duplicates and add suffix if needed
+            let filename = `${safeName}_${timestamp}.wav`;
+            let suffix = 1;
+            const MAX_SUFFIX = 100; // Prevent infinite loop on filesystem issues
+            while (suffix < MAX_SUFFIX) {
+                try {
+                    // Check if file already exists
+                    await recordingsDir.getFileHandle(filename, { create: false });
+                    // File exists, try with suffix
+                    suffix++;
+                    filename = `${safeName}_${timestamp}_${suffix}.wav`;
+                } catch {
+                    // File doesn't exist, we can use this name
+                    break;
+                }
+            }
+
+            // Create and write file
+            const fileHandle = await recordingsDir.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            try {
+                await writable.write(recording.blob);
+                await writable.close();
+            } catch (err) {
+                await writable.abort().catch(() => {});
+                throw err;
+            }
+
+            // Get audio info for manifest
+            const ctx = getAudioContext();
+            const sampleRate = ctx?.sampleRate ?? 44100;
+
+            return {
+                path: `audio/recordings/${filename}`,
+                duration: recording.duration,
+                sampleRate
+            };
+        } catch (err) {
+            console.error('[Recorder] Failed to save to project:', err);
+            return null;
+        }
+    }
+
+    /**
+     * Get a recording blob by ID (for external save operations)
+     */
+    getRecordingBlob(recordingId: string): Blob | null {
+        const recording = this.recordings.find(r => r.id === recordingId);
+        return recording?.blob ?? null;
     }
 
     /**

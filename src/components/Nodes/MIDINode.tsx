@@ -6,13 +6,18 @@
  * Falls back to generic mode for unknown devices
  *
  * Design: Hierarchical node with internal canvas structure
- * Press E to dive into internal canvas and see MIDI routing
+ * Press E to dive into internal canvas and see per-control routing
+ *
+ * Outer view: Shows preset name, connect button, and bundle outputs
+ * Inner view: Shows full visual with per-control ports
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import type { GraphNode, MIDIInputNodeData } from '../../engine/types';
 import { useMIDIStore } from '../../store/midiStore';
+import { useGraphStore } from '../../store/graphStore';
 import { getPresetRegistry } from '../../midi';
+import './MIDINode.css';
 
 interface MIDINodeProps {
     node: GraphNode;
@@ -57,7 +62,7 @@ export function MIDINode({
     // Get preset info
     const registry = getPresetRegistry();
     const preset = data.presetId ? registry.getPreset(data.presetId) : null;
-    const presetName = preset?.name ?? 'Generic MIDI';
+    const presetName = preset?.name ?? 'MIDI';
 
     // Get connected device info
     const connectedDevice = data.deviceId ? inputs.get(data.deviceId) : null;
@@ -70,11 +75,29 @@ export function MIDINode({
         }
     }, [isSupported, isInitialized, initialize]);
 
-    // Handle clicking on the device area to open browser
-    const handleDeviceClick = useCallback((e: React.MouseEvent) => {
+    // Track if we've propagated the deviceId on mount
+    const hasPropagedOnMount = useRef(false);
+
+    // Re-propagate deviceId to children on mount (handles page reload case)
+    // This ensures internal midi-visual nodes get the deviceId even if it wasn't saved
+    useEffect(() => {
+        if (hasPropagedOnMount.current) return;
+        if (!data.deviceId || !node.childIds.length) return;
+
+        // Trigger updateNodeData to propagate deviceId to children
+        const updateNodeData = useGraphStore.getState().updateNodeData;
+        updateNodeData(node.id, {
+            deviceId: data.deviceId,
+            presetId: data.presetId
+        });
+        hasPropagedOnMount.current = true;
+    }, [node.id, node.childIds.length, data.deviceId, data.presetId]);
+
+    // Handle clicking connect button to open browser
+    const handleConnectClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
-        openBrowser();
-    }, [openBrowser]);
+        openBrowser(node.id);  // Pass node ID so browser knows which node to update
+    }, [openBrowser, node.id]);
 
     // Don't render if Web MIDI not supported
     if (!isSupported) {
@@ -86,7 +109,7 @@ export function MIDINode({
                 onMouseLeave={handleNodeMouseLeave}
             >
                 <div className="schematic-header" onMouseDown={handleHeaderMouseDown}>
-                    <span className="schematic-title">MIDI Input</span>
+                    <span className="schematic-title">{presetName}</span>
                 </div>
                 <div className="midi-unsupported-message">
                     <span>Web MIDI not supported</span>
@@ -98,104 +121,50 @@ export function MIDINode({
 
     return (
         <div
-            className={`midi-node schematic-node ${isConnected ? 'connected' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`midi-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
             style={style}
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
         >
-            {/* Header */}
+            {/* Header with preset name */}
             <div
                 className="schematic-header"
                 onMouseDown={handleHeaderMouseDown}
             >
-                <span className="schematic-title">MIDI</span>
-                {/* Connection status indicator */}
-                <div
-                    className={`midi-status-dot ${isConnected ? 'connected' : 'disconnected'}`}
-                    title={isConnected ? 'Device connected' : 'No device connected'}
-                />
+                <span className="schematic-title">{presetName}</span>
             </div>
 
-            {/* Device selector area */}
-            <div
-                className="midi-device-area"
-                onClick={handleDeviceClick}
-                title="Click to select MIDI device"
-            >
-                {connectedDevice ? (
-                    <>
-                        <span className="midi-device-name">{connectedDevice.name}</span>
-                        <span className="midi-preset-name">{presetName}</span>
-                    </>
-                ) : (
-                    <span className="midi-no-device">Click to select device</span>
+            {/* Body - matches keyboard node style */}
+            <div className="keyboard-schematic-body">
+                {/* Connect button - only shows when not connected */}
+                {!isConnected && (
+                    <button
+                        className="midi-connect-btn"
+                        onClick={handleConnectClick}
+                        title="Connect MIDI device"
+                    >
+                        Connect
+                    </button>
                 )}
-            </div>
 
-            {/* Body - Show auto-generated ports from internal canvas */}
-            <div className="midi-schematic-body">
-                {node.ports.length === 0 ? (
-                    <div className="midi-no-ports">
-                        <span>No outputs configured</span>
+                {/* Render ports dynamically (auto-synced from internal canvas-input/output nodes) */}
+                {node.ports.map((port) => (
+                    <div key={port.id} className={`port-row ${port.direction}`}>
+                        <span className="port-label">{port.name}</span>
+                        <div
+                            className={`port-circle-marker ${port.type}-port ${port.direction}-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            data-node-id={node.id}
+                            data-port-id={port.id}
+                            data-port-type={port.type}
+                            onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                            onMouseLeave={handlePortMouseLeave}
+                            title={port.name}
+                        />
                     </div>
-                ) : (
-                    node.ports.map((port) => (
-                        <div key={port.id} className={`port-row ${port.direction}`}>
-                            <span className="port-label">{port.name}</span>
-                            <div
-                                className={`port-circle-marker ${port.type}-port ${port.direction}-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
-                                data-node-id={node.id}
-                                data-port-id={port.id}
-                                data-port-type={port.type}
-                                onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
-                                onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
-                                onMouseEnter={() => handlePortMouseEnter?.(port.id)}
-                                onMouseLeave={handlePortMouseLeave}
-                                title={port.name}
-                            />
-                        </div>
-                    ))
-                )}
+                ))}
             </div>
-
-            {/* Connected indicator badge */}
-            {isConnected && (
-                <div
-                    className="midi-connected-badge"
-                    style={{
-                        position: 'absolute',
-                        top: -8,
-                        right: -8,
-                        width: 16,
-                        height: 16,
-                        borderRadius: '50%',
-                        background: 'var(--accent-success)',
-                        border: '2px solid var(--sketch-black)',
-                        boxShadow: '0 0 8px var(--accent-success)'
-                    }}
-                />
-            )}
-
-            {/* MIDI Learn mode indicator */}
-            {data.midiLearnMode && (
-                <div
-                    className="midi-learn-badge"
-                    style={{
-                        position: 'absolute',
-                        top: -8,
-                        left: -8,
-                        padding: '2px 6px',
-                        borderRadius: '4px',
-                        background: 'var(--accent-primary)',
-                        border: '2px solid var(--sketch-black)',
-                        fontSize: '10px',
-                        fontWeight: 'bold',
-                        color: 'white'
-                    }}
-                >
-                    LEARN
-                </div>
-            )}
         </div>
     );
 }

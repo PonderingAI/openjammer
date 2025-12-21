@@ -25,6 +25,7 @@ import { MathNode } from './MathNode';
 import { LibraryNode } from './LibraryNode';
 import { MIDINode } from './MIDINode';
 import { MIDIVisualNode } from './MIDIVisualNode';
+import { MiniLab3Node } from './MiniLab3Node';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -38,6 +39,7 @@ const SCHEMATIC_TYPES = [
     'instrument-visual',
     'midi',
     'midi-visual',
+    'minilab-3',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
@@ -340,6 +342,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <MIDINode {...schematicProps} />;
             case 'midi-visual':
                 return <MIDIVisualNode {...schematicProps} />;
+            case 'minilab-3':
+                return <MiniLab3Node {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':

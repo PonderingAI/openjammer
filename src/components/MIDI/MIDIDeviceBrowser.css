@@ -50,27 +50,28 @@
     }
 }
 
-/* Header */
+/* Header - uses theme variables */
 .midi-browser-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px 24px;
-    border-bottom: 2px solid var(--sketch-black, #1a1a1a);
-    background: var(--sketch-black, #1a1a1a);
-    color: var(--sketch-paper, #fafafa);
+    border-bottom: var(--border-sketch-width, 2px) solid var(--sketch-black);
+    background: var(--bg-node-header);
 }
 
 .midi-browser-header h2 {
     margin: 0;
-    font-size: 20px;
+    font-family: var(--font-sketch);
+    font-size: var(--text-xl, 20px);
     font-weight: 600;
+    color: var(--text-primary);
 }
 
 .midi-browser-close {
     background: transparent;
     border: none;
-    color: var(--sketch-paper, #fafafa);
+    color: var(--text-primary);
     font-size: 28px;
     cursor: pointer;
     padding: 4px 8px;

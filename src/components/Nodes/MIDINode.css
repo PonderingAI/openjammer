@@ -1,0 +1,55 @@
+/**
+ * MIDI Node Styles
+ * Extends schematic-node base styles from SchematicNodes.css
+ * Only contains MIDI-specific styling (connect button)
+ */
+
+.midi-node {
+    min-width: 160px;
+}
+
+/* Connect button - styled consistently with theme */
+.midi-connect-btn {
+    width: 100%;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: var(--border-sketch-width, 2px) solid var(--sketch-black);
+    border-radius: var(--radius-md, 6px);
+    padding: 8px 20px;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm, 12px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: var(--space-sm);
+}
+
+.midi-connect-btn:hover {
+    background: var(--bg-hover);
+    transform: scale(1.02);
+}
+
+.midi-connect-btn:active {
+    transform: scale(0.98);
+}
+
+/* Unsupported message */
+.midi-node.midi-unsupported {
+    opacity: 0.7;
+}
+
+.midi-unsupported-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 16px;
+    color: var(--sketch-gray, #666);
+    font-size: 11px;
+    text-align: center;
+}
+
+.midi-browser-hint {
+    font-size: 9px;
+    color: var(--sketch-gray, #999);
+}

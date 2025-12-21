@@ -2,6 +2,15 @@
  * MiniLab 3 Visual Component
  * Accurate visual representation of the Arturia MiniLab 3 controller
  * Based on actual device layout: 355mm x 220mm (1.61:1 aspect ratio)
+ *
+ * Each control element has a port marker that can be connected to other nodes.
+ * Control outputs are normalized 0-1 values:
+ * - Keys: velocity (0 = released, 0.01-1 = pressed with velocity)
+ * - Pads: velocity (0 = released, 0.01-1 = pressed with velocity)
+ * - Knobs: position (0-1)
+ * - Faders: position (0-1)
+ * - Mod Wheel: position (0-1)
+ * - Pitch Bend: position (-1 to 1, center = 0)
  */
 
 import React, { memo, useEffect, useState } from 'react';
@@ -11,6 +20,13 @@ import './MiniLab3Visual.css';
 
 interface MiniLab3VisualProps {
     deviceId: string | null;
+    // Port interaction handlers (passed from parent node)
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    hasConnection?: (portId: string) => boolean;
+    // Value output callbacks for audio graph
     onNoteOutput?: (note: number, velocity: number, channel: number) => void;
     onPadOutput?: (padId: string, velocity: number, pressure: number) => void;
     onKnobOutput?: (knobId: string, value: number) => void;
@@ -29,28 +45,28 @@ interface ControlState {
     modWheel: number; // 0-127
 }
 
-// MiniLab 3 specific mappings
+// MiniLab 3 specific mappings (channels are 0-indexed in raw MIDI)
 const MINILAB3_CONFIG = {
     // Keys: C3-C5 by default (MIDI notes 48-72)
     keyRange: { start: 48, end: 72 },
-    keyChannel: 1,
+    keyChannel: 0,  // Channel 1 in human terms = 0 in raw MIDI
 
-    // Pads: Bank A, channel 10
+    // Pads: Bank A, channel 10 (human) = 9 (raw)
     pads: [
-        { id: 1, note: 36 }, { id: 2, note: 37 }, { id: 3, note: 38 }, { id: 4, note: 39 },
-        { id: 5, note: 40 }, { id: 6, note: 41 }, { id: 7, note: 42 }, { id: 8, note: 43 },
+        { id: 'pad-1', note: 36 }, { id: 'pad-2', note: 37 }, { id: 'pad-3', note: 38 }, { id: 'pad-4', note: 39 },
+        { id: 'pad-5', note: 40 }, { id: 'pad-6', note: 41 }, { id: 'pad-7', note: 42 }, { id: 'pad-8', note: 43 },
     ],
-    padChannel: 10,
+    padChannel: 9,  // Channel 10 in human terms = 9 in raw MIDI
 
-    // Knobs: 8 endless encoders
+    // Knobs: 8 endless encoders (CC numbers from device testing)
     knobs: [
-        { id: 1, cc: 74 }, { id: 2, cc: 71 }, { id: 3, cc: 76 }, { id: 4, cc: 77 },
-        { id: 5, cc: 78 }, { id: 6, cc: 79 }, { id: 7, cc: 80 }, { id: 8, cc: 81 },
+        { id: 'knob-1', cc: 74 }, { id: 'knob-2', cc: 71 }, { id: 'knob-3', cc: 76 }, { id: 'knob-4', cc: 77 },
+        { id: 'knob-5', cc: 93 }, { id: 'knob-6', cc: 18 }, { id: 'knob-7', cc: 19 }, { id: 'knob-8', cc: 16 },
     ],
 
     // Faders: 4 sliders
     faders: [
-        { id: 1, cc: 82 }, { id: 2, cc: 83 }, { id: 3, cc: 85 }, { id: 4, cc: 17 },
+        { id: 'fader-1', cc: 82 }, { id: 'fader-2', cc: 83 }, { id: 'fader-3', cc: 85 }, { id: 'fader-4', cc: 17 },
     ],
 
     // Mod wheel CC
@@ -59,12 +75,25 @@ const MINILAB3_CONFIG = {
 
 // Pad colors (RGB capable, these are defaults)
 const PAD_COLORS = [
-    '#3B82F6', '#3B82F6', '#3B82F6', '#3B82F6', // Bottom row (blue)
-    '#3B82F6', '#3B82F6', '#3B82F6', '#3B82F6', // Top row (blue)
+    '#3B82F6', '#3B82F6', '#3B82F6', '#3B82F6', // Row 1 (blue)
+    '#3B82F6', '#3B82F6', '#3B82F6', '#3B82F6', // Row 2 (blue)
 ];
+
+// Note name mapping
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const getNoteLabel = (note: number): string => {
+    const octave = Math.floor(note / 12) - 1;
+    const noteName = NOTE_NAMES[note % 12];
+    return `${noteName}${octave}`;
+};
 
 export const MiniLab3Visual = memo(function MiniLab3Visual({
     deviceId,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    hasConnection,
     onNoteOutput,
     onPadOutput,
     onKnobOutput,
@@ -76,7 +105,7 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
     const [state, setState] = useState<ControlState>({
         keys: new Map(),
         pads: new Map(),
-        knobs: new Map(MINILAB3_CONFIG.knobs.map(k => [k.cc, 64])),
+        knobs: new Map(), // Empty - don't show position until first MIDI value received
         faders: new Map(MINILAB3_CONFIG.faders.map(f => [f.cc, 0])),
         pitchBend: 0,
         modWheel: 0,
@@ -95,33 +124,29 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
 
                 switch (event.type) {
                     case 'noteOn': {
-                        // Check if it's a key or pad
-                        if (event.channel === MINILAB3_CONFIG.padChannel) {
-                            // It's a pad
-                            const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
-                            if (pad) {
-                                next.pads = new Map(prev.pads);
-                                next.pads.set(pad.id, { velocity: event.velocity, pressure: 0, active: true });
-                                onPadOutput?.(pad.id.toString(), event.velocity, 0);
-                            }
-                        } else if (event.channel === MINILAB3_CONFIG.keyChannel) {
-                            // It's a key
+                        // Check if it's a pad (channel 10, notes 36-43)
+                        const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
+                        if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
+                            next.pads = new Map(prev.pads);
+                            next.pads.set(pad.note, { velocity: event.velocity, pressure: 0, active: true });
+                            onPadOutput?.(pad.id, event.velocity / 127, 0);
+                        } else {
+                            // Any other note is treated as a key (regardless of channel)
                             next.keys = new Map(prev.keys);
                             next.keys.set(event.note, { velocity: event.velocity, active: true });
-                            onNoteOutput?.(event.note, event.velocity, event.channel);
+                            onNoteOutput?.(event.note, event.velocity / 127, event.channel);
                         }
                         break;
                     }
 
                     case 'noteOff': {
-                        if (event.channel === MINILAB3_CONFIG.padChannel) {
-                            const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
-                            if (pad) {
-                                next.pads = new Map(prev.pads);
-                                next.pads.set(pad.id, { velocity: 0, pressure: 0, active: false });
-                                onPadOutput?.(pad.id.toString(), 0, 0);
-                            }
-                        } else if (event.channel === MINILAB3_CONFIG.keyChannel) {
+                        const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
+                        if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
+                            next.pads = new Map(prev.pads);
+                            next.pads.set(pad.note, { velocity: 0, pressure: 0, active: false });
+                            onPadOutput?.(pad.id, 0, 0);
+                        } else {
+                            // Any other note is treated as a key
                             next.keys = new Map(prev.keys);
                             next.keys.set(event.note, { velocity: 0, active: false });
                             onNoteOutput?.(event.note, 0, event.channel);
@@ -135,7 +160,7 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         if (knob) {
                             next.knobs = new Map(prev.knobs);
                             next.knobs.set(event.controller, event.value);
-                            onKnobOutput?.(knob.id.toString(), event.value);
+                            onKnobOutput?.(knob.id, event.value / 127);
                             break;
                         }
 
@@ -144,21 +169,22 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         if (fader) {
                             next.faders = new Map(prev.faders);
                             next.faders.set(event.controller, event.value);
-                            onFaderOutput?.(fader.id.toString(), event.value);
+                            onFaderOutput?.(fader.id, event.value / 127);
                             break;
                         }
 
                         // Check if it's mod wheel
                         if (event.controller === MINILAB3_CONFIG.modWheelCC) {
                             next.modWheel = event.value;
-                            onModWheel?.(event.value);
+                            onModWheel?.(event.value / 127);
                         }
                         break;
                     }
 
                     case 'pitchBend': {
                         next.pitchBend = event.value;
-                        onPitchBend?.(event.value);
+                        // Normalize to -1 to 1
+                        onPitchBend?.(event.value / 8192);
                         break;
                     }
 
@@ -167,9 +193,9 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         if (event.channel === MINILAB3_CONFIG.padChannel) {
                             // Update all active pads with pressure
                             next.pads = new Map(prev.pads);
-                            prev.pads.forEach((padState, padId) => {
+                            prev.pads.forEach((padState, note) => {
                                 if (padState.active) {
-                                    next.pads.set(padId, { ...padState, pressure: event.pressure });
+                                    next.pads.set(note, { ...padState, pressure: event.pressure });
                                 }
                             });
                         }
@@ -185,12 +211,10 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
     }, [deviceId, onNoteOutput, onPadOutput, onKnobOutput, onFaderOutput, onPitchBend, onModWheel]);
 
     // Generate piano keys (25 keys: 15 white, 10 black)
-    // Keys span full width, black keys positioned on top between white keys
     const renderKeyboard = () => {
         const keys: React.ReactElement[] = [];
         const { start, end } = MINILAB3_CONFIG.keyRange;
 
-        // Key pattern: C=0, C#=1, D=2, D#=3, E=4, F=5, F#=6, G=7, G#=8, A=9, A#=10, B=11
         const isBlackKey = (note: number) => {
             const n = note % 12;
             return [1, 3, 6, 8, 10].includes(n);
@@ -202,7 +226,6 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
             if (!isBlackKey(n)) totalWhiteKeys++;
         }
 
-        // Each white key takes equal percentage of width
         const whiteKeyWidthPercent = 100 / totalWhiteKeys;
 
         let whiteKeyIndex = 0;
@@ -210,10 +233,10 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
             const keyState = state.keys.get(note);
             const isActive = keyState?.active ?? false;
             const velocity = keyState?.velocity ?? 0;
+            const portId = `key-${note}`;
+            const isConnected = hasConnection?.(portId) ?? false;
 
             if (isBlackKey(note)) {
-                // Black key - positioned overlapping between white keys
-                // Position at the boundary between previous white key and next
                 const blackKeyLeft = (whiteKeyIndex * whiteKeyWidthPercent) - (whiteKeyWidthPercent * 0.28);
                 keys.push(
                     <div
@@ -222,10 +245,18 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         style={{
                             left: `${blackKeyLeft}%`,
                             width: `${whiteKeyWidthPercent * 0.55}%`,
-                            opacity: isActive ? 0.6 + (velocity / 127) * 0.4 : 1,
-                        }}
+                            '--key-velocity': velocity / 127,
+                        } as React.CSSProperties}
                         data-note={note}
-                    />
+                        data-port-id={portId}
+                        title={`${getNoteLabel(note)} → ${portId}`}
+                        onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(portId)}
+                        onMouseLeave={handlePortMouseLeave}
+                    >
+                        <div className={`minilab3-key-port ${isConnected ? 'connected' : ''}`} />
+                    </div>
                 );
             } else {
                 keys.push(
@@ -235,10 +266,18 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         style={{
                             left: `${whiteKeyIndex * whiteKeyWidthPercent}%`,
                             width: `${whiteKeyWidthPercent}%`,
-                            opacity: isActive ? 0.7 + (velocity / 127) * 0.3 : 1,
-                        }}
+                            '--key-velocity': velocity / 127,
+                        } as React.CSSProperties}
                         data-note={note}
-                    />
+                        data-port-id={portId}
+                        title={`${getNoteLabel(note)} → ${portId}`}
+                        onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(portId)}
+                        onMouseLeave={handlePortMouseLeave}
+                    >
+                        <div className={`minilab3-key-port ${isConnected ? 'connected' : ''}`} />
+                    </div>
                 );
                 whiteKeyIndex++;
             }
@@ -250,10 +289,14 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
     // Render pads (single horizontal row of 8)
     const renderPads = () => {
         return MINILAB3_CONFIG.pads.map((pad, index) => {
-            const padState = state.pads.get(pad.id);
+            const padState = state.pads.get(pad.note);
             const isActive = padState?.active ?? false;
             const velocity = padState?.velocity ?? 0;
             const pressure = padState?.pressure ?? 0;
+            const isConnected = hasConnection?.(pad.id) ?? false;
+
+            // Use the higher of velocity or pressure for brightness
+            const intensity = Math.max(velocity, pressure) / 127;
 
             return (
                 <div
@@ -261,11 +304,19 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                     className={`minilab3-pad ${isActive ? 'active' : ''}`}
                     style={{
                         '--pad-color': PAD_COLORS[index],
-                        '--pad-brightness': isActive ? 0.5 + (velocity / 127) * 0.5 : 0.3,
+                        '--pad-brightness': isActive ? 0.3 + intensity * 0.7 : 0.2,
                         '--pad-pressure': pressure / 127,
                     } as React.CSSProperties}
                     data-pad-id={pad.id}
-                />
+                    data-port-id={pad.id}
+                    title={`Pad ${index + 1} → ${pad.id}`}
+                    onMouseDown={(e) => handlePortMouseDown?.(pad.id, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(pad.id, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(pad.id)}
+                    onMouseLeave={handlePortMouseLeave}
+                >
+                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
+                </div>
             );
         });
     };
@@ -273,8 +324,11 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
     // Render knobs (2 rows of 4)
     const renderKnobs = () => {
         return MINILAB3_CONFIG.knobs.map((knob, index) => {
-            const value = state.knobs.get(knob.cc) ?? 64;
-            const rotation = ((value / 127) * 270) - 135; // -135 to +135 degrees
+            const value = state.knobs.get(knob.cc);
+            const hasValue = value !== undefined;
+            // Full 360 degree rotation: 0 = top, 127 = top again (full circle)
+            const rotation = hasValue ? (value / 127) * 360 : 0;
+            const isConnected = hasConnection?.(knob.id) ?? false;
 
             const row = index < 4 ? 0 : 1;
             const col = index % 4;
@@ -288,14 +342,24 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         gridColumn: col + 1,
                     }}
                     data-knob-id={knob.id}
+                    data-port-id={knob.id}
+                    title={`Knob ${index + 1} (CC${knob.cc}) → ${knob.id}`}
+                    onMouseDown={(e) => handlePortMouseDown?.(knob.id, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(knob.id, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(knob.id)}
+                    onMouseLeave={handlePortMouseLeave}
                 >
                     <div
                         className="minilab3-knob-cap"
                         style={{ transform: `rotate(${rotation}deg)` }}
                     >
-                        <div className="minilab3-knob-indicator" />
+                        <div
+                            className="minilab3-knob-indicator"
+                            style={{ opacity: hasValue ? 1 : 0.3 }}
+                        />
                     </div>
-                    <span className="minilab3-knob-label">{knob.id}</span>
+                    <span className="minilab3-knob-label">{index + 1}</span>
+                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
                 </div>
             );
         });
@@ -303,15 +367,22 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
 
     // Render faders (4 vertical sliders)
     const renderFaders = () => {
-        return MINILAB3_CONFIG.faders.map((fader) => {
+        return MINILAB3_CONFIG.faders.map((fader, index) => {
             const value = state.faders.get(fader.cc) ?? 0;
             const position = (value / 127) * 100;
+            const isConnected = hasConnection?.(fader.id) ?? false;
 
             return (
                 <div
                     key={fader.id}
                     className="minilab3-fader"
                     data-fader-id={fader.id}
+                    data-port-id={fader.id}
+                    title={`Fader ${index + 1} (CC${fader.cc}) → ${fader.id}`}
+                    onMouseDown={(e) => handlePortMouseDown?.(fader.id, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(fader.id, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(fader.id)}
+                    onMouseLeave={handlePortMouseLeave}
                 >
                     <div className="minilab3-fader-track">
                         <div
@@ -319,7 +390,8 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                             style={{ bottom: `${position}%` }}
                         />
                     </div>
-                    <span className="minilab3-fader-label">{fader.id}</span>
+                    <span className="minilab3-fader-label">{index + 1}</span>
+                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
                 </div>
             );
         });
@@ -327,22 +399,48 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
 
     // Render touch strips
     const renderTouchStrips = () => {
-        const pitchPos = ((state.pitchBend + 8192) / 16383) * 100;
-        const modPos = (state.modWheel / 127) * 100;
+        // Clamp pitch bend to 0-100% and account for indicator height (8px in ~100px track = ~92%)
+        const rawPitchPos = ((state.pitchBend + 8192) / 16383) * 100;
+        const pitchPos = Math.max(0, Math.min(92, rawPitchPos * 0.92));
+
+        // Clamp mod wheel similarly
+        const rawModPos = (state.modWheel / 127) * 100;
+        const modPos = Math.max(0, Math.min(92, rawModPos * 0.92));
+
+        const isPitchConnected = hasConnection?.('pitch-bend') ?? false;
+        const isModConnected = hasConnection?.('mod-wheel') ?? false;
 
         return (
             <div className="minilab3-touch-strips">
-                <div className="minilab3-touch-strip minilab3-pitch-strip">
+                <div
+                    className="minilab3-touch-strip minilab3-pitch-strip"
+                    data-port-id="pitch-bend"
+                    title="Pitch Bend → pitch-bend"
+                    onMouseDown={(e) => handlePortMouseDown?.('pitch-bend', e)}
+                    onMouseUp={(e) => handlePortMouseUp?.('pitch-bend', e)}
+                    onMouseEnter={() => handlePortMouseEnter?.('pitch-bend')}
+                    onMouseLeave={handlePortMouseLeave}
+                >
                     <div
                         className="minilab3-strip-indicator"
                         style={{ bottom: `${pitchPos}%` }}
                     />
+                    <div className={`minilab3-control-port strip-port ${isPitchConnected ? 'connected' : ''}`} />
                 </div>
-                <div className="minilab3-touch-strip minilab3-mod-strip">
+                <div
+                    className="minilab3-touch-strip minilab3-mod-strip"
+                    data-port-id="mod-wheel"
+                    title="Mod Wheel → mod-wheel"
+                    onMouseDown={(e) => handlePortMouseDown?.('mod-wheel', e)}
+                    onMouseUp={(e) => handlePortMouseUp?.('mod-wheel', e)}
+                    onMouseEnter={() => handlePortMouseEnter?.('mod-wheel')}
+                    onMouseLeave={handlePortMouseLeave}
+                >
                     <div
                         className="minilab3-strip-indicator"
                         style={{ bottom: `${modPos}%` }}
                     />
+                    <div className={`minilab3-control-port strip-port ${isModConnected ? 'connected' : ''}`} />
                 </div>
             </div>
         );

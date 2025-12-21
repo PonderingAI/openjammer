@@ -32,6 +32,7 @@ interface MIDIStoreState {
     // Device browser state
     isBrowserOpen: boolean;
     browserSearchQuery: string;
+    browserTargetNodeId: string | null;  // Which node opened the browser (for updating existing nodes)
 
     // Auto-detect toast state
     pendingDevice: MIDIDeviceInfo | null;
@@ -47,9 +48,10 @@ interface MIDIStoreActions {
     unsubscribeFromDevice: (deviceId: string) => void;
 
     // Browser
-    openBrowser: () => void;
+    openBrowser: (targetNodeId?: string) => void;
     closeBrowser: () => void;
     setSearchQuery: (query: string) => void;
+    getBrowserTargetNodeId: () => string | null;
 
     // Auto-detect
     dismissPendingDevice: () => void;
@@ -82,6 +84,7 @@ export const useMIDIStore = create<MIDIStore>()(
 
         isBrowserOpen: false,
         browserSearchQuery: '',
+        browserTargetNodeId: null,
 
         pendingDevice: null,
         detectedPreset: null,
@@ -120,6 +123,12 @@ export const useMIDIStore = create<MIDIStore>()(
 
             manager.onDeviceDisconnected((device) => {
                 get().handleDeviceDisconnected(device);
+            });
+
+            // Subscribe to ALL MIDI messages globally so lastMessage is always updated
+            // This allows any component to use subscribeMIDIMessages to react to messages
+            manager.subscribeAll((event) => {
+                get().handleMIDIMessage(event);
             });
 
             set({
@@ -163,16 +172,24 @@ export const useMIDIStore = create<MIDIStore>()(
         // Browser
         // ================================================================
 
-        openBrowser: () => {
-            set({ isBrowserOpen: true, browserSearchQuery: '' });
+        openBrowser: (targetNodeId?: string) => {
+            set({
+                isBrowserOpen: true,
+                browserSearchQuery: '',
+                browserTargetNodeId: targetNodeId || null
+            });
         },
 
         closeBrowser: () => {
-            set({ isBrowserOpen: false });
+            set({ isBrowserOpen: false, browserTargetNodeId: null });
         },
 
         setSearchQuery: (query) => {
             set({ browserSearchQuery: query });
+        },
+
+        getBrowserTargetNodeId: () => {
+            return get().browserTargetNodeId;
         },
 
         // ================================================================

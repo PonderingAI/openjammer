@@ -66,6 +66,7 @@ export function MIDIVisualNode({
     const hasModWheel = preset?.controls.modWheel !== undefined;
 
     // For Arturia MiniLab 3, show the accurate visual representation
+    // Each control element on the visual IS the port (direct connection from visual)
     if (presetId === 'arturia-minilab-3') {
         return (
             <div
@@ -74,26 +75,14 @@ export function MIDIVisualNode({
                 onMouseEnter={handleNodeMouseEnter}
                 onMouseLeave={handleNodeMouseLeave}
             >
-                <MiniLab3Visual deviceId={deviceId} />
-
-                {/* Output ports on right side */}
-                <div className="midi-visual-ports minilab3-ports">
-                    {node.ports.filter(p => p.direction === 'output').map((port) => (
-                        <div key={port.id} className="port-row output">
-                            <span className="port-label">{port.name}</span>
-                            <div
-                                className={`port-circle-marker control-port output-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
-                                data-node-id={node.id}
-                                data-port-id={port.id}
-                                data-port-type={port.type}
-                                onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
-                                onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
-                                onMouseEnter={() => handlePortMouseEnter?.(port.id)}
-                                onMouseLeave={handlePortMouseLeave}
-                            />
-                        </div>
-                    ))}
-                </div>
+                <MiniLab3Visual
+                    deviceId={deviceId}
+                    handlePortMouseDown={handlePortMouseDown}
+                    handlePortMouseUp={handlePortMouseUp}
+                    handlePortMouseEnter={handlePortMouseEnter}
+                    handlePortMouseLeave={handlePortMouseLeave}
+                    hasConnection={hasConnection}
+                />
             </div>
         );
     }

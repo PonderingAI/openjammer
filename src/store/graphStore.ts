@@ -134,6 +134,9 @@ interface GraphStore {
     selectedNodeIds: Set<string>;
     selectedConnectionIds: Set<string>;
 
+    // Version counter for efficient change detection (autosave)
+    version: number;
+
     // Clipboard
     clipboard: ClipboardData | null;
 
@@ -217,6 +220,7 @@ export const useGraphStore = create<GraphStore>()(
             rootNodeIds: [],  // IDs of top-level nodes
             selectedNodeIds: new Set(),
             selectedConnectionIds: new Set(),
+            version: 0,  // Incremented on every graph mutation for efficient change detection
             clipboard: null,
             history: [],
             historyIndex: -1,
@@ -262,13 +266,14 @@ export const useGraphStore = create<GraphStore>()(
                 const prevState = state.history[state.historyIndex];
                 if (!prevState) return;
 
-                set({
+                set((s) => ({
                     nodes: new Map(prevState.nodes),
                     connections: new Map(prevState.connections),
                     historyIndex: state.historyIndex - 1,
                     selectedNodeIds: new Set(),
-                    selectedConnectionIds: new Set()
-                });
+                    selectedConnectionIds: new Set(),
+                    version: s.version + 1
+                }));
             },
 
             // Redo
@@ -280,13 +285,14 @@ export const useGraphStore = create<GraphStore>()(
                 const nextState = state.history[nextIndex];
                 if (!nextState) return;
 
-                set({
+                set((s) => ({
                     nodes: new Map(nextState.nodes),
                     connections: new Map(nextState.connections),
                     historyIndex: nextIndex - 1,
                     selectedNodeIds: new Set(),
-                    selectedConnectionIds: new Set()
-                });
+                    selectedConnectionIds: new Set(),
+                    version: s.version + 1
+                }));
             },
 
             // Node Actions
@@ -430,7 +436,8 @@ export const useGraphStore = create<GraphStore>()(
                     return {
                         nodes: newNodes,
                         connections: newConnections,
-                        rootNodeIds: newRootNodeIds
+                        rootNodeIds: newRootNodeIds,
+                        version: state.version + 1
                     };
                 });
 
@@ -491,7 +498,8 @@ export const useGraphStore = create<GraphStore>()(
                         nodes: newNodes,
                         connections: newConnections,
                         selectedNodeIds: newSelectedNodes,
-                        rootNodeIds: newRootNodeIds
+                        rootNodeIds: newRootNodeIds,
+                        version: state.version + 1
                     };
                 });
             },
@@ -503,7 +511,7 @@ export const useGraphStore = create<GraphStore>()(
 
                     const newNodes = new Map(state.nodes);
                     newNodes.set(nodeId, { ...node, position });
-                    return { nodes: newNodes };
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -513,11 +521,55 @@ export const useGraphStore = create<GraphStore>()(
                     if (!node) return state;
 
                     const newNodes = new Map(state.nodes);
-                    newNodes.set(nodeId, {
+                    const updatedNode = {
                         ...node,
                         data: { ...node.data, ...data }
-                    });
-                    return { nodes: newNodes };
+                    };
+                    newNodes.set(nodeId, updatedNode);
+
+                    // If this is a canvas-input/output or panel node, sync parent's ports
+                    const syncableTypes = ['canvas-input', 'canvas-output', 'output-panel', 'input-panel'];
+                    if (syncableTypes.includes(node.type) && node.parentId) {
+                        const parent = newNodes.get(node.parentId);
+                        if (parent) {
+                            // Get all child nodes of the parent (using updated node)
+                            const childNodes = parent.childIds
+                                .map(id => newNodes.get(id))
+                                .filter((n): n is GraphNode => n !== undefined);
+
+                            // Sync ports from internal nodes
+                            const syncedPorts = syncPortsWithInternalNodes(
+                                parent,
+                                childNodes,
+                                state.connections,
+                                true // onlyConnected
+                            );
+
+                            newNodes.set(parent.id, {
+                                ...parent,
+                                ports: syncedPorts
+                            });
+                        }
+                    }
+
+                    // If this is a MIDI node and deviceId/presetId changed, propagate to internal midi-visual nodes
+                    if (node.type === 'midi' && (('deviceId' in data) || ('presetId' in data))) {
+                        node.childIds.forEach(childId => {
+                            const child = newNodes.get(childId);
+                            if (child && child.type === 'midi-visual') {
+                                newNodes.set(childId, {
+                                    ...child,
+                                    data: {
+                                        ...child.data,
+                                        ...('deviceId' in data ? { deviceId: data.deviceId } : {}),
+                                        ...('presetId' in data ? { presetId: data.presetId } : {})
+                                    }
+                                });
+                            }
+                        });
+                    }
+
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -528,7 +580,7 @@ export const useGraphStore = create<GraphStore>()(
 
                     const newNodes = new Map(state.nodes);
                     newNodes.set(nodeId, { ...node, ports });
-                    return { nodes: newNodes };
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -544,7 +596,7 @@ export const useGraphStore = create<GraphStore>()(
                         type,
                         category: definition.category
                     });
-                    return { nodes: newNodes };
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -578,7 +630,7 @@ export const useGraphStore = create<GraphStore>()(
                         ...node,
                         data: { ...node.data, rows: newRows }
                     });
-                    return { nodes: newNodes };
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -606,7 +658,7 @@ export const useGraphStore = create<GraphStore>()(
                         ...node,
                         data: { ...node.data, rows: newRows }
                     });
-                    return { nodes: newNodes };
+                    return { nodes: newNodes, version: state.version + 1 };
                 });
             },
 
@@ -888,7 +940,7 @@ export const useGraphStore = create<GraphStore>()(
                                 }
                             }
 
-                            return { connections: newConnections, nodes: newNodes };
+                            return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
                         }
 
                         // Handle adding a new canvas-output node (legacy)
@@ -926,7 +978,7 @@ export const useGraphStore = create<GraphStore>()(
                                 }
                             }
 
-                            return { connections: newConnections, nodes: newNodes };
+                            return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
                         }
                     }
 
@@ -961,7 +1013,7 @@ export const useGraphStore = create<GraphStore>()(
                         }
                     }
 
-                    return { connections: newConnections, nodes: newNodes };
+                    return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
                 });
 
                 return id;
@@ -1052,14 +1104,16 @@ export const useGraphStore = create<GraphStore>()(
                             return {
                                 connections: newConnections,
                                 selectedConnectionIds: newSelectedConnections,
-                                nodes: newNodes
+                                nodes: newNodes,
+                                version: state.version + 1
                             };
                         }
                     }
 
                     return {
                         connections: newConnections,
-                        selectedConnectionIds: newSelectedConnections
+                        selectedConnectionIds: newSelectedConnections,
+                        version: state.version + 1
                     };
                 });
             },
@@ -1221,13 +1275,14 @@ export const useGraphStore = create<GraphStore>()(
 
             clearGraph: () => {
                 get().pushHistory();
-                set({
+                set((state) => ({
                     nodes: new Map(),
                     connections: new Map(),
                     rootNodeIds: [],
                     selectedNodeIds: new Set(),
-                    selectedConnectionIds: new Set()
-                });
+                    selectedConnectionIds: new Set(),
+                    version: state.version + 1
+                }));
             },
 
             loadGraph: (nodes, connections) => {
@@ -1245,13 +1300,14 @@ export const useGraphStore = create<GraphStore>()(
                 });
                 connections.forEach(conn => newConnections.set(conn.id, conn));
 
-                set({
+                set((state) => ({
                     nodes: newNodes,
                     connections: newConnections,
                     rootNodeIds: newRootNodeIds,
                     selectedNodeIds: new Set(),
-                    selectedConnectionIds: new Set()
-                });
+                    selectedConnectionIds: new Set(),
+                    version: state.version + 1
+                }));
             },
 
             // Copy selected nodes and their connections to clipboard
@@ -1342,11 +1398,12 @@ export const useGraphStore = create<GraphStore>()(
                 // Select the newly pasted nodes
                 const newSelectedIds = new Set(oldToNewIds.values());
 
-                set({
+                set((state) => ({
                     nodes: newNodes,
                     connections: newConnections,
-                    selectedNodeIds: newSelectedIds
-                });
+                    selectedNodeIds: newSelectedIds,
+                    version: state.version + 1
+                }));
             },
 
             // Getters
