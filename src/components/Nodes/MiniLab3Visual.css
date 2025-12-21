@@ -189,10 +189,10 @@
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: repeat(2, 1fr);
-    gap: 8px;
+    gap: 12px;
     flex: 1;
     padding: 5px;
-    max-width: 180px;
+    max-width: 260px;
 }
 
 .minilab3-knob {
@@ -235,11 +235,10 @@
 /* Faders section - 4 vertical faders */
 .minilab3-faders-section {
     display: flex;
-    gap: 12px;
-    width: 120px;
-    padding: 5px 20px 5px 5px;
+    flex: 1;
+    padding: 5px 15px 5px 50px;
     align-items: flex-start;
-    flex-shrink: 0;
+    justify-content: space-between;
 }
 
 .minilab3-fader {
@@ -250,18 +249,18 @@
 }
 
 .minilab3-fader-track {
-    width: 5px;
+    width: 8px;
     height: 85px;
     background: #1A1A1A;
-    border-radius: 3px;
+    border-radius: 4px;
     position: relative;
     border: 1px solid #333;
 }
 
 .minilab3-fader-thumb {
     position: absolute;
-    left: -6px;
-    width: 17px;
+    left: -7px;
+    width: 22px;
     height: 20px;
     background: linear-gradient(
         90deg,
