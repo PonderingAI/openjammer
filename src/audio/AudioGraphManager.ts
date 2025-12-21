@@ -918,6 +918,21 @@ class AudioGraphManager {
         });
         keysToRemove.forEach(key => this.activeAudioConnections.delete(key));
 
+        // Clean up connectionGenerations for connections involving this node (memory leak fix)
+        this.connectionGenerations.forEach((_, key) => {
+            if (key.startsWith(`${nodeId}->`) || key.endsWith(`->${nodeId}`)) {
+                this.connectionGenerations.delete(key);
+            }
+        });
+
+        // Cancel pending disconnects for connections involving this node
+        this.pendingDisconnects.forEach((timeoutId, key) => {
+            if (key.startsWith(`${nodeId}->`) || key.endsWith(`->${nodeId}`)) {
+                clearTimeout(timeoutId);
+                this.pendingDisconnects.delete(key);
+            }
+        });
+
         // Clean up metadata (memory leak fix)
         this.audioNodeMetadata.delete(nodeId);
 

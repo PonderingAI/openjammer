@@ -102,7 +102,7 @@
     background: #1A1A1A;
     border-radius: 4px;
     position: relative;
-    overflow: hidden;
+    overflow: visible; /* Allow port below strip to be visible */
     border: 1px solid #333;
 }
 
@@ -536,7 +536,22 @@
     transform: translateX(-50%);
     width: 6px;
     height: 6px;
-    border-width: 1px;
+    border-width: 2px;
+    background: #ffffff !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 0 3px rgba(255, 255, 255, 0.8);
+}
+
+.minilab3-black-key .minilab3-key-port:hover {
+    background: #ffffff !important;
+    border-color: var(--accent-primary, #3B82F6) !important;
+    box-shadow: 0 0 8px var(--accent-primary, #3B82F6);
+}
+
+.minilab3-black-key .minilab3-key-port.connected {
+    background: var(--accent-primary, #3B82F6) !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 0 6px var(--accent-primary, #3B82F6);
 }
 
 /* Pad port - positioned at bottom-right corner */
@@ -569,13 +584,13 @@
     transform: translateX(-50%);
 }
 
-/* Touch strip port - positioned at the bottom of each strip */
+/* Touch strip port - positioned below the strip (like faders) */
 .minilab3-touch-strip {
     position: relative;
 }
 
 .minilab3-touch-strip .strip-port {
-    bottom: 4px;
+    bottom: -12px;
     left: 50%;
     transform: translateX(-50%);
 }

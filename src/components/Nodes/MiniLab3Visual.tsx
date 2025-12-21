@@ -19,6 +19,8 @@ import type { MIDIEvent } from '../../midi/types';
 import './MiniLab3Visual.css';
 
 interface MiniLab3VisualProps {
+    /** Node ID for DOM-based port position lookup */
+    nodeId: string;
     deviceId: string | null;
     // Port interaction handlers (passed from parent node)
     handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
@@ -88,6 +90,7 @@ const getNoteLabel = (note: number): string => {
 };
 
 export const MiniLab3Visual = memo(function MiniLab3Visual({
+    nodeId,
     deviceId,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -248,14 +251,17 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                             '--key-velocity': velocity / 127,
                         } as React.CSSProperties}
                         data-note={note}
-                        data-port-id={portId}
                         title={`${getNoteLabel(note)} → ${portId}`}
                         onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
                         onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
                         onMouseEnter={() => handlePortMouseEnter?.(portId)}
                         onMouseLeave={handlePortMouseLeave}
                     >
-                        <div className={`minilab3-key-port ${isConnected ? 'connected' : ''}`} />
+                        <div
+                            className={`minilab3-key-port ${isConnected ? 'connected' : ''}`}
+                            data-node-id={nodeId}
+                            data-port-id={portId}
+                        />
                     </div>
                 );
             } else {
@@ -269,14 +275,17 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                             '--key-velocity': velocity / 127,
                         } as React.CSSProperties}
                         data-note={note}
-                        data-port-id={portId}
                         title={`${getNoteLabel(note)} → ${portId}`}
                         onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
                         onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
                         onMouseEnter={() => handlePortMouseEnter?.(portId)}
                         onMouseLeave={handlePortMouseLeave}
                     >
-                        <div className={`minilab3-key-port ${isConnected ? 'connected' : ''}`} />
+                        <div
+                            className={`minilab3-key-port ${isConnected ? 'connected' : ''}`}
+                            data-node-id={nodeId}
+                            data-port-id={portId}
+                        />
                     </div>
                 );
                 whiteKeyIndex++;
@@ -308,14 +317,17 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         '--pad-pressure': pressure / 127,
                     } as React.CSSProperties}
                     data-pad-id={pad.id}
-                    data-port-id={pad.id}
                     title={`Pad ${index + 1} → ${pad.id}`}
                     onMouseDown={(e) => handlePortMouseDown?.(pad.id, e)}
                     onMouseUp={(e) => handlePortMouseUp?.(pad.id, e)}
                     onMouseEnter={() => handlePortMouseEnter?.(pad.id)}
                     onMouseLeave={handlePortMouseLeave}
                 >
-                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
+                    <div
+                        className={`minilab3-control-port ${isConnected ? 'connected' : ''}`}
+                        data-node-id={nodeId}
+                        data-port-id={pad.id}
+                    />
                 </div>
             );
         });
@@ -342,7 +354,6 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         gridColumn: col + 1,
                     }}
                     data-knob-id={knob.id}
-                    data-port-id={knob.id}
                     title={`Knob ${index + 1} (CC${knob.cc}) → ${knob.id}`}
                     onMouseDown={(e) => handlePortMouseDown?.(knob.id, e)}
                     onMouseUp={(e) => handlePortMouseUp?.(knob.id, e)}
@@ -359,7 +370,11 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         />
                     </div>
                     <span className="minilab3-knob-label">{index + 1}</span>
-                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
+                    <div
+                        className={`minilab3-control-port ${isConnected ? 'connected' : ''}`}
+                        data-node-id={nodeId}
+                        data-port-id={knob.id}
+                    />
                 </div>
             );
         });
@@ -377,7 +392,6 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                     key={fader.id}
                     className="minilab3-fader"
                     data-fader-id={fader.id}
-                    data-port-id={fader.id}
                     title={`Fader ${index + 1} (CC${fader.cc}) → ${fader.id}`}
                     onMouseDown={(e) => handlePortMouseDown?.(fader.id, e)}
                     onMouseUp={(e) => handlePortMouseUp?.(fader.id, e)}
@@ -391,7 +405,11 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         />
                     </div>
                     <span className="minilab3-fader-label">{index + 1}</span>
-                    <div className={`minilab3-control-port ${isConnected ? 'connected' : ''}`} />
+                    <div
+                        className={`minilab3-control-port ${isConnected ? 'connected' : ''}`}
+                        data-node-id={nodeId}
+                        data-port-id={fader.id}
+                    />
                 </div>
             );
         });
@@ -414,7 +432,6 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
             <div className="minilab3-touch-strips">
                 <div
                     className="minilab3-touch-strip minilab3-pitch-strip"
-                    data-port-id="pitch-bend"
                     title="Pitch Bend → pitch-bend"
                     onMouseDown={(e) => handlePortMouseDown?.('pitch-bend', e)}
                     onMouseUp={(e) => handlePortMouseUp?.('pitch-bend', e)}
@@ -425,11 +442,14 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         className="minilab3-strip-indicator"
                         style={{ bottom: `${pitchPos}%` }}
                     />
-                    <div className={`minilab3-control-port strip-port ${isPitchConnected ? 'connected' : ''}`} />
+                    <div
+                        className={`minilab3-control-port strip-port ${isPitchConnected ? 'connected' : ''}`}
+                        data-node-id={nodeId}
+                        data-port-id="pitch-bend"
+                    />
                 </div>
                 <div
                     className="minilab3-touch-strip minilab3-mod-strip"
-                    data-port-id="mod-wheel"
                     title="Mod Wheel → mod-wheel"
                     onMouseDown={(e) => handlePortMouseDown?.('mod-wheel', e)}
                     onMouseUp={(e) => handlePortMouseUp?.('mod-wheel', e)}
@@ -440,7 +460,11 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
                         className="minilab3-strip-indicator"
                         style={{ bottom: `${modPos}%` }}
                     />
-                    <div className={`minilab3-control-port strip-port ${isModConnected ? 'connected' : ''}`} />
+                    <div
+                        className={`minilab3-control-port strip-port ${isModConnected ? 'connected' : ''}`}
+                        data-node-id={nodeId}
+                        data-port-id="mod-wheel"
+                    />
                 </div>
             </div>
         );

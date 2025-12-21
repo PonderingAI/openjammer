@@ -8,6 +8,7 @@ import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
+import { MIDIIntegration } from './components/MIDI';
 import { initAudioContext, isAudioReady, getLatencyMetrics } from './audio/AudioEngine';
 import { audioGraphManager } from './audio/AudioGraphManager';
 import { useAudioStore } from './store/audioStore';
@@ -307,6 +308,9 @@ function App() {
 
       {/* Help Panel */}
       <HelpPanel />
+
+      {/* MIDI Integration - device detection, browser, and node creation */}
+      <MIDIIntegration />
 
       {/* Toast Notifications */}
       <Toaster position="bottom-right" richColors />

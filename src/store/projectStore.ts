@@ -95,6 +95,32 @@ const ENGINE_VERSION = '0.1.0';
 const PROJECT_FILE_NAME = 'project.openjammer';
 const RECENT_PROJECTS_KEY = 'openjammer-recent-projects';
 
+// ============================================================================
+// Manifest Write Mutex - Prevents concurrent read-modify-write races
+// ============================================================================
+
+let manifestMutex: Promise<void> = Promise.resolve();
+
+/**
+ * Acquire the manifest write lock. All manifest read-modify-write operations
+ * should use this to prevent race conditions.
+ *
+ * Usage:
+ *   const release = await acquireManifestLock();
+ *   try { ... } finally { release(); }
+ */
+function acquireManifestLock(): Promise<() => void> {
+  let release: () => void;
+  const newMutex = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const previousMutex = manifestMutex;
+  manifestMutex = newMutex;
+
+  return previousMutex.then(() => release!);
+}
+
 /**
  * Generate a unique ID with fallback for non-secure contexts
  */
@@ -472,6 +498,8 @@ export const useProjectStore = create<ProjectState>()(
 
         set({ isSaving: true });
 
+        // Use mutex to prevent race conditions with addAudioFile
+        const release = await acquireManifestLock();
         try {
           const handle = await restoreHandle(handleKey);
           if (!handle) {
@@ -497,6 +525,8 @@ export const useProjectStore = create<ProjectState>()(
         } catch (err) {
           set({ isSaving: false });
           throw err;
+        } finally {
+          release();
         }
       },
 
@@ -551,26 +581,32 @@ export const useProjectStore = create<ProjectState>()(
           throw new Error('No project open');
         }
 
-        const handle = await restoreHandle(handleKey);
-        if (!handle) {
-          throw new Error('Project folder not found');
+        // Use mutex to prevent race conditions with saveProject
+        const release = await acquireManifestLock();
+        try {
+          const handle = await restoreHandle(handleKey);
+          if (!handle) {
+            throw new Error('Project folder not found');
+          }
+
+          const hasPermission = await verifyPermission(handle, true, 'readwrite');
+          if (!hasPermission) {
+            throw new Error('Permission denied');
+          }
+
+          // Read current manifest
+          const manifest = await readProjectManifest(handle);
+
+          // Update audioFiles
+          manifest.audioFiles = manifest.audioFiles || {};
+          manifest.audioFiles[fileId] = fileInfo;
+          manifest.modified = new Date().toISOString();
+
+          // Write back
+          await writeProjectManifest(handle, manifest);
+        } finally {
+          release();
         }
-
-        const hasPermission = await verifyPermission(handle, true, 'readwrite');
-        if (!hasPermission) {
-          throw new Error('Permission denied');
-        }
-
-        // Read current manifest
-        const manifest = await readProjectManifest(handle);
-
-        // Update audioFiles
-        manifest.audioFiles = manifest.audioFiles || {};
-        manifest.audioFiles[fileId] = fileInfo;
-        manifest.modified = new Date().toISOString();
-
-        // Write back
-        await writeProjectManifest(handle, manifest);
       },
 
       // ========================================

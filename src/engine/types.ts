@@ -55,6 +55,57 @@ export interface KeyMapping {
     enabled: boolean;          // can disable individual keys
 }
 
+// ============================================================================
+// Bundle Types - For expandable/collapsible bundle connections
+// ============================================================================
+
+/**
+ * Represents a single channel within a bundle
+ * E.g., one key in a keyboard bundle or one knob in a controller bundle
+ */
+export interface BundleChannel {
+    id: string;                // Unique channel ID within bundle
+    label: string;             // Display label: "{ParentName} {InputType} {Number}"
+    sourcePortId: string;      // Original port ID in source node (e.g., "key-48")
+    sourceNodeId: string;      // ID of the source node
+}
+
+/**
+ * Bundle information attached to a port
+ * Used for collapsible/expandable bundle visualization
+ */
+export interface BundleInfo {
+    /** Bundle identifier (matches the parent port ID) */
+    bundleId: string;
+
+    /** Display label for the bundle (e.g., "MiniLab3 Keys") */
+    bundleLabel: string;
+
+    /** Alias for bundleLabel - used by graphStore */
+    label: string;
+
+    /** Number of channels in the bundle */
+    size: number;
+
+    /** Source node information for label generation */
+    sourceNodeName: string;    // e.g., "MiniLab3"
+    sourceNodeType: string;    // e.g., "minilab-3"
+
+    /** Individual channels in the bundle */
+    channels: BundleChannel[];
+
+    /** UI state: whether bundle is expanded to show individual channels */
+    expanded: boolean;
+}
+
+/**
+ * Extended port definition for bundle-aware ports
+ */
+export interface BundlePortDefinition extends PortDefinition {
+    /** Bundle metadata - present only on bundle ports */
+    bundleInfo?: BundleInfo;
+}
+
 export interface Connection {
     id: string;
     sourceNodeId: string;
@@ -90,6 +141,7 @@ export type NodeType =
     | 'midi'            // MIDI input device (generic)
     | 'midi-visual'     // Visual MIDI device representation (internal node)
     | 'minilab-3'       // Arturia MiniLab 3 with per-control outputs
+    | 'minilab3-visual' // Visual MiniLab 3 with per-control outputs (internal node)
     | 'piano'
     | 'cello'
     | 'electricCello'
@@ -252,11 +304,25 @@ export interface MIDILearnedMapping {
     noteOrCC: number;  // Note number or CC number
 }
 
+/**
+ * Stable device signature for MIDI device identification across sessions/machines.
+ * Unlike deviceId which is volatile, this persists and enables auto-reconnection.
+ */
+export interface MIDIDeviceSignature {
+    presetId: string;      // e.g., "arturia-minilab-3", "generic"
+    deviceName: string;    // Auto-generated or user-customized: "MiniLab 3", "MiniLab 3 2"
+}
+
 export interface MIDIInputNodeData extends NodeData {
-    // Device configuration
-    deviceId: string | null;           // Selected MIDI input device ID
-    presetId: string;                  // Preset ID (e.g., "arturia-minilab-3" or "generic")
+    // Volatile - set at runtime, cleared on save
+    deviceId: string | null;           // Selected MIDI input device ID (runtime only)
     isConnected: boolean;              // Whether device is currently connected
+
+    // Stable - persisted across sessions for auto-reconnection
+    deviceSignature: MIDIDeviceSignature | null;  // Stable identifier for device matching
+    presetId: string;                  // Preset ID (e.g., "arturia-minilab-3" or "generic")
+
+    // MIDI channel configuration
     activeChannel: number;             // 0 = omni (all channels), 1-16 for specific
 
     // MIDI Learn state

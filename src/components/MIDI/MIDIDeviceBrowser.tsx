@@ -25,9 +25,11 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
     const closeBrowser = useMIDIStore((s) => s.closeBrowser);
     const inputs = useMIDIStore((s) => s.inputs);
 
-    // Get all presets
-    const registry = getPresetRegistry();
-    const allPresets = useMemo(() => registry.getAllPresets(), []);
+    // Get all presets - registry is a singleton so safe to call inside useMemo
+    const allPresets = useMemo(() => {
+        const registry = getPresetRegistry();
+        return registry.getAllPresets();
+    }, []);
 
     // Filter presets based on search query
     const filteredPresets = useMemo(() => {
@@ -44,6 +46,7 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
     // Get connected devices with matched presets
     // Group multiple ports from the same physical device into one entry
     const connectedDevices = useMemo(() => {
+        const registry = getPresetRegistry();
         const devices: Array<{
             deviceId: string;
             name: string;

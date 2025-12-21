@@ -220,22 +220,29 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
 
       scanLibrary: async (libraryId: string, generateWaveforms = true) => {
         // Atomically check and set scanning status to prevent race conditions
-        const libraryExists = get().libraries[libraryId];
-        if (!libraryExists) return;
+        // This closes the TOCTOU race window by doing check-and-set in a single set() call
+        let shouldProceed = false;
+        set(state => {
+          const library = state.libraries[libraryId];
+          if (!library) {
+            return state; // Library doesn't exist, no change
+          }
+          if (library.status === 'scanning') {
+            console.warn(`[SampleLibrary] Library ${libraryId} is already being scanned`);
+            return state; // Already scanning, no change
+          }
+          shouldProceed = true;
+          return {
+            libraries: {
+              ...state.libraries,
+              [libraryId]: { ...library, status: 'scanning' },
+            },
+          };
+        });
 
-        // Prevent concurrent scans on the same library
-        if (libraryExists.status === 'scanning') {
-          console.warn(`[SampleLibrary] Library ${libraryId} is already being scanned`);
+        if (!shouldProceed) {
           return;
         }
-
-        // Set status to scanning BEFORE any async work to close race window
-        set(state => ({
-          libraries: {
-            ...state.libraries,
-            [libraryId]: { ...state.libraries[libraryId], status: 'scanning' },
-          },
-        }));
         // Note: From here on, always use state.libraries[libraryId] in set() callbacks
         // to get the fresh library reference and avoid stale data
 

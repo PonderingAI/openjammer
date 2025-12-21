@@ -8,11 +8,14 @@
  * Design: Hierarchical node with internal canvas structure
  * Press E to dive into internal canvas and see per-control routing
  *
- * Outer view: Shows preset name, connect button, and bundle outputs
+ * Outer view: Shows device name, connect button, and bundle outputs
  * Inner view: Shows full visual with per-control ports
+ *
+ * Device names are auto-generated (e.g., "MiniLab 3", "MiniLab 3 2")
+ * and can be renamed by double-clicking the title
  */
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import type { GraphNode, MIDIInputNodeData } from '../../engine/types';
 import { useMIDIStore } from '../../store/midiStore';
 import { useGraphStore } from '../../store/graphStore';
@@ -58,11 +61,23 @@ export function MIDINode({
     const inputs = useMIDIStore((s) => s.inputs);
     const initialize = useMIDIStore((s) => s.initialize);
     const openBrowser = useMIDIStore((s) => s.openBrowser);
+    const renameDevice = useMIDIStore((s) => s.renameDevice);
+
+    // Graph store for updating node data
+    const updateNodeData = useGraphStore((s) => s.updateNodeData);
+
+    // Rename mode state
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState('');
+    const renameInputRef = useRef<HTMLInputElement>(null);
 
     // Get preset info
     const registry = getPresetRegistry();
     const preset = data.presetId ? registry.getPreset(data.presetId) : null;
     const presetName = preset?.name ?? 'MIDI';
+
+    // Display name: use signature deviceName if available, else preset name
+    const displayName = data.deviceSignature?.deviceName ?? presetName;
 
     // Get connected device info
     const connectedDevice = data.deviceId ? inputs.get(data.deviceId) : null;
@@ -99,6 +114,59 @@ export function MIDINode({
         openBrowser(node.id);  // Pass node ID so browser knows which node to update
     }, [openBrowser, node.id]);
 
+    // Handle double-click on title to start renaming
+    const handleTitleDoubleClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!data.deviceId || !data.deviceSignature) return; // Can't rename if no device
+        setRenameValue(data.deviceSignature.deviceName);
+        setIsRenaming(true);
+    }, [data.deviceId, data.deviceSignature]);
+
+    // Focus input when rename mode starts
+    useEffect(() => {
+        if (isRenaming && renameInputRef.current) {
+            renameInputRef.current.focus();
+            renameInputRef.current.select();
+        }
+    }, [isRenaming]);
+
+    // Handle rename submission
+    const handleRenameSubmit = useCallback(() => {
+        if (!data.deviceId || !data.deviceSignature || !renameValue.trim()) {
+            setIsRenaming(false);
+            return;
+        }
+
+        const newName = renameValue.trim();
+        if (newName === data.deviceSignature.deviceName) {
+            setIsRenaming(false);
+            return;
+        }
+
+        // Try to rename in store
+        const success = renameDevice(data.deviceId, newName);
+        if (success) {
+            // Update node's signature
+            updateNodeData(node.id, {
+                deviceSignature: {
+                    ...data.deviceSignature,
+                    deviceName: newName
+                }
+            });
+        }
+        setIsRenaming(false);
+    }, [data.deviceId, data.deviceSignature, renameValue, renameDevice, updateNodeData, node.id]);
+
+    // Handle rename input keydown
+    const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+            handleRenameSubmit();
+        } else if (e.key === 'Escape') {
+            setIsRenaming(false);
+        }
+    }, [handleRenameSubmit]);
+
     // Don't render if Web MIDI not supported
     if (!isSupported) {
         return (
@@ -126,12 +194,31 @@ export function MIDINode({
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
         >
-            {/* Header with preset name */}
+            {/* Header with device name (double-click to rename) */}
             <div
                 className="schematic-header"
                 onMouseDown={handleHeaderMouseDown}
             >
-                <span className="schematic-title">{presetName}</span>
+                {isRenaming ? (
+                    <input
+                        ref={renameInputRef}
+                        className="midi-rename-input"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={handleRenameKeyDown}
+                        onBlur={handleRenameSubmit}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                    />
+                ) : (
+                    <span
+                        className="schematic-title"
+                        onDoubleClick={handleTitleDoubleClick}
+                        title={data.deviceSignature ? 'Double-click to rename' : presetName}
+                    >
+                        {displayName}
+                    </span>
+                )}
             </div>
 
             {/* Body - matches keyboard node style */}

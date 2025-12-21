@@ -2,8 +2,9 @@
  * Port Synchronization - Sync canvas-input/output nodes with parent node ports
  */
 
-import type { GraphNode, PortDefinition, Connection } from '../engine/types';
+import type { GraphNode, PortDefinition, Connection, BundleInfo, BundlePortDefinition } from '../engine/types';
 import { generateUniqueId } from './idGenerator';
+import { getBundleInfo as getBundleInfoFromManager } from './bundleManager';
 
 // ============================================================================
 // Port ID Validation
@@ -691,11 +692,27 @@ export function checkDynamicPortRemoval(
 // ============================================================================
 
 /**
- * Detect if a source port is a bundle and return its info
- * Returns null if not a bundle (size < 1)
+ * Detect if a source port is a bundle and return full BundleInfo
+ * Returns null if not a bundle (no internal connections)
  * Note: Size 1 bundles (like pedal) are valid and should create their own row
+ *
+ * This function returns full BundleInfo with channel details for expandable UI
  */
 export function detectBundleInfo(
+    sourceNodeId: string,
+    sourcePortId: string,
+    nodes: Map<string, GraphNode>,
+    connections: Map<string, Connection>
+): BundleInfo | null {
+    // Use the new bundle manager to get full bundle info with channels
+    return getBundleInfoFromManager(sourceNodeId, sourcePortId, nodes, connections);
+}
+
+/**
+ * Legacy function for backward compatibility
+ * Returns simple size/label for code that doesn't need full bundle info
+ */
+export function detectBundleInfoSimple(
     sourceNodeId: string,
     sourcePortId: string,
     nodes: Map<string, GraphNode>,
@@ -703,6 +720,78 @@ export function detectBundleInfo(
 ): { size: number; label: string } | null {
     const result = getBundleSizeFromSourcePort(sourceNodeId, sourcePortId, nodes, connections);
     return result.size >= 1 ? result : null;
+}
+
+/**
+ * Expand a target node to receive a bundle connection with full BundleInfo
+ * Creates a BundlePortDefinition with expandable UI support
+ *
+ * @param targetNodeId - The target node receiving the bundle
+ * @param bundleInfo - Full bundle info with channels
+ * @param nodes - All nodes in the graph
+ * @returns Info needed to update the input-panel, or null if target doesn't support expansion
+ */
+export function expandTargetForBundleWithInfo(
+    targetNodeId: string,
+    bundleInfo: BundleInfo,
+    nodes: Map<string, GraphNode>
+): {
+    panelId: string;
+    newPorts: BundlePortDefinition[];
+    newPortLabels: Record<string, string>;
+    newPortHideExternalLabel: Record<string, boolean>;
+} | null {
+    const targetNode = nodes.get(targetNodeId);
+    if (!targetNode) return null;
+
+    // Find input-panel in target's children (if it has one)
+    const specialNodeIds = new Set(targetNode.specialNodes || []);
+    const inputPanel = targetNode.childIds
+        .map(id => nodes.get(id))
+        .find((n): n is GraphNode =>
+            n?.type === 'input-panel' && specialNodeIds.has(n.id)
+        );
+
+    if (!inputPanel) return null;  // Target doesn't support bundle expansion
+
+    // Create a bundle port with full channel info for expandable UI
+    const newPorts: BundlePortDefinition[] = [];
+    const newPortLabels: Record<string, string> = {};
+    const newPortHideExternalLabel: Record<string, boolean> = {};
+    const existingOutputPorts = inputPanel.ports.filter(p =>
+        p.direction === 'output' && !p.id.startsWith('port-placeholder') && !p.id.startsWith('empty-')
+    );
+
+    const portId = generateUniqueId('bundle-');
+    const portIndex = existingOutputPorts.length;
+    const totalCount = existingOutputPorts.length + 1;
+
+    // Calculate y position distributed evenly
+    const yPosition = 0.1 + (portIndex / Math.max(totalCount, 1)) * 0.8;
+
+    // Create bundle port with full info for expandable UI
+    const bundlePort: BundlePortDefinition = {
+        id: portId,
+        name: `${bundleInfo.bundleLabel} (${bundleInfo.channels.length})`,
+        type: 'control',
+        direction: 'output',  // Output on input-panel = Input on parent
+        position: { x: 1, y: Math.min(yPosition, 0.92) },
+        bundleInfo: {
+            ...bundleInfo,
+            expanded: false  // Start collapsed
+        }
+    };
+
+    newPorts.push(bundlePort);
+    newPortLabels[portId] = bundlePort.name;
+    newPortHideExternalLabel[portId] = false;
+
+    return {
+        panelId: inputPanel.id,
+        newPorts,
+        newPortLabels,
+        newPortHideExternalLabel
+    };
 }
 
 /**

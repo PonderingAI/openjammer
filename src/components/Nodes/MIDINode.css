@@ -53,3 +53,23 @@
     font-size: 9px;
     color: var(--sketch-gray, #999);
 }
+
+/* Rename input in header */
+.midi-rename-input {
+    width: 100%;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--sketch-black);
+    border-radius: var(--radius-sm, 4px);
+    padding: 2px 6px;
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm, 12px);
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+}
+
+.midi-rename-input:focus {
+    border-color: var(--color-primary, #4a9eff);
+    box-shadow: 0 0 0 1px var(--color-primary, #4a9eff);
+}

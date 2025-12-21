@@ -3,12 +3,15 @@
  *
  * Used inside hierarchical nodes to provide multiple named output ports
  * Each port can be renamed by clicking on the label
+ *
+ * Supports "always one empty slot" pattern for adding new connections.
  */
 
 import { useState, useCallback, useMemo, memo } from 'react';
 import type { GraphNode } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
+import { isEmptyPort } from '../../utils/bundleManager';
 import './SchematicNodes.css';
 
 interface OutputPanelNodeProps {
@@ -54,11 +57,30 @@ export const OutputPanelNode = memo(function OutputPanelNode({
         [node.data.portLabels]
     );
 
-    // Get input ports (these become output ports on the parent) - memoized
-    const inputPorts = useMemo(
-        () => node.ports.filter(p => p.direction === 'input'),
-        [node.ports]
-    );
+    // Separate ports into categories:
+    // - Regular ports (have label)
+    // - Empty slot port (always show one at the end)
+    const { regularPorts, emptySlotPort } = useMemo(() => {
+        const regular: typeof node.ports = [];
+        let emptySlot: (typeof node.ports)[0] | null = null;
+
+        for (const port of node.ports) {
+            if (port.direction !== 'input') continue;
+
+            if (isEmptyPort(port)) {
+                // Keep one empty slot
+                if (!emptySlot) emptySlot = port;
+            } else {
+                // Regular port with label
+                regular.push(port);
+            }
+        }
+
+        return {
+            regularPorts: regular,
+            emptySlotPort: emptySlot
+        };
+    }, [node.ports]);
 
     // Start editing a port label
     const handleLabelClick = useCallback((portId: string, currentLabel: string, e: React.MouseEvent) => {
@@ -91,7 +113,7 @@ export const OutputPanelNode = memo(function OutputPanelNode({
 
         setEditingPort(null);
         setEditValue('');
-    }, [node.id, node.ports, node.data, portLabels, editValue, updateNodeData, updateNodePorts]);
+    }, [node.id, node.ports, portLabels, editValue, updateNodeData, updateNodePorts]);
 
     // Handle keyboard events in edit mode
     const handleKeyDown = useCallback((portId: string, e: React.KeyboardEvent) => {
@@ -123,72 +145,103 @@ export const OutputPanelNode = memo(function OutputPanelNode({
 
             {/* Port List */}
             <div className="output-panel-body">
-                {inputPorts.length === 0 ? (
+                {regularPorts.length === 0 && !emptySlotPort ? (
                     <div className="output-panel-empty">No outputs</div>
                 ) : (
-                    inputPorts.map((port) => {
-                        const label = portLabels[port.id] || port.name;
-                        const isEditing = editingPort === port.id;
-                        const isConnected = hasConnection?.(port.id);
+                    <>
+                        {/* Regular ports */}
+                        {regularPorts.map((port) => {
+                            const label = portLabels[port.id] || port.name;
+                            const isEditing = editingPort === port.id;
+                            const isConnected = hasConnection?.(port.id);
 
-                        return (
-                            <div key={port.id} className="output-panel-port-row">
-                                {/* Port marker on left */}
+                            return (
+                                <div key={port.id} className="output-panel-port-row">
+                                    {/* Port marker on left */}
+                                    <div
+                                        className={`output-panel-port-marker ${port.type}-port input-port ${isConnected ? 'connected' : ''}`}
+                                        data-node-id={node.id}
+                                        data-port-id={port.id}
+                                        data-port-type={port.type}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`${label} port`}
+                                        onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                                        onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                                        onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                                        onMouseLeave={handlePortMouseLeave}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                handlePortMouseDown?.(port.id, e as unknown as React.MouseEvent);
+                                            }
+                                        }}
+                                    />
+
+                                    {/* Label (editable) */}
+                                    {isEditing ? (
+                                        <input
+                                            type="text"
+                                            className="output-panel-label-input"
+                                            value={editValue}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                setEditValue(e.target.value);
+                                            }}
+                                            onBlur={() => handleLabelSave(port.id)}
+                                            onKeyDown={(e) => handleKeyDown(port.id, e)}
+                                            aria-label={`Edit label for ${label}`}
+                                            autoFocus
+                                        />
+                                    ) : (
+                                        <span
+                                            className="output-panel-label"
+                                            onClick={(e) => handleLabelClick(port.id, label, e)}
+                                            role="button"
+                                            tabIndex={0}
+                                            title="Click to rename"
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    handleLabelClick(port.id, label, e as unknown as React.MouseEvent);
+                                                }
+                                            }}
+                                        >
+                                            {label}
+                                        </span>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {/* Empty slot for new connections */}
+                        {emptySlotPort && (
+                            <div className="output-panel-port-row empty-slot">
                                 <div
-                                    className={`output-panel-port-marker ${port.type}-port input-port ${isConnected ? 'connected' : ''}`}
+                                    className={`output-panel-port-marker ${emptySlotPort.type}-port input-port empty-slot-marker`}
                                     data-node-id={node.id}
-                                    data-port-id={port.id}
-                                    data-port-type={port.type}
+                                    data-port-id={emptySlotPort.id}
+                                    data-port-type={emptySlotPort.type}
                                     role="button"
                                     tabIndex={0}
-                                    aria-label={`${label} port`}
-                                    onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
-                                    onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
-                                    onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                                    aria-label="Empty slot for new connection"
+                                    onMouseDown={(e) => handlePortMouseDown?.(emptySlotPort.id, e)}
+                                    onMouseUp={(e) => handlePortMouseUp?.(emptySlotPort.id, e)}
+                                    onMouseEnter={() => handlePortMouseEnter?.(emptySlotPort.id)}
                                     onMouseLeave={handlePortMouseLeave}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter' || e.key === ' ') {
                                             e.preventDefault();
-                                            handlePortMouseDown?.(port.id, e as unknown as React.MouseEvent);
+                                            handlePortMouseDown?.(emptySlotPort.id, e as unknown as React.MouseEvent);
                                         }
                                     }}
                                 />
-
-                                {/* Label (editable) */}
-                                {isEditing ? (
-                                    <input
-                                        type="text"
-                                        className="output-panel-label-input"
-                                        value={editValue}
-                                        onChange={(e) => {
-                                            e.stopPropagation();
-                                            setEditValue(e.target.value);
-                                        }}
-                                        onBlur={() => handleLabelSave(port.id)}
-                                        onKeyDown={(e) => handleKeyDown(port.id, e)}
-                                        aria-label={`Edit label for ${label}`}
-                                        autoFocus
-                                    />
-                                ) : (
-                                    <span
-                                        className="output-panel-label"
-                                        onClick={(e) => handleLabelClick(port.id, label, e)}
-                                        role="button"
-                                        tabIndex={0}
-                                        title="Click to rename"
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault();
-                                                handleLabelClick(port.id, label, e as unknown as React.MouseEvent);
-                                            }
-                                        }}
-                                    >
-                                        {label}
-                                    </span>
-                                )}
+                                <span className="output-panel-label empty-slot-label">
+                                    + Add output
+                                </span>
                             </div>
-                        );
-                    })
+                        )}
+                    </>
                 )}
             </div>
         </div>

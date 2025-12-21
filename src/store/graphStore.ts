@@ -13,7 +13,7 @@ import type {
 } from '../engine/types';
 import { getNodeDefinition, canConnect } from '../engine/registry';
 import { createDefaultInternalStructure } from '../utils/nodeInternals';
-import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval, isInstrumentNode, detectBundleInfo, expandTargetForBundle } from '../utils/portSync';
+import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval, isInstrumentNode, detectBundleInfo, expandTargetForBundleWithInfo } from '../utils/portSync';
 import { useUIFeedbackStore } from './uiFeedbackStore';
 import { useCanvasNavigationStore } from './canvasNavigationStore';
 import type { InstrumentRow, InstrumentNodeData } from '../engine/types';
@@ -746,13 +746,13 @@ export const useGraphStore = create<GraphStore>()(
                     );
 
                     if (bundleInfo) {
-                        // Try to expand target for bundle
-                        const expansion = expandTargetForBundle(
+                        // Try to expand target for bundle with full channel info
+                        const expansion = expandTargetForBundleWithInfo(
                             targetNodeId,
-                            bundleInfo.size,
-                            bundleInfo.label,
+                            bundleInfo,
                             newNodes
                         );
+                        const bundleSize = bundleInfo.channels.length;
 
                         if (expansion) {
                             // Update input-panel with new ports
@@ -818,13 +818,13 @@ export const useGraphStore = create<GraphStore>()(
                                         sourceNodeId,
                                         sourcePortId,
                                         targetPortId: bundleTargetPortId,
-                                        label: bundleInfo.label,
+                                        label: bundleInfo.bundleLabel,
                                         spread: defaultSpread,
                                         baseNote: 0,
                                         baseOctave: 4,
                                         baseOffset: 0,
-                                        portCount: bundleInfo.size,
-                                        keyGains: Array.from({ length: bundleInfo.size }, () => 1)
+                                        portCount: bundleSize,
+                                        keyGains: Array.from({ length: bundleSize }, () => 1)
                                     };
 
                                     const instrumentData = targetNodeForExpansion.data as InstrumentNodeData;
@@ -846,9 +846,9 @@ export const useGraphStore = create<GraphStore>()(
                                     if (instrumentVisual) {
                                         // Create key input ports on instrument-visual
                                         const newKeyPorts: PortDefinition[] = [];
-                                        for (let i = 0; i < bundleInfo.size; i++) {
+                                        for (let i = 0; i < bundleSize; i++) {
                                             const keyPortId = `${rowId}-key-${i}`;
-                                            const yPos = 0.1 + (i / bundleInfo.size) * 0.8;
+                                            const yPos = 0.1 + (i / bundleSize) * 0.8;
                                             newKeyPorts.push({
                                                 id: keyPortId,
                                                 name: `Key ${i + 1}`,
@@ -868,7 +868,7 @@ export const useGraphStore = create<GraphStore>()(
                                         // Create internal connections from input-panel bundle port to each key port
                                         const bundlePortId = expansion.newPorts[0]?.id;
                                         if (bundlePortId) {
-                                            for (let i = 0; i < bundleInfo.size; i++) {
+                                            for (let i = 0; i < bundleSize; i++) {
                                                 const keyPortId = `${rowId}-key-${i}`;
                                                 const connId = `internal-conn-${generateId()}`;
                                                 newConnections.set(connId, {

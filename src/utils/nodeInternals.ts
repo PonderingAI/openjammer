@@ -2,9 +2,12 @@
  * Node Internals - Initialize default internal structure for hierarchical nodes
  */
 
-import type { GraphNode, Connection, MIDIInputNodeData } from '../engine/types';
+import type { GraphNode, Connection, MIDIInputNodeData, PortDefinition } from '../engine/types';
 import { generateUniqueId } from './idGenerator';
 import { getPresetRegistry } from '../midi';
+
+/** Empty port ID prefix (matches bundleManager.ts) */
+const EMPTY_PORT_PREFIX = 'empty-';
 
 interface InternalStructure {
     internalNodes: Map<string, GraphNode>;
@@ -13,6 +16,155 @@ interface InternalStructure {
     // Port visibility configuration
     showEmptyInputPorts?: boolean;   // Show input-panel ports even if not connected
     showEmptyOutputPorts?: boolean;  // Show output-panel ports even if not connected
+}
+
+/**
+ * Standard panel configuration for createStandardPanels()
+ */
+interface StandardPanelConfig {
+    /** Labels for output panel ports (shows on parent's outputs) */
+    outputLabels?: string[];
+    /** Labels for input panel ports (shows on parent's inputs) */
+    inputLabels?: string[];
+    /** Position of output panel */
+    outputPosition?: { x: number; y: number };
+    /** Position of input panel */
+    inputPosition?: { x: number; y: number };
+    /** Always include one empty slot on output panel (default: true) */
+    includeEmptyOutputSlot?: boolean;
+    /** Always include one empty slot on input panel (default: true) */
+    includeEmptyInputSlot?: boolean;
+}
+
+/**
+ * Create standardized input and output panels with consistent behavior
+ *
+ * This is the centralized factory for panels ensuring:
+ * - "Always one empty slot" pattern on both panels
+ * - Consistent port labeling
+ * - Uniform structure across all node types
+ *
+ * @returns Input panel, output panel nodes and their IDs
+ */
+export function createStandardPanels(config: StandardPanelConfig = {}): {
+    inputPanel: GraphNode;
+    outputPanel: GraphNode;
+    inputPanelId: string;
+    outputPanelId: string;
+} {
+    const {
+        outputLabels = [],
+        inputLabels = [],
+        outputPosition = { x: 700, y: 100 },
+        inputPosition = { x: 50, y: 100 },
+        includeEmptyOutputSlot = true,
+        includeEmptyInputSlot = true
+    } = config;
+
+    // Create OUTPUT PANEL
+    // Output panel has INPUT ports (receives from inside, outputs to parent)
+    const outputPanelId = generateUniqueId('output-panel-');
+    const outputPorts: PortDefinition[] = [];
+    const outputPortLabels: Record<string, string> = {};
+    const outputPortHideExternal: Record<string, boolean> = {};
+
+    // Add labeled output ports
+    outputLabels.forEach((label, index) => {
+        const portId = `port-${index + 1}`;
+        const yPos = 0.1 + (index / Math.max(outputLabels.length, 1)) * 0.7;
+        outputPorts.push({
+            id: portId,
+            name: label,
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: yPos }
+        });
+        outputPortLabels[portId] = label;
+    });
+
+    // Add empty slot port for output panel
+    if (includeEmptyOutputSlot) {
+        const emptyPortId = generateUniqueId(EMPTY_PORT_PREFIX);
+        outputPorts.push({
+            id: emptyPortId,
+            name: '',
+            type: 'control',
+            direction: 'input',
+            position: { x: 0, y: 0.9 }
+        });
+        outputPortLabels[emptyPortId] = '';
+        outputPortHideExternal[emptyPortId] = true;  // Hide empty slot on parent
+    }
+
+    const outputPanel: GraphNode = {
+        id: outputPanelId,
+        type: 'output-panel',
+        category: 'routing',
+        position: outputPosition,
+        data: {
+            portLabels: outputPortLabels,
+            portHideExternalLabel: outputPortHideExternal
+        },
+        ports: outputPorts,
+        parentId: null,
+        childIds: []
+    };
+
+    // Create INPUT PANEL
+    // Input panel has OUTPUT ports (receives from parent, outputs to inside)
+    const inputPanelId = generateUniqueId('input-panel-');
+    const inputPorts: PortDefinition[] = [];
+    const inputPortLabels: Record<string, string> = {};
+    const inputPortHideExternal: Record<string, boolean> = {};
+
+    // Add labeled input ports
+    inputLabels.forEach((label, index) => {
+        const portId = `port-${index + 1}`;
+        const yPos = 0.1 + (index / Math.max(inputLabels.length, 1)) * 0.7;
+        inputPorts.push({
+            id: portId,
+            name: label,
+            type: 'control',
+            direction: 'output',
+            position: { x: 1, y: yPos }
+        });
+        inputPortLabels[portId] = label;
+    });
+
+    // Add empty slot port for input panel
+    if (includeEmptyInputSlot) {
+        const emptyPortId = generateUniqueId(EMPTY_PORT_PREFIX);
+        inputPorts.push({
+            id: emptyPortId,
+            name: '',
+            type: 'control',
+            direction: 'output',
+            position: { x: 1, y: 0.9 }
+        });
+        inputPortLabels[emptyPortId] = '';
+        inputPortHideExternal[emptyPortId] = true;  // Hide empty slot on parent
+    }
+
+    const inputPanel: GraphNode = {
+        id: inputPanelId,
+        type: 'input-panel',
+        category: 'routing',
+        position: inputPosition,
+        data: {
+            portLabels: inputPortLabels,
+            portHideExternalLabel: inputPortHideExternal
+        },
+        ports: inputPorts,
+        parentId: null,
+        childIds: []
+    };
+
+    return {
+        inputPanel,
+        outputPanel,
+        inputPanelId,
+        outputPanelId
+    };
 }
 
 /**
@@ -39,6 +191,9 @@ export function createDefaultInternalStructure(parentNode: GraphNode): InternalS
 
         case 'midi':
             return createMIDIInternals(parentNode);
+
+        case 'minilab-3':
+            return createMiniLab3Internals(parentNode);
 
         default:
             return createGenericInternals();
@@ -144,6 +299,7 @@ function createKeyboardInternals(): InternalStructure {
 
     // Create input-panel node with one empty placeholder port (for receiving external signals)
     const inputPanelId = generateUniqueId('input-panel-');
+    const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const inputPanel: GraphNode = {
         id: inputPanelId,
         type: 'input-panel',
@@ -151,11 +307,14 @@ function createKeyboardInternals(): InternalStructure {
         position: { x: keyboardX - 200, y: keyboardY },  // Left of keyboard
         data: {
             portLabels: {
-                'port-1': ''  // Empty name for placeholder port
+                [emptyInputPortId]: ''  // Empty name for placeholder port
+            },
+            portHideExternalLabel: {
+                [emptyInputPortId]: true  // Hide empty slot on parent
             }
         },
         ports: [
-            { id: 'port-1', name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         parentId: null,
         childIds: []
@@ -240,6 +399,7 @@ function createInstrumentInternals(): InternalStructure {
     // Create input-panel with one empty placeholder port
     // When bundles connect, this will expand dynamically
     const inputPanelId = generateUniqueId('input-panel-');
+    const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const inputPanel: GraphNode = {
         id: inputPanelId,
         type: 'input-panel',
@@ -247,14 +407,14 @@ function createInstrumentInternals(): InternalStructure {
         position: { x: 50, y: 150 },
         data: {
             portLabels: {
-                'port-1': ''  // Empty label for placeholder
+                [emptyInputPortId]: ''  // Empty label for placeholder
             },
             portHideExternalLabel: {
-                'port-1': true  // Hide the empty label on parent
+                [emptyInputPortId]: true  // Hide the empty label on parent
             }
         },
         ports: [
-            { id: 'port-1', name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         parentId: null,
         childIds: []
@@ -392,8 +552,9 @@ function createContainerInternals(): InternalStructure {
     const internalConnections = new Map<string, Connection>();
     const specialNodes: string[] = [];
 
-    // Create Input panel with 2 ports (these become inputs on parent node)
+    // Create Input panel with 2 ports + empty slot
     const inputPanelId = generateUniqueId('input-panel-');
+    const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const inputPanel: GraphNode = {
         id: inputPanelId,
         type: 'input-panel',
@@ -402,12 +563,17 @@ function createContainerInternals(): InternalStructure {
         data: {
             portLabels: {
                 'port-1': 'In 1',
-                'port-2': 'In 2'
+                'port-2': 'In 2',
+                [emptyInputPortId]: ''
+            },
+            portHideExternalLabel: {
+                [emptyInputPortId]: true  // Hide empty slot on parent
             }
         },
         ports: [
-            { id: 'port-1', name: 'In 1', type: 'universal', direction: 'output', position: { x: 1, y: 0.33 } },
-            { id: 'port-2', name: 'In 2', type: 'universal', direction: 'output', position: { x: 1, y: 0.67 } }
+            { id: 'port-1', name: 'In 1', type: 'universal', direction: 'output', position: { x: 1, y: 0.25 } },
+            { id: 'port-2', name: 'In 2', type: 'universal', direction: 'output', position: { x: 1, y: 0.5 } },
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.85 } }
         ],
         parentId: null,
         childIds: []
@@ -415,8 +581,9 @@ function createContainerInternals(): InternalStructure {
     internalNodes.set(inputPanelId, inputPanel);
     specialNodes.push(inputPanelId);
 
-    // Create Output panel with 1 port (becomes output on parent node)
+    // Create Output panel with 1 port + empty slot
     const outputPanelId = generateUniqueId('output-panel-');
+    const emptyOutputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const outputPanel: GraphNode = {
         id: outputPanelId,
         type: 'output-panel',
@@ -424,11 +591,16 @@ function createContainerInternals(): InternalStructure {
         position: { x: 650, y: 200 },
         data: {
             portLabels: {
-                'port-1': 'Out'
+                'port-1': 'Out',
+                [emptyOutputPortId]: ''
+            },
+            portHideExternalLabel: {
+                [emptyOutputPortId]: true  // Hide empty slot on parent
             }
         },
         ports: [
-            { id: 'port-1', name: 'Out', type: 'universal', direction: 'input', position: { x: 0, y: 0.5 } }
+            { id: 'port-1', name: 'Out', type: 'universal', direction: 'input', position: { x: 0, y: 0.35 } },
+            { id: emptyOutputPortId, name: '', type: 'control', direction: 'input', position: { x: 0, y: 0.85 } }
         ],
         parentId: null,
         childIds: []
@@ -797,6 +969,175 @@ function createMIDIInternals(parentNode: GraphNode): InternalStructure {
             sourcePortId: 'mod-wheel',
             targetNodeId: outputPanelId,
             targetPortId: 'mod-wheel-out',
+            type: 'control'
+        });
+    }
+
+    return {
+        internalNodes,
+        internalConnections,
+        specialNodes,
+        showEmptyInputPorts: false,   // Only show ports with connections
+        showEmptyOutputPorts: false   // Only show ports with connections
+    };
+}
+
+/**
+ * MiniLab 3 internal structure:
+ * - minilab3-visual node with 48 per-control output ports
+ * - output-panel with "Keys" bundle port (only keys connected by default)
+ * - input-panel for external control (future use)
+ *
+ * Default connections: Only the 25 piano keys are connected to the Keys bundle.
+ * Pads, knobs, faders, and touch strips have visible ports but NO default connections.
+ * Users can manually wire them as needed.
+ */
+function createMiniLab3Internals(parentNode: GraphNode): InternalStructure {
+    const internalNodes = new Map<string, GraphNode>();
+    const internalConnections = new Map<string, Connection>();
+    const specialNodes: string[] = [];
+
+    // Get device ID from parent node data
+    const data = parentNode.data as MIDIInputNodeData;
+
+    // Position constants
+    const visualX = 100;
+    const visualY = 100;
+    const outputPanelX = 850;
+    const outputPanelY = 100;
+
+    // All 48 control ports with positions matching the visual layout
+    const minilab3VisualPorts = [
+        // Touch strips (left side) - ports UNDER the strips
+        { id: 'pitch-bend', name: 'Pitch', type: 'control' as const, direction: 'output' as const, position: { x: 0.055, y: 0.52 } },
+        { id: 'mod-wheel', name: 'Mod', type: 'control' as const, direction: 'output' as const, position: { x: 0.095, y: 0.52 } },
+
+        // Knobs - 2 rows of 4 (ports below each knob)
+        { id: 'knob-1', name: 'K1', type: 'control' as const, direction: 'output' as const, position: { x: 0.38, y: 0.22 } },
+        { id: 'knob-2', name: 'K2', type: 'control' as const, direction: 'output' as const, position: { x: 0.44, y: 0.22 } },
+        { id: 'knob-3', name: 'K3', type: 'control' as const, direction: 'output' as const, position: { x: 0.50, y: 0.22 } },
+        { id: 'knob-4', name: 'K4', type: 'control' as const, direction: 'output' as const, position: { x: 0.56, y: 0.22 } },
+        { id: 'knob-5', name: 'K5', type: 'control' as const, direction: 'output' as const, position: { x: 0.38, y: 0.34 } },
+        { id: 'knob-6', name: 'K6', type: 'control' as const, direction: 'output' as const, position: { x: 0.44, y: 0.34 } },
+        { id: 'knob-7', name: 'K7', type: 'control' as const, direction: 'output' as const, position: { x: 0.50, y: 0.34 } },
+        { id: 'knob-8', name: 'K8', type: 'control' as const, direction: 'output' as const, position: { x: 0.56, y: 0.34 } },
+
+        // Faders - 4 vertical sliders (ports below each fader)
+        { id: 'fader-1', name: 'F1', type: 'control' as const, direction: 'output' as const, position: { x: 0.72, y: 0.34 } },
+        { id: 'fader-2', name: 'F2', type: 'control' as const, direction: 'output' as const, position: { x: 0.80, y: 0.34 } },
+        { id: 'fader-3', name: 'F3', type: 'control' as const, direction: 'output' as const, position: { x: 0.88, y: 0.34 } },
+        { id: 'fader-4', name: 'F4', type: 'control' as const, direction: 'output' as const, position: { x: 0.96, y: 0.34 } },
+
+        // Pads - 8 horizontal (ports at bottom right of each pad)
+        { id: 'pad-1', name: 'P1', type: 'control' as const, direction: 'output' as const, position: { x: 0.20, y: 0.55 } },
+        { id: 'pad-2', name: 'P2', type: 'control' as const, direction: 'output' as const, position: { x: 0.30, y: 0.55 } },
+        { id: 'pad-3', name: 'P3', type: 'control' as const, direction: 'output' as const, position: { x: 0.40, y: 0.55 } },
+        { id: 'pad-4', name: 'P4', type: 'control' as const, direction: 'output' as const, position: { x: 0.50, y: 0.55 } },
+        { id: 'pad-5', name: 'P5', type: 'control' as const, direction: 'output' as const, position: { x: 0.60, y: 0.55 } },
+        { id: 'pad-6', name: 'P6', type: 'control' as const, direction: 'output' as const, position: { x: 0.70, y: 0.55 } },
+        { id: 'pad-7', name: 'P7', type: 'control' as const, direction: 'output' as const, position: { x: 0.80, y: 0.55 } },
+        { id: 'pad-8', name: 'P8', type: 'control' as const, direction: 'output' as const, position: { x: 0.90, y: 0.55 } },
+
+        // Keys - 25 keys (C3-C5, notes 48-72) - ports at bottom of each key
+        // White keys at y: 0.95, black keys at y: 0.80
+        { id: 'key-48', name: 'C3', type: 'control' as const, direction: 'output' as const, position: { x: 0.14, y: 0.95 } },
+        { id: 'key-49', name: 'C#3', type: 'control' as const, direction: 'output' as const, position: { x: 0.165, y: 0.80 } },
+        { id: 'key-50', name: 'D3', type: 'control' as const, direction: 'output' as const, position: { x: 0.18, y: 0.95 } },
+        { id: 'key-51', name: 'D#3', type: 'control' as const, direction: 'output' as const, position: { x: 0.205, y: 0.80 } },
+        { id: 'key-52', name: 'E3', type: 'control' as const, direction: 'output' as const, position: { x: 0.22, y: 0.95 } },
+        { id: 'key-53', name: 'F3', type: 'control' as const, direction: 'output' as const, position: { x: 0.26, y: 0.95 } },
+        { id: 'key-54', name: 'F#3', type: 'control' as const, direction: 'output' as const, position: { x: 0.285, y: 0.80 } },
+        { id: 'key-55', name: 'G3', type: 'control' as const, direction: 'output' as const, position: { x: 0.30, y: 0.95 } },
+        { id: 'key-56', name: 'G#3', type: 'control' as const, direction: 'output' as const, position: { x: 0.325, y: 0.80 } },
+        { id: 'key-57', name: 'A3', type: 'control' as const, direction: 'output' as const, position: { x: 0.34, y: 0.95 } },
+        { id: 'key-58', name: 'A#3', type: 'control' as const, direction: 'output' as const, position: { x: 0.365, y: 0.80 } },
+        { id: 'key-59', name: 'B3', type: 'control' as const, direction: 'output' as const, position: { x: 0.38, y: 0.95 } },
+        { id: 'key-60', name: 'C4', type: 'control' as const, direction: 'output' as const, position: { x: 0.42, y: 0.95 } },
+        { id: 'key-61', name: 'C#4', type: 'control' as const, direction: 'output' as const, position: { x: 0.445, y: 0.80 } },
+        { id: 'key-62', name: 'D4', type: 'control' as const, direction: 'output' as const, position: { x: 0.46, y: 0.95 } },
+        { id: 'key-63', name: 'D#4', type: 'control' as const, direction: 'output' as const, position: { x: 0.485, y: 0.80 } },
+        { id: 'key-64', name: 'E4', type: 'control' as const, direction: 'output' as const, position: { x: 0.50, y: 0.95 } },
+        { id: 'key-65', name: 'F4', type: 'control' as const, direction: 'output' as const, position: { x: 0.54, y: 0.95 } },
+        { id: 'key-66', name: 'F#4', type: 'control' as const, direction: 'output' as const, position: { x: 0.565, y: 0.80 } },
+        { id: 'key-67', name: 'G4', type: 'control' as const, direction: 'output' as const, position: { x: 0.58, y: 0.95 } },
+        { id: 'key-68', name: 'G#4', type: 'control' as const, direction: 'output' as const, position: { x: 0.605, y: 0.80 } },
+        { id: 'key-69', name: 'A4', type: 'control' as const, direction: 'output' as const, position: { x: 0.62, y: 0.95 } },
+        { id: 'key-70', name: 'A#4', type: 'control' as const, direction: 'output' as const, position: { x: 0.645, y: 0.80 } },
+        { id: 'key-71', name: 'B4', type: 'control' as const, direction: 'output' as const, position: { x: 0.66, y: 0.95 } },
+        { id: 'key-72', name: 'C5', type: 'control' as const, direction: 'output' as const, position: { x: 0.70, y: 0.95 } },
+    ];
+
+    // Create minilab3-visual node
+    const minilab3VisualId = generateUniqueId('minilab3-visual-');
+    const minilab3Visual: GraphNode = {
+        id: minilab3VisualId,
+        type: 'minilab3-visual',
+        category: 'input',
+        position: { x: visualX, y: visualY },
+        data: { deviceId: data.deviceId },
+        ports: minilab3VisualPorts,
+        parentId: null,  // Will be set by addNode
+        childIds: []
+    };
+    internalNodes.set(minilab3VisualId, minilab3Visual);
+    // NOT added to specialNodes - doesn't appear on parent
+
+    // Create output-panel with "Keys" bundle port (only one port by default)
+    const outputPanelId = generateUniqueId('output-panel-');
+    const outputPanel: GraphNode = {
+        id: outputPanelId,
+        type: 'output-panel',
+        category: 'routing',
+        position: { x: outputPanelX, y: outputPanelY },
+        data: {
+            portLabels: {
+                'bundle-keys': 'Keys'
+            }
+        },
+        ports: [
+            { id: 'bundle-keys', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(outputPanelId, outputPanel);
+    specialNodes.push(outputPanelId);  // Added to specialNodes so its ports sync to parent
+
+    // Create input-panel node for external control (future use)
+    const inputPanelId = generateUniqueId('input-panel-');
+    const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
+    const inputPanel: GraphNode = {
+        id: inputPanelId,
+        type: 'input-panel',
+        category: 'routing',
+        position: { x: visualX - 200, y: visualY },
+        data: {
+            portLabels: {
+                [emptyInputPortId]: ''  // Empty name for placeholder port
+            },
+            portHideExternalLabel: {
+                [emptyInputPortId]: true  // Hide empty slot on parent
+            }
+        },
+        ports: [
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(inputPanelId, inputPanel);
+    specialNodes.push(inputPanelId);
+
+    // Create default connections: ONLY keys connect to output panel
+    // Pads, knobs, faders, and touch strips have ports but NO default connections
+    for (let note = 48; note <= 72; note++) {
+        const connId = generateUniqueId('conn-');
+        internalConnections.set(connId, {
+            id: connId,
+            sourceNodeId: minilab3VisualId,
+            sourcePortId: `key-${note}`,
+            targetNodeId: outputPanelId,
+            targetPortId: 'bundle-keys',
             type: 'control'
         });
     }

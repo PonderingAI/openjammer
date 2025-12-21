@@ -76,6 +76,7 @@ export function MIDIVisualNode({
                 onMouseLeave={handleNodeMouseLeave}
             >
                 <MiniLab3Visual
+                    nodeId={node.id}
                     deviceId={deviceId}
                     handlePortMouseDown={handlePortMouseDown}
                     handlePortMouseUp={handlePortMouseUp}

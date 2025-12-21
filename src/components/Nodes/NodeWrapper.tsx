@@ -2,7 +2,7 @@
  * Node Wrapper - Handles node positioning, selection, and dragging
  */
 
-import { useCallback, useRef, useState, useMemo } from 'react';
+import { useCallback, useRef, useState, useMemo, useEffect, memo } from 'react';
 import type { GraphNode, Position } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -26,6 +26,7 @@ import { LibraryNode } from './LibraryNode';
 import { MIDINode } from './MIDINode';
 import { MIDIVisualNode } from './MIDIVisualNode';
 import { MiniLab3Node } from './MiniLab3Node';
+import { MiniLab3VisualNode } from './MiniLab3VisualNode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -40,6 +41,7 @@ const SCHEMATIC_TYPES = [
     'midi',
     'midi-visual',
     'minilab-3',
+    'minilab3-visual',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
@@ -54,11 +56,24 @@ const SCHEMATIC_TYPES = [
     'library'
 ];
 
-export function NodeWrapper({ node }: NodeWrapperProps) {
+export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps) {
     const nodeRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const dragStart = useRef<Position>({ x: 0, y: 0 });
     const nodeStart = useRef<Position>({ x: 0, y: 0 });
+
+    // Store cleanup function for drag handlers to prevent memory leaks on unmount
+    const dragCleanupRef = useRef<(() => void) | null>(null);
+
+    // Cleanup drag handlers on unmount
+    useEffect(() => {
+        return () => {
+            if (dragCleanupRef.current) {
+                dragCleanupRef.current();
+                dragCleanupRef.current = null;
+            }
+        };
+    }, []);
 
     const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
     const selectNode = useGraphStore((s) => s.selectNode);
@@ -128,11 +143,19 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             });
         };
 
-        const handleMouseUp = () => {
+        const cleanup = () => {
             setIsDragging(false);
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
+            dragCleanupRef.current = null;
         };
+
+        const handleMouseUp = () => {
+            cleanup();
+        };
+
+        // Store cleanup function so it can be called on unmount
+        dragCleanupRef.current = cleanup;
 
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
@@ -344,6 +367,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <MIDIVisualNode {...schematicProps} />;
             case 'minilab-3':
                 return <MiniLab3Node {...schematicProps} />;
+            case 'minilab3-visual':
+                return <MiniLab3VisualNode {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':
@@ -460,4 +485,4 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             </div>
         </div>
     );
-}
+});

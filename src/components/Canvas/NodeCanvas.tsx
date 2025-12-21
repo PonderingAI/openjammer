@@ -46,12 +46,25 @@ export function NodeCanvas() {
     const selectionBoxCtrlHeld = useRef(false);
 
     // Signal levels for audio visualization (connection key -> 0-1 level)
+    // Use ref for raw data (updated at 60fps) and throttle state updates to reduce re-renders
     const [signalLevels, setSignalLevels] = useState<Map<string, number>>(new Map());
+    const signalLevelsRef = useRef<Map<string, number>>(new Map());
+    const signalUpdateScheduled = useRef(false);
 
     // Subscribe to signal level updates from AudioGraphManager
+    // Throttle state updates to ~30fps to reduce re-renders while keeping smooth animation
     useEffect(() => {
         const unsubscribe = audioGraphManager.subscribeToSignalLevels((levels) => {
-            setSignalLevels(new Map(levels));
+            signalLevelsRef.current = levels;
+
+            // Throttle state updates using requestAnimationFrame
+            if (!signalUpdateScheduled.current) {
+                signalUpdateScheduled.current = true;
+                requestAnimationFrame(() => {
+                    setSignalLevels(new Map(signalLevelsRef.current));
+                    signalUpdateScheduled.current = false;
+                });
+            }
         });
         return unsubscribe;
     }, []);
@@ -685,10 +698,38 @@ export function NodeCanvas() {
         };
     }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId, copySelected, pasteClipboard]);
 
+    // Cache for port positions - invalidated when pan/zoom/nodes change
+    // This prevents expensive DOM queries on every render for every connection
+    const portPositionCache = useRef<Map<string, Position>>(new Map());
+    const lastPanZoom = useRef({ pan, zoom });
+
+    // Invalidate cache when pan/zoom changes
+    useEffect(() => {
+        if (lastPanZoom.current.pan.x !== pan.x ||
+            lastPanZoom.current.pan.y !== pan.y ||
+            lastPanZoom.current.zoom !== zoom) {
+            portPositionCache.current.clear();
+            lastPanZoom.current = { pan, zoom };
+        }
+    }, [pan, zoom]);
+
+    // Also invalidate cache when nodes change (positions may have changed)
+    useEffect(() => {
+        portPositionCache.current.clear();
+    }, [allNodes]);
+
     // Get port position for connection rendering
-    // Uses DOM query for accurate positions, falls back to math calculation
+    // Uses cached positions or DOM query for accurate positions, falls back to math calculation
     const getPortPosition = useCallback((nodeId: string, portId: string): Position | null => {
-        // First try DOM query for actual port position (more accurate for schematic nodes)
+        const cacheKey = `${nodeId}:${portId}`;
+
+        // Check cache first
+        const cached = portPositionCache.current.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        // Try DOM query for actual port position (more accurate for schematic nodes)
         const portElement = document.querySelector(
             `[data-node-id="${nodeId}"][data-port-id="${portId}"]`
         ) as HTMLElement | null;
@@ -705,13 +746,19 @@ export function NodeCanvas() {
             const canvasX = (screenX - canvasRect.left - pan.x) / zoom;
             const canvasY = (screenY - canvasRect.top - pan.y) / zoom;
 
-            return { x: canvasX, y: canvasY };
+            const position = { x: canvasX, y: canvasY };
+            portPositionCache.current.set(cacheKey, position);
+            return position;
         }
 
         // Fall back to math-based calculation
         const node = allNodes.get(nodeId);
         if (!node) return null;
-        return calculatePortPosition(node, portId);
+        const position = calculatePortPosition(node, portId);
+        if (position) {
+            portPositionCache.current.set(cacheKey, position);
+        }
+        return position;
     }, [allNodes, pan, zoom]);
 
     // Render connection path

@@ -5,15 +5,26 @@
  */
 
 import { create } from 'zustand';
-import { subscribeWithSelector } from 'zustand/middleware';
+import { subscribeWithSelector, persist } from 'zustand/middleware';
 import { getMIDIManager, getPresetRegistry } from '../midi';
 import type { MIDIDeviceInfo, MIDIDevicePreset, MIDIEvent } from '../midi/types';
+import type { MIDIDeviceSignature } from '../engine/types';
 
 // ============================================================================
 // Store State
 // ============================================================================
 
-interface MIDIStoreState {
+// Persisted state (saved to localStorage)
+interface MIDIPersistedState {
+    // Device name registry: presetId:deviceName -> true (tracks used names)
+    usedDeviceNames: Record<string, boolean>;
+
+    // Device signatures by deviceId (for current session matching)
+    // deviceId -> { presetId, deviceName }
+    deviceSignatures: Record<string, MIDIDeviceSignature>;
+}
+
+interface MIDIStoreState extends MIDIPersistedState {
     // Initialization state
     isSupported: boolean;
     isInitialized: boolean;
@@ -47,6 +58,13 @@ interface MIDIStoreActions {
     subscribeToDevice: (deviceId: string, callback: (event: MIDIEvent) => void) => () => void;
     unsubscribeFromDevice: (deviceId: string) => void;
 
+    // Device naming (auto-generated or user-customized)
+    generateDeviceName: (deviceId: string, presetId: string, presetName: string) => string;
+    renameDevice: (deviceId: string, newName: string) => boolean;
+    getDeviceSignature: (deviceId: string) => MIDIDeviceSignature | null;
+    getDeviceBySignature: (signature: MIDIDeviceSignature) => MIDIDeviceInfo | null;
+    isDeviceNameUsed: (presetId: string, deviceName: string) => boolean;
+
     // Browser
     openBrowser: (targetNodeId?: string) => void;
     closeBrowser: () => void;
@@ -70,24 +88,30 @@ type MIDIStore = MIDIStoreState & MIDIStoreActions;
 // ============================================================================
 
 export const useMIDIStore = create<MIDIStore>()(
-    subscribeWithSelector((set, get) => ({
-        // Initial state
-        isSupported: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
-        isInitialized: false,
-        error: null,
+    subscribeWithSelector(
+        persist(
+            (set, get) => ({
+                // Persisted state (saved to localStorage)
+                usedDeviceNames: {},
+                deviceSignatures: {},
 
-        inputs: new Map(),
-        outputs: new Map(),
-        subscriptions: new Map(),
+                // Transient state (not persisted)
+                isSupported: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
+                isInitialized: false,
+                error: null,
 
-        lastMessage: null,
+                inputs: new Map(),
+                outputs: new Map(),
+                subscriptions: new Map(),
 
-        isBrowserOpen: false,
-        browserSearchQuery: '',
-        browserTargetNodeId: null,
+                lastMessage: null,
 
-        pendingDevice: null,
-        detectedPreset: null,
+                isBrowserOpen: false,
+                browserSearchQuery: '',
+                browserTargetNodeId: null,
+
+                pendingDevice: null,
+                detectedPreset: null,
 
         // ================================================================
         // Initialization
@@ -169,6 +193,111 @@ export const useMIDIStore = create<MIDIStore>()(
         },
 
         // ================================================================
+        // Device Naming
+        // ================================================================
+
+        generateDeviceName: (deviceId, presetId, presetName) => {
+            const state = get();
+
+            // Check if this device already has a signature
+            const existingSig = state.deviceSignatures[deviceId];
+            if (existingSig) {
+                return existingSig.deviceName;
+            }
+
+            // Count existing devices with this presetId to generate suffix
+            let suffix = 1;
+            let candidateName = presetName;
+
+            while (state.usedDeviceNames[`${presetId}:${candidateName}`]) {
+                suffix++;
+                candidateName = `${presetName} ${suffix}`;
+            }
+
+            // Register the new name
+            const signature: MIDIDeviceSignature = { presetId, deviceName: candidateName };
+            set({
+                usedDeviceNames: {
+                    ...state.usedDeviceNames,
+                    [`${presetId}:${candidateName}`]: true
+                },
+                deviceSignatures: {
+                    ...state.deviceSignatures,
+                    [deviceId]: signature
+                }
+            });
+
+            return candidateName;
+        },
+
+        renameDevice: (deviceId, newName) => {
+            const state = get();
+            const currentSig = state.deviceSignatures[deviceId];
+            if (!currentSig) return false;
+
+            // Check if new name is already used for this preset type
+            const newKey = `${currentSig.presetId}:${newName}`;
+            if (state.usedDeviceNames[newKey]) {
+                return false; // Name already taken
+            }
+
+            // Remove old name, add new name
+            const oldKey = `${currentSig.presetId}:${currentSig.deviceName}`;
+            const newUsedNames = { ...state.usedDeviceNames };
+            delete newUsedNames[oldKey];
+            newUsedNames[newKey] = true;
+
+            set({
+                usedDeviceNames: newUsedNames,
+                deviceSignatures: {
+                    ...state.deviceSignatures,
+                    [deviceId]: { ...currentSig, deviceName: newName }
+                }
+            });
+
+            return true;
+        },
+
+        getDeviceSignature: (deviceId) => {
+            return get().deviceSignatures[deviceId] || null;
+        },
+
+        getDeviceBySignature: (signature) => {
+            const state = get();
+
+            // First, look for exact deviceId match in current signatures
+            for (const [deviceId, sig] of Object.entries(state.deviceSignatures)) {
+                if (sig.presetId === signature.presetId && sig.deviceName === signature.deviceName) {
+                    const device = state.inputs.get(deviceId);
+                    if (device?.state === 'connected') {
+                        return device;
+                    }
+                }
+            }
+
+            // If no match found, try to find by presetId (for new connections)
+            // This handles the case where deviceId changed but it's the same device type
+            const registry = getPresetRegistry();
+            for (const [, device] of state.inputs) {
+                if (device.state !== 'connected') continue;
+                const preset = registry.matchDevice(device.name);
+                if (preset?.id === signature.presetId) {
+                    // Found a matching device type that's not yet named
+                    // Check if its default name would match
+                    if (!state.deviceSignatures[device.id]) {
+                        return device;
+                    }
+                }
+            }
+
+            return null;
+        },
+
+        isDeviceNameUsed: (presetId, deviceName) => {
+            return !!get().usedDeviceNames[`${presetId}:${deviceName}`];
+        },
+
+        // ================================================================
         // Browser
         // ================================================================
 
@@ -223,18 +352,12 @@ export const useMIDIStore = create<MIDIStore>()(
             const preset = registry.matchDevice(device.name);
 
             // Show auto-detect toast
+            // Note: Auto-dismiss is handled by the MIDIAutoDetectToast component
+            // to avoid duplicate timers and race conditions
             set({
                 pendingDevice: device,
                 detectedPreset: preset
             });
-
-            // Auto-dismiss after 10 seconds
-            setTimeout(() => {
-                const current = get().pendingDevice;
-                if (current?.id === device.id) {
-                    set({ pendingDevice: null, detectedPreset: null });
-                }
-            }, 10000);
         },
 
         handleDeviceDisconnected: (device) => {
@@ -258,7 +381,17 @@ export const useMIDIStore = create<MIDIStore>()(
             // Update last message (for debugging/monitoring)
             set({ lastMessage: event });
         }
-    }))
+            }),
+            {
+                name: 'openjammer-midi-devices',
+                // Only persist device naming data
+                partialize: (state) => ({
+                    usedDeviceNames: state.usedDeviceNames,
+                    deviceSignatures: state.deviceSignatures,
+                }),
+            }
+        )
+    )
 );
 
 // ============================================================================

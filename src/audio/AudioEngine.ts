@@ -72,10 +72,9 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
         }
     })();
 
-    const result = await initializationPromise;
-    // Clear the promise after successful initialization
-    initializationPromise = null;
-    return result;
+    // Don't clear the promise - resolved promises can be awaited multiple times
+    // This prevents race conditions where a 3rd caller comes in during resolution
+    return initializationPromise;
 }
 
 /**

@@ -35,6 +35,9 @@ export interface Loop {
  * - Recording continues, layering new audio on top of previous loops
  * - User manually stops recording when done
  */
+// Maximum number of loops to prevent memory exhaustion in long sessions
+const MAX_LOOPS = 50;
+
 export class Looper {
     private duration: number;
     private loops: Loop[] = [];
@@ -333,6 +336,15 @@ export class Looper {
             };
 
             this.loops.push(loop);
+
+            // Enforce max loops limit - remove oldest loops when limit exceeded
+            while (this.loops.length > MAX_LOOPS) {
+                const oldestLoop = this.loops.shift();
+                if (oldestLoop) {
+                    this.stopLoop(oldestLoop);
+                }
+            }
+
             this.onLoopAdded?.(loop);
 
             // Auto-start playing the loop

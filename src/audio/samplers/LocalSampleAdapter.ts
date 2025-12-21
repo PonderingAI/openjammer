@@ -32,8 +32,8 @@ export class LocalSampleAdapter {
   private activePlaybacks: Map<string, ActivePlayback> = new Map();
   private currentSampleId: string | null = null;
   private playbackMode: PlaybackMode = 'oneshot';
-  private isLoading = false;
-  private loadPromise: Promise<void> | null = null;
+  // Track loading promises per sampleId to prevent race conditions when switching samples
+  private loadingPromises: Map<string, Promise<void>> = new Map();
 
   constructor(options: LocalSampleAdapterOptions = {}) {
     this.playbackMode = options.playbackMode ?? 'oneshot';
@@ -69,16 +69,17 @@ export class LocalSampleAdapter {
    * Load a sample from the library into the cache
    */
   async loadSample(sampleId: string): Promise<void> {
-    if (this.isLoading && this.currentSampleId === sampleId) {
-      return this.loadPromise!;
+    // If already loading this specific sample, return the existing promise
+    const existingPromise = this.loadingPromises.get(sampleId);
+    if (existingPromise) {
+      this.currentSampleId = sampleId;
+      return existingPromise;
     }
 
     this.currentSampleId = sampleId;
-    this.isLoading = true;
-
     const cache = getAudioBufferCache();
 
-    this.loadPromise = (async () => {
+    const loadPromise = (async () => {
       try {
         // Use cache's load method with a loader function
         await cache.load(sampleId, async () => {
@@ -96,16 +97,14 @@ export class LocalSampleAdapter {
           const arrayBuffer = await file.arrayBuffer();
           return await ctx.decodeAudioData(arrayBuffer);
         });
-
-        this.isLoading = false;
-      } catch (err) {
-        this.isLoading = false;
-        console.error('Failed to load sample:', err);
-        throw err;
+      } finally {
+        // Clean up the loading promise when done (success or failure)
+        this.loadingPromises.delete(sampleId);
       }
     })();
 
-    return this.loadPromise;
+    this.loadingPromises.set(sampleId, loadPromise);
+    return loadPromise;
   }
 
   /**
@@ -258,7 +257,7 @@ export class LocalSampleAdapter {
     }
 
     this.currentSampleId = null;
-    this.loadPromise = null;
+    this.loadingPromises.clear();
   }
 }
 

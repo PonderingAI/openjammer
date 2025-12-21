@@ -1,19 +1,15 @@
 /**
- * MiniLab 3 Node - Arturia MiniLab 3 MIDI Controller
+ * MiniLab 3 Node - Container for Arturia MiniLab 3 MIDI Controller
  *
- * Full visual representation with per-control output ports.
- * Each key, pad, knob, fader, and touch strip is directly connectable.
+ * Press E to enter and see the full visual representation with per-control ports.
+ * Shows synced output ports from internal output-panel (Keys bundle by default).
  *
- * Output signals are normalized:
- * - Keys/Pads: 0 (released) to 1 (pressed with full velocity)
- * - Knobs/Faders/ModWheel: 0 to 1
- * - Pitch Bend: -1 to 1 (center = 0)
+ * MIDI connection is managed here. Device selection persists with the node.
  */
 
 import { useEffect, useCallback } from 'react';
 import type { GraphNode, MIDIInputNodeData } from '../../engine/types';
 import { useMIDIStore } from '../../store/midiStore';
-import { MiniLab3Visual } from './MiniLab3Visual';
 import './MIDIVisualNode.css';
 
 interface MiniLab3NodeProps {
@@ -102,7 +98,7 @@ export function MiniLab3Node({
         >
             {/* Header - draggable */}
             <div
-                className="minilab3-header"
+                className="schematic-header"
                 onMouseDown={handleHeaderMouseDown}
             >
                 <span className="schematic-title">MiniLab 3</span>
@@ -114,46 +110,42 @@ export function MiniLab3Node({
                 )}
             </div>
 
-            {/* Connect button overlay - only shows when not connected */}
-            {!isConnected && (
-                <div className="minilab3-connect-overlay">
+            {/* Body - Show synced ports from internal canvas */}
+            <div className="minilab3-schematic-body">
+                {/* Connect button - only shows when not connected */}
+                {!isConnected && (
                     <button
-                        className="minilab3-connect-btn"
+                        className="minilab3-connect-btn schematic-connect-btn"
                         onClick={handleDeviceClick}
                         title="Connect MIDI device"
                     >
-                        Connect Device
+                        Connect
                     </button>
+                )}
+
+                {/* Render ports dynamically (auto-synced from internal output-panel) */}
+                {node.ports.filter(p => p.direction === 'output' && p.name).map((port) => (
+                    <div key={port.id} className="port-row output">
+                        <span className="port-label">{port.name}</span>
+                        <div
+                            className={`port-circle-marker control-port output-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            data-node-id={node.id}
+                            data-port-id={port.id}
+                            data-port-type={port.type}
+                            onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                            onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                            onMouseEnter={() => handlePortMouseEnter?.(port.id)}
+                            onMouseLeave={handlePortMouseLeave}
+                        />
+                    </div>
+                ))}
+
+                {/* Hint to enter node */}
+                <div className="enter-hint">
+                    <span className="enter-hint-key">E</span>
+                    <span className="enter-hint-text">to edit</span>
                 </div>
-            )}
-
-            {/* Visual representation with per-control ports */}
-            <MiniLab3Visual
-                deviceId={data.deviceId}
-                handlePortMouseDown={handlePortMouseDown}
-                handlePortMouseUp={handlePortMouseUp}
-                handlePortMouseEnter={handlePortMouseEnter}
-                handlePortMouseLeave={handlePortMouseLeave}
-                hasConnection={hasConnection}
-            />
-
-            {/* Connected indicator badge */}
-            {isConnected && (
-                <div
-                    className="midi-connected-badge"
-                    style={{
-                        position: 'absolute',
-                        top: -8,
-                        right: -8,
-                        width: 16,
-                        height: 16,
-                        borderRadius: '50%',
-                        background: 'var(--accent-success)',
-                        border: '2px solid var(--sketch-black)',
-                        boxShadow: '0 0 8px var(--accent-success)'
-                    }}
-                />
-            )}
+            </div>
         </div>
     );
 }
