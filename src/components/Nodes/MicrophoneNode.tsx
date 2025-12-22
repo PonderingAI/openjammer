@@ -126,11 +126,15 @@ export function MicrophoneNode({
             }
         };
 
-        setTimeout(() => {
+        // Delay adding listener to avoid immediate trigger from the click that opened the dropdown
+        const timeoutId = setTimeout(() => {
             document.addEventListener('mousedown', handleClickOutside);
         }, 0);
 
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        return () => {
+            clearTimeout(timeoutId);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, [showDevices]);
 
     // Initialize microphone

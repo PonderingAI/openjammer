@@ -5,11 +5,13 @@
 .dropdown-menu {
     position: relative;
     display: inline-flex;
+    flex-shrink: 0;
 }
 
 .dropdown-trigger {
     display: flex;
     align-items: center;
+    flex-shrink: 0;
     gap: var(--space-xs);
     padding: var(--space-xs) var(--space-sm);
     border: none;
@@ -21,6 +23,7 @@
     background: transparent;
     cursor: pointer;
     transition: all var(--transition-fast);
+    white-space: nowrap;
 }
 
 .dropdown-trigger:hover {
@@ -123,6 +126,13 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text-muted);
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.dropdown-item:hover .dropdown-item-shortcut,
+.dropdown-item-focused .dropdown-item-shortcut {
+    opacity: 1;
 }
 
 /* Separator */

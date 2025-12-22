@@ -179,6 +179,15 @@ export class Recorder {
             this.processRecording();
         };
 
+        this.mediaRecorder.onerror = (event) => {
+            console.error('[Recorder] MediaRecorder error:', event);
+            this.isRecording = false;
+            if (this.timeUpdateInterval) {
+                clearInterval(this.timeUpdateInterval);
+                this.timeUpdateInterval = null;
+            }
+        };
+
         this.mediaRecorder.start(RECORDING_CHUNK_INTERVAL_MS);
 
         // Start time update interval
@@ -265,7 +274,9 @@ export class Recorder {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // Delay revocation to ensure download has time to start
+        // 1 second is sufficient for the browser to initiate the download
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     /**
@@ -374,6 +385,8 @@ export class Recorder {
         }
 
         if (this.mediaStreamDestination) {
+            // Stop all tracks in the stream to release microphone indicator
+            this.mediaStreamDestination.stream.getTracks().forEach(track => track.stop());
             this.mediaStreamDestination.disconnect();
             this.mediaStreamDestination = null;
         }

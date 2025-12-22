@@ -108,6 +108,52 @@ export class Looper {
         return this.loops;
     }
 
+    /**
+     * Add a loop from an external AudioBuffer (e.g., from dropped audio clip)
+     * The buffer is used directly without re-recording.
+     */
+    addLoopFromBuffer(buffer: AudioBuffer): void {
+        // Generate waveform data from buffer
+        const channelData = buffer.getChannelData(0);
+        const numSamples = Math.min(this.MAX_WAVEFORM_SAMPLES, 100);
+        const segmentSize = Math.floor(channelData.length / numSamples);
+        const waveformData: number[] = [];
+
+        for (let i = 0; i < numSamples; i++) {
+            const start = i * segmentSize;
+            const end = Math.min(start + segmentSize, channelData.length);
+            let maxAbs = 0;
+            for (let j = start; j < end; j++) {
+                const abs = Math.abs(channelData[j]);
+                if (abs > maxAbs) maxAbs = abs;
+            }
+            waveformData.push(maxAbs);
+        }
+
+        const loop: Loop = {
+            id: `loop-${Date.now()}`,
+            buffer: buffer,
+            startTime: 0,
+            isMuted: false,
+            gainNode: null,
+            sourceNode: null,
+            waveformData
+        };
+
+        this.loops.push(loop);
+
+        // Enforce max loops limit
+        while (this.loops.length > MAX_LOOPS) {
+            const oldestLoop = this.loops.shift();
+            if (oldestLoop) {
+                this.stopLoop(oldestLoop);
+            }
+        }
+
+        this.onLoopAdded?.(loop);
+        this.playLoop(loop);
+    }
+
     getOutput(): GainNode | null {
         return this.outputNode;
     }
@@ -253,6 +299,15 @@ export class Looper {
         const ctx = getAudioContext();
         if (!ctx) return;
 
+        // Stop any existing MediaRecorder before creating a new one
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            try {
+                this.mediaRecorder.stop();
+            } catch {
+                // Already stopped or in error state
+            }
+        }
+
         this.recordedChunks = [];
         // Reset circular buffer for new cycle (just reset indices, no allocation needed)
         this.waveformIndex = 0;
@@ -261,9 +316,14 @@ export class Looper {
         this.cycleStartTime = ctx.currentTime;
 
         // Create new MediaRecorder for this cycle
-        this.mediaRecorder = new MediaRecorder(this.inputStream, {
-            mimeType: 'audio/webm;codecs=opus'
-        });
+        try {
+            this.mediaRecorder = new MediaRecorder(this.inputStream, {
+                mimeType: 'audio/webm;codecs=opus'
+            });
+        } catch {
+            // Fallback for browsers that don't support opus
+            this.mediaRecorder = new MediaRecorder(this.inputStream);
+        }
 
         this.mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) {
@@ -272,6 +332,19 @@ export class Looper {
         };
 
         this.mediaRecorder.onstop = () => this.processRecordingCycle();
+
+        this.mediaRecorder.onerror = (event) => {
+            console.error('[Looper] MediaRecorder error:', event);
+            this.isRecording = false;
+            if (this.cycleTimerId !== null) {
+                clearTimeout(this.cycleTimerId);
+                this.cycleTimerId = null;
+            }
+            if (this.animationFrameId !== null) {
+                cancelAnimationFrame(this.animationFrameId);
+                this.animationFrameId = null;
+            }
+        };
 
         // Start recording immediately
         this.mediaRecorder.start();

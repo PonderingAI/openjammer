@@ -18,6 +18,10 @@ import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
 import { MIDIDeviceBrowser } from '../MIDI/MIDIDeviceBrowser';
 import { useMIDIStore } from '../../store/midiStore';
+import { useAudioClipStore } from '../../store/audioClipStore';
+import { AudioClipVisual } from '../Clips/AudioClipVisual';
+import { ClipDragLayer } from '../Clips/ClipDragLayer';
+import { WaveformEditorModal } from '../Clips/WaveformEditorModal';
 import './NodeCanvas.css';
 
 interface SelectionBox {
@@ -35,7 +39,6 @@ export function NodeCanvas() {
     // MIDI browser state - track where to create node after device selection
     const [midiNodePosition, setMidiNodePosition] = useState<Position | null>(null);
     const openMIDIBrowser = useMIDIStore((s) => s.openBrowser);
-    const closeMIDIBrowser = useMIDIStore((s) => s.closeBrowser);
 
     // Right-click drag state (for pan vs context menu)
     const [rightClickStart, setRightClickStart] = useState<Position | null>(null);
@@ -117,6 +120,23 @@ export function NodeCanvas() {
     const toggleGhostMode = useCanvasStore((s) => s.toggleGhostMode);
     const fitToNodes = useCanvasStore((s) => s.fitToNodes);
 
+    // Audio clip store
+    const allClips = useAudioClipStore((s) => s.clips);
+    const selectedClipIds = useAudioClipStore((s) => s.selectedClipIds);
+    const clipDragState = useAudioClipStore((s) => s.dragState);
+    const startClipDrag = useAudioClipStore((s) => s.startDrag);
+    const updateClipDrag = useAudioClipStore((s) => s.updateDrag);
+    const endClipDrag = useAudioClipStore((s) => s.endDrag);
+    const selectClip = useAudioClipStore((s) => s.selectClip);
+    const setClipPosition = useAudioClipStore((s) => s.setClipPosition);
+    const openClipEditor = useAudioClipStore((s) => s.openEditor);
+    const removeClip = useAudioClipStore((s) => s.removeClip);
+
+    // Derive clips on canvas (memoized to avoid infinite loops)
+    const clipsOnCanvas = useMemo(() => {
+        return Array.from(allClips.values()).filter((clip) => clip.position !== null);
+    }, [allClips]);
+
     // Audio store for mode switching
     const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
 
@@ -179,7 +199,7 @@ export function NodeCanvas() {
     }, [screenToCanvas, openMIDIBrowser]);
 
     // Handle MIDI device selection from browser
-    const handleMIDIDeviceSelected = useCallback((deviceId: string | null, presetId: string) => {
+    const handleMIDIDeviceSelected = useCallback((deviceId: string | null, presetId: string): boolean => {
         // Check if browser was opened from an existing node
         const targetNodeId = useMIDIStore.getState().browserTargetNodeId;
 
@@ -191,6 +211,7 @@ export function NodeCanvas() {
                 presetId,
                 isConnected: deviceId !== null
             });
+            return true;
         } else if (midiNodePosition) {
             // Create new MIDI node with selected device/preset
             addNode('midi', midiNodePosition, currentViewNodeId, {
@@ -199,9 +220,10 @@ export function NodeCanvas() {
                 isConnected: deviceId !== null
             });
             setMidiNodePosition(null);
+            return true;
         }
-        closeMIDIBrowser();
-    }, [midiNodePosition, addNode, currentViewNodeId, closeMIDIBrowser]);
+        return false;
+    }, [midiNodePosition, addNode, currentViewNodeId]);
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -251,6 +273,11 @@ export function NodeCanvas() {
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         setMousePos({ x: e.clientX, y: e.clientY });
 
+        // Update clip drag position if dragging a clip
+        if (clipDragState.isDragging) {
+            updateClipDrag({ x: e.clientX, y: e.clientY });
+        }
+
         // Right-click drag panning
         if (rightClickStart) {
             const dx = e.clientX - rightClickStart.x;
@@ -293,7 +320,7 @@ export function NodeCanvas() {
                 });
             }
         }
-    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect]);
+    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect, clipDragState.isDragging, updateClipDrag]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
@@ -360,6 +387,19 @@ export function NodeCanvas() {
             selectionBoxCtrlHeld.current = false;
         }
 
+        // End clip drag if one is in progress
+        if (clipDragState.isDragging) {
+            // If not dropping on a target, update clip position on canvas
+            if (!clipDragState.hoveredTargetId && clipDragState.draggedClipId) {
+                const canvasPos = screenToCanvas({
+                    x: clipDragState.currentPosition.x - clipDragState.dragOffset.x,
+                    y: clipDragState.currentPosition.y - clipDragState.dragOffset.y
+                });
+                setClipPosition(clipDragState.draggedClipId, canvasPos);
+            }
+            endClipDrag();
+        }
+
         // Cancel connection if mouseup happens on empty canvas (not on a valid port)
         // This runs after port mouseup handlers, so if isConnecting is still true,
         // it means the connection wasn't completed on a port
@@ -372,7 +412,7 @@ export function NodeCanvas() {
                 }
             });
         }
-    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting, nodes, startConnecting, getPortCanvasPositionForSelection]);
+    }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting, nodes, startConnecting, getPortCanvasPositionForSelection, clipDragState, endClipDrag, setClipPosition, screenToCanvas]);
 
     // Handle wheel for zoom and two-finger trackpad pan
     // Note: This uses a native event listener with { passive: false } to allow preventDefault()
@@ -432,10 +472,12 @@ export function NodeCanvas() {
                 return;
             }
 
-            // Delete/Backspace always works
+            // Delete/Backspace always works - delete nodes and clips
             if (matchesAction(e, 'edit.delete') || e.key === 'Backspace') {
                 e.preventDefault();
                 deleteSelected();
+                // Also delete selected audio clips
+                selectedClipIds.forEach(clipId => removeClip(clipId));
                 return;
             }
 
@@ -696,7 +738,7 @@ export function NodeCanvas() {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId, copySelected, pasteClipboard]);
+    }, [deleteSelected, toggleGhostMode, undo, redo, startConnecting, setCurrentMode, enterNode, exitToParent, allNodes, currentViewNodeId, copySelected, pasteClipboard, selectedClipIds, removeClip]);
 
     // Cache for port positions - invalidated when pan/zoom/nodes change
     // This prevents expensive DOM queries on every render for every connection
@@ -988,6 +1030,25 @@ export function NodeCanvas() {
                     ))}
                 </div>
 
+                {/* Audio Clips Layer */}
+                <div className="clips-layer">
+                    {clipsOnCanvas.map((clip) => (
+                        <AudioClipVisual
+                            key={clip.id}
+                            clip={clip}
+                            isOnCanvas={true}
+                            isDragging={clipDragState.draggedClipId === clip.id}
+                            isSelected={selectedClipIds.has(clip.id)}
+                            onDragStart={(e) => {
+                                const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                selectClip(clip.id, e.shiftKey);
+                                startClipDrag(clip.id, { x: e.clientX, y: e.clientY }, bounds);
+                            }}
+                            onDoubleClick={() => openClipEditor(clip.id)}
+                        />
+                    ))}
+                </div>
+
                 {/* Selection Box */}
                 {renderSelectionBox()}
             </div>
@@ -1004,6 +1065,12 @@ export function NodeCanvas() {
 
             {/* MIDI Device Browser */}
             <MIDIDeviceBrowser onSelectDevice={handleMIDIDeviceSelected} />
+
+            {/* Audio Clip Drag Layer (portal) */}
+            <ClipDragLayer />
+
+            {/* Waveform Editor Modal (portal) */}
+            <WaveformEditorModal />
 
             {/* Back to Action button - appears when nodes are not visible on any level */}
             {nodes.size > 0 && !nodesVisibility.visible && nodesVisibility.direction !== null && (

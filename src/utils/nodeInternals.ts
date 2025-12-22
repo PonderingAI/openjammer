@@ -195,6 +195,9 @@ export function createDefaultInternalStructure(parentNode: GraphNode): InternalS
         case 'minilab-3':
             return createMiniLab3Internals(parentNode);
 
+        case 'sampler':
+            return createSamplerInternals();
+
         default:
             return createGenericInternals();
     }
@@ -1148,5 +1151,123 @@ function createMiniLab3Internals(parentNode: GraphNode): InternalStructure {
         specialNodes,
         showEmptyInputPorts: false,   // Only show ports with connections
         showEmptyOutputPorts: false   // Only show ports with connections
+    };
+}
+
+/**
+ * Sampler internal structure:
+ * - Input panel for bundle inputs (from keyboard rows) and sample input
+ * - Sampler configuration node (internal visualization)
+ * - Output panel with audio output
+ *
+ * Similar to instrument nodes but with sample input capability
+ */
+function createSamplerInternals(): InternalStructure {
+    const internalNodes = new Map<string, GraphNode>();
+    const internalConnections = new Map<string, Connection>();
+    const specialNodes: string[] = [];
+
+    // Create input-panel with:
+    // 1. Empty placeholder for bundle connections (keyboard rows)
+    // 2. Sample input port for receiving AudioBuffer from Library/Looper
+    const inputPanelId = generateUniqueId('input-panel-');
+    const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
+    const inputPanel: GraphNode = {
+        id: inputPanelId,
+        type: 'input-panel',
+        category: 'routing',
+        position: { x: 50, y: 150 },
+        data: {
+            portLabels: {
+                [emptyInputPortId]: '',  // Empty label for bundle placeholder
+                'sample-in': 'Sample'    // Sample input from Library/Looper
+            },
+            portHideExternalLabel: {
+                [emptyInputPortId]: true  // Hide the empty label on parent
+            }
+        },
+        ports: [
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.3 } },
+            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.7 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(inputPanelId, inputPanel);
+    specialNodes.push(inputPanelId);
+
+    // Create sampler-visual node in the center
+    // This is the detailed visual representation with waveform, ADSR, root note, etc.
+    // NOT a special node - doesn't sync ports to parent
+    const samplerVisualId = generateUniqueId('sampler-visual-');
+    const samplerVisual: GraphNode = {
+        id: samplerVisualId,
+        type: 'sampler-visual',
+        category: 'instruments',
+        position: { x: 300, y: 100 },
+        data: {},  // Will inherit from parent sampler node
+        ports: [
+            // Key inputs - receives from input panel
+            { id: 'keys-in', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
+            // Sample input - receives from input panel
+            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
+            // Audio output - sends to output panel
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(samplerVisualId, samplerVisual);
+    // NOT added to specialNodes - internal visualization only
+
+    // Create output-panel with audio output
+    const outputPanelId = generateUniqueId('output-panel-');
+    const outputPanel: GraphNode = {
+        id: outputPanelId,
+        type: 'output-panel',
+        category: 'routing',
+        position: { x: 700, y: 150 },
+        data: {
+            portLabels: {
+                'audio-out': 'Audio'
+            }
+        },
+        ports: [
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'input', position: { x: 0, y: 0.5 } }
+        ],
+        parentId: null,
+        childIds: []
+    };
+    internalNodes.set(outputPanelId, outputPanel);
+    specialNodes.push(outputPanelId);
+
+    // Create connection: input-panel sample-in -> sampler-visual sample-in
+    const conn1Id = generateUniqueId('conn-');
+    internalConnections.set(conn1Id, {
+        id: conn1Id,
+        sourceNodeId: inputPanelId,
+        sourcePortId: 'sample-in',
+        targetNodeId: samplerVisualId,
+        targetPortId: 'sample-in',
+        type: 'audio'
+    });
+
+    // Create connection: sampler-visual -> output-panel
+    const conn2Id = generateUniqueId('conn-');
+    internalConnections.set(conn2Id, {
+        id: conn2Id,
+        sourceNodeId: samplerVisualId,
+        sourcePortId: 'audio-out',
+        targetNodeId: outputPanelId,
+        targetPortId: 'audio-out',
+        type: 'audio'
+    });
+
+    return {
+        internalNodes,
+        internalConnections,
+        specialNodes,
+        showEmptyInputPorts: true,    // Show empty input placeholder for bundle connections
+        showEmptyOutputPorts: true    // Always show audio output
     };
 }

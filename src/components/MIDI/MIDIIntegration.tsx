@@ -10,10 +10,11 @@
  * - Opening the MIDI device browser
  */
 
-import { useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useMemo, useRef } from 'react';
 import { useMIDIStore } from '../../store/midiStore';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
+import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
 import { MIDIAutoDetectToast } from './MIDIAutoDetectToast';
 import { MIDIDeviceBrowser } from './MIDIDeviceBrowser';
 import { getPresetRegistry } from '../../midi';
@@ -68,6 +69,9 @@ export function MIDIIntegration() {
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const nodes = useGraphStore((s) => s.nodes);
 
+    // Track which nodes we've already reconnected to prevent redundant processing
+    const reconnectedNodesRef = useRef<Set<string>>(new Set());
+
     // Initialize MIDI on mount
     useEffect(() => {
         if (isSupported && !isInitialized) {
@@ -76,26 +80,43 @@ export function MIDIIntegration() {
     }, [isSupported, isInitialized, initialize]);
 
     // Auto-reconnect MIDI nodes when devices become available
+    // Only runs when inputs change (device connected/disconnected) - not on every nodes change
     useEffect(() => {
         if (!isInitialized) return;
 
+        // Get current nodes from store (don't need reactive updates here)
+        const currentNodes = useGraphStore.getState().nodes;
+
         // Find all MIDI nodes that have signatures but are disconnected
-        for (const node of nodes.values()) {
+        for (const node of currentNodes.values()) {
+            // Only process MIDI-related node types
+            if (node.type !== 'midi' && node.type !== 'minilab-3') continue;
+
             const data = node.data as MIDIInputNodeData;
             if (!data?.deviceSignature) continue;
-            if (data.isConnected && data.deviceId) continue; // Already connected
+
+            // Skip if already connected
+            if (data.isConnected && data.deviceId) {
+                reconnectedNodesRef.current.add(node.id);
+                continue;
+            }
+
+            // Clear from tracking if disconnected (device was removed)
+            if (reconnectedNodesRef.current.has(node.id)) {
+                reconnectedNodesRef.current.delete(node.id);
+            }
 
             // Try to find a matching device
             const device = getDeviceBySignature(data.deviceSignature);
             if (device) {
-                console.log(`[MIDI] Auto-reconnecting ${data.deviceSignature.deviceName} to ${device.name}`);
+                reconnectedNodesRef.current.add(node.id);
                 updateNodeData(node.id, {
                     deviceId: device.id,
                     isConnected: true,
                 });
             }
         }
-    }, [isInitialized, inputs, nodes, getDeviceBySignature, updateNodeData]);
+    }, [isInitialized, inputs, getDeviceBySignature, updateNodeData]);
 
     // Check if a device already has a node on the canvas (by deviceId or signature)
     const deviceHasNode = useCallback((deviceId: string): boolean => {
@@ -107,15 +128,25 @@ export function MIDIIntegration() {
         return false;
     }, [nodes]);
 
-    // Check if a signature already has a node on the canvas
-    const signatureHasNode = useCallback((presetId: string, deviceName: string): boolean => {
+    // Check if a signature already has a node on the canvas and return the node ID
+    const findNodeBySignature = useCallback((presetId: string, deviceName: string): string | null => {
         for (const node of nodes.values()) {
             const sig = (node.data as MIDIInputNodeData)?.deviceSignature;
             if (sig?.presetId === presetId && sig?.deviceName === deviceName) {
-                return true;
+                return node.id;
             }
         }
-        return false;
+        return null;
+    }, [nodes]);
+
+    // Find existing node by deviceId
+    const findNodeByDeviceId = useCallback((deviceId: string): string | null => {
+        for (const node of nodes.values()) {
+            if (node.data?.deviceId === deviceId) {
+                return node.id;
+            }
+        }
+        return null;
     }, [nodes]);
 
     // Check if pending device already has a node
@@ -124,8 +155,23 @@ export function MIDIIntegration() {
         return deviceHasNode(pendingDevice.id);
     }, [pendingDevice, deviceHasNode]);
 
+    // Lock to prevent duplicate node creation from rapid clicks
+    const isCreatingNodeRef = useRef(false);
+
     // Handle adding a device from the auto-detect toast
-    const handleAddDevice = useCallback((deviceId: string, presetId: string) => {
+    // Returns true if node was created, false if duplicate was detected
+    const handleAddDevice = useCallback((deviceId: string, presetId: string): boolean => {
+        // Prevent rapid double-clicks
+        if (isCreatingNodeRef.current) return false;
+
+        // Check if device already has a node (by deviceId)
+        const existingByDeviceId = findNodeByDeviceId(deviceId);
+        if (existingByDeviceId) {
+            useUIFeedbackStore.getState().flashNode(existingByDeviceId);
+            dismissPendingDevice();
+            return false;
+        }
+
         // Get preset name for auto-naming
         const registry = getPresetRegistry();
         const preset = registry.getPreset(presetId);
@@ -135,62 +181,83 @@ export function MIDIIntegration() {
         const deviceName = generateDeviceName(deviceId, presetId, presetName);
 
         // Check if this signature already has a node
-        if (signatureHasNode(presetId, deviceName)) {
-            console.log(`[MIDI] Device with signature ${presetId}:${deviceName} already has a node`);
+        const existingBySignature = findNodeBySignature(presetId, deviceName);
+        if (existingBySignature) {
+            useUIFeedbackStore.getState().flashNode(existingBySignature);
             dismissPendingDevice();
-            return;
+            return false;
         }
 
-        // Create signature for stable identification
-        const deviceSignature: MIDIDeviceSignature = {
-            presetId,
-            deviceName,
-        };
+        isCreatingNodeRef.current = true;
 
-        // Get node type based on preset
-        const nodeType = getNodeTypeForPreset(presetId);
+        try {
+            // Create signature for stable identification
+            const deviceSignature: MIDIDeviceSignature = {
+                presetId,
+                deviceName,
+            };
 
-        // Calculate position - center of canvas view with some randomness
-        const position = getCanvasCenterPosition();
+            // Get node type based on preset
+            const nodeType = getNodeTypeForPreset(presetId);
 
-        // Add the node to the canvas with stable signature
-        addNode(nodeType, position, null, {
-            deviceId,
-            deviceSignature,
-            presetId,
-            isConnected: true,
-            activeChannel: 0,
-        });
-    }, [addNode, generateDeviceName, signatureHasNode, dismissPendingDevice]);
+            // Calculate position - center of canvas view with some randomness
+            const position = getCanvasCenterPosition();
+
+            // Add the node to the canvas with stable signature
+            addNode(nodeType, position, null, {
+                deviceId,
+                deviceSignature,
+                presetId,
+                isConnected: true,
+                activeChannel: 0,
+            });
+            return true;
+        } finally {
+            isCreatingNodeRef.current = false;
+        }
+    }, [addNode, generateDeviceName, findNodeBySignature, findNodeByDeviceId, dismissPendingDevice]);
 
     // Handle selecting a device from the browser
-    const handleSelectDevice = useCallback((deviceId: string | null, presetId: string) => {
+    // Returns true if node was created/updated, false if duplicate was detected
+    const handleSelectDevice = useCallback((deviceId: string | null, presetId: string): boolean => {
         // If we have a target node (opened browser from existing MIDI node), update that node
         if (browserTargetNodeId) {
-            // If switching to a new device, update signature too
-            if (deviceId) {
-                const registry = getPresetRegistry();
-                const preset = registry.getPreset(presetId);
-                const presetName = preset?.name || 'MIDI Device';
-                const deviceName = generateDeviceName(deviceId, presetId, presetName);
+            // Validate target node still exists (could have been deleted while browser was open)
+            const targetNode = nodes.get(browserTargetNodeId);
+            if (targetNode) {
+                if (deviceId) {
+                    // Switching to a new device, update signature too
+                    const registry = getPresetRegistry();
+                    const preset = registry.getPreset(presetId);
+                    const presetName = preset?.name || 'MIDI Device';
+                    const deviceName = generateDeviceName(deviceId, presetId, presetName);
 
-                updateNodeData(browserTargetNodeId, {
-                    deviceId,
-                    deviceSignature: { presetId, deviceName },
-                    presetId,
-                    isConnected: true,
-                });
-            } else {
-                updateNodeData(browserTargetNodeId, {
-                    deviceId: null,
-                    isConnected: false,
-                });
+                    updateNodeData(browserTargetNodeId, {
+                        deviceId,
+                        deviceSignature: { presetId, deviceName },
+                        presetId,
+                        isConnected: true,
+                    });
+                } else {
+                    updateNodeData(browserTargetNodeId, {
+                        deviceId: null,
+                        isConnected: false,
+                    });
+                }
+                return true; // Update succeeded
             }
-            return;
+            // Node was deleted while browser was open, fall through to create new node
         }
 
         // Otherwise, create a new node
-        if (!deviceId) return; // Don't create node without device
+        if (!deviceId) return false; // Don't create node without device
+
+        // Check if device already has a node (by deviceId)
+        const existingByDeviceId = findNodeByDeviceId(deviceId);
+        if (existingByDeviceId) {
+            useUIFeedbackStore.getState().flashNode(existingByDeviceId);
+            return false;
+        }
 
         const registry = getPresetRegistry();
         const preset = registry.getPreset(presetId);
@@ -198,27 +265,37 @@ export function MIDIIntegration() {
         const deviceName = generateDeviceName(deviceId, presetId, presetName);
 
         // Check if this signature already has a node
-        if (signatureHasNode(presetId, deviceName)) {
-            console.log(`[MIDI] Device with signature ${presetId}:${deviceName} already has a node`);
-            return;
+        const existingBySignature = findNodeBySignature(presetId, deviceName);
+        if (existingBySignature) {
+            useUIFeedbackStore.getState().flashNode(existingBySignature);
+            return false;
         }
 
-        const deviceSignature: MIDIDeviceSignature = {
-            presetId,
-            deviceName,
-        };
+        // Prevent rapid double-clicks
+        if (isCreatingNodeRef.current) return false;
+        isCreatingNodeRef.current = true;
 
-        const nodeType = getNodeTypeForPreset(presetId);
-        const position = getCanvasCenterPosition();
+        try {
+            const deviceSignature: MIDIDeviceSignature = {
+                presetId,
+                deviceName,
+            };
 
-        addNode(nodeType, position, null, {
-            deviceId,
-            deviceSignature,
-            presetId,
-            isConnected: true,
-            activeChannel: 0,
-        });
-    }, [browserTargetNodeId, addNode, updateNodeData, generateDeviceName, signatureHasNode]);
+            const nodeType = getNodeTypeForPreset(presetId);
+            const position = getCanvasCenterPosition();
+
+            addNode(nodeType, position, null, {
+                deviceId,
+                deviceSignature,
+                presetId,
+                isConnected: true,
+                activeChannel: 0,
+            });
+            return true;
+        } finally {
+            isCreatingNodeRef.current = false;
+        }
+    }, [browserTargetNodeId, addNode, updateNodeData, generateDeviceName, findNodeBySignature, findNodeByDeviceId]);
 
     // Auto-dismiss pending device if it already has a node
     useEffect(() => {

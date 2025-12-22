@@ -1,0 +1,907 @@
+/**
+ * Sampler Visual Node Styles - INSIDE view
+ *
+ * Detailed controls for the sampler when entering with E key.
+ * Shows waveform, ADSR, root note, loop, velocity curve, trigger mode.
+ */
+
+/* ============================================================================
+   Main Container
+   ============================================================================ */
+
+.sampler-visual-node {
+    min-width: 440px;
+    min-height: 400px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+    border: 2px solid #3a4a6a;
+    border-radius: 12px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.sampler-visual-node.selected {
+    border-color: #64b5f6;
+    box-shadow:
+        0 0 20px rgba(100, 181, 246, 0.3),
+        0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.sampler-visual-node.dragging {
+    opacity: 0.8;
+}
+
+/* ============================================================================
+   Header
+   ============================================================================ */
+
+.sampler-visual-header {
+    padding: 12px 16px;
+    background: linear-gradient(180deg, rgba(60, 80, 120, 0.4) 0%, rgba(40, 60, 100, 0.2) 100%);
+    border-bottom: 1px solid rgba(100, 150, 200, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sampler-visual-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #a0c4ff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    letter-spacing: 0.5px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ============================================================================
+   Content Area
+   ============================================================================ */
+
+.sampler-visual-content {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+}
+
+/* ============================================================================
+   Waveform Section
+   ============================================================================ */
+
+.sampler-visual-waveform-section {
+    position: relative;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 8px;
+    border: 1px solid rgba(100, 150, 200, 0.2);
+}
+
+.sampler-visual-waveform {
+    width: 100%;
+    height: 120px;
+    border-radius: 4px;
+    display: block;
+}
+
+.sampler-visual-waveform-info {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    display: flex;
+    gap: 8px;
+    font-size: 10px;
+    color: rgba(150, 180, 220, 0.7);
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+}
+
+.sampler-visual-waveform-info .info-item {
+    padding: 0 4px;
+}
+
+.sampler-visual-waveform-info .info-item.zoom {
+    color: #4ecdc4;
+    font-weight: 600;
+}
+
+/* ============================================================================
+   Loop Markers
+   ============================================================================ */
+
+.sampler-visual-loop-markers {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.sampler-visual-loop-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 16px;
+    margin-left: -8px;
+    pointer-events: auto;
+    cursor: ew-resize;
+    z-index: 20;
+}
+
+.sampler-visual-loop-marker .marker-line {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: #4ecdc4;
+    box-shadow: 0 0 6px rgba(78, 205, 196, 0.6);
+    transition: background 0.1s ease, box-shadow 0.1s ease;
+}
+
+.sampler-visual-loop-marker .marker-handle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 12px;
+    height: 16px;
+    background: linear-gradient(180deg, #4ecdc4 0%, #26a69a 100%);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 3px 3px 0 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s ease, background 0.1s ease;
+}
+
+.sampler-visual-loop-marker.start .marker-handle::after {
+    content: 'S';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 8px;
+    font-weight: 700;
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.sampler-visual-loop-marker.end .marker-handle::after {
+    content: 'E';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 8px;
+    font-weight: 700;
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.sampler-visual-loop-marker:hover .marker-handle,
+.sampler-visual-loop-marker.dragging .marker-handle {
+    transform: translateX(-50%) scale(1.1);
+    background: linear-gradient(180deg, #6ee7df 0%, #4ecdc4 100%);
+}
+
+.sampler-visual-loop-marker:hover .marker-line,
+.sampler-visual-loop-marker.dragging .marker-line {
+    background: #6ee7df;
+    box-shadow: 0 0 10px rgba(78, 205, 196, 0.8);
+}
+
+.sampler-visual-loop-marker.dragging {
+    z-index: 30;
+}
+
+.sampler-visual-loop-region {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(78, 205, 196, 0.15);
+    border-left: 1px dashed rgba(78, 205, 196, 0.3);
+    border-right: 1px dashed rgba(78, 205, 196, 0.3);
+    pointer-events: none;
+}
+
+/* ============================================================================
+   Zoom Control
+   ============================================================================ */
+
+.sampler-visual-zoom-control {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+
+.sampler-visual-zoom-control .zoom-label {
+    font-size: 10px;
+    color: rgba(150, 180, 220, 0.7);
+    text-transform: uppercase;
+}
+
+.sampler-visual-zoom-control .zoom-slider {
+    width: 80px;
+    height: 4px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(100, 150, 200, 0.2);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.sampler-visual-zoom-control .zoom-slider::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    background: linear-gradient(180deg, #64b5f6 0%, #42a5f5 100%);
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+}
+
+.sampler-visual-zoom-control .zoom-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+}
+
+.sampler-visual-zoom-control .zoom-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: linear-gradient(180deg, #64b5f6 0%, #42a5f5 100%);
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+}
+
+/* ============================================================================
+   Controls Grid
+   ============================================================================ */
+
+.sampler-visual-controls {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.sampler-visual-control-group {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px;
+    background: rgba(40, 60, 100, 0.2);
+    border-radius: 8px;
+    border: 1px solid rgba(100, 150, 200, 0.15);
+}
+
+.sampler-visual-control-group label {
+    font-size: 11px;
+    color: rgba(150, 180, 220, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sampler-visual-root-btn {
+    padding: 8px 16px;
+    background: linear-gradient(180deg, #3a5a8a 0%, #2a4a7a 100%);
+    border: 1px solid rgba(100, 150, 200, 0.3);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.sampler-visual-root-btn:hover {
+    background: linear-gradient(180deg, #4a6a9a 0%, #3a5a8a 100%);
+    border-color: rgba(100, 150, 200, 0.5);
+}
+
+.sampler-visual-value {
+    padding: 8px 16px;
+    background: rgba(30, 50, 80, 0.5);
+    border: 1px solid rgba(100, 150, 200, 0.2);
+    border-radius: 6px;
+    color: #a0c4ff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: ns-resize;
+    user-select: none;
+    transition: all 0.15s ease;
+}
+
+.sampler-visual-value:hover {
+    background: rgba(40, 60, 100, 0.5);
+    border-color: rgba(100, 150, 200, 0.4);
+}
+
+.sampler-visual-toggle {
+    padding: 8px 20px;
+    background: rgba(60, 60, 80, 0.4);
+    border: 1px solid rgba(100, 100, 120, 0.3);
+    border-radius: 6px;
+    color: #888;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.sampler-visual-toggle:hover {
+    background: rgba(70, 70, 90, 0.5);
+}
+
+.sampler-visual-toggle.active {
+    background: linear-gradient(180deg, #2a8a4a 0%, #1a7a3a 100%);
+    border-color: rgba(100, 200, 120, 0.4);
+    color: #fff;
+}
+
+/* ============================================================================
+   Root Note Dropdown
+   ============================================================================ */
+
+.sampler-visual-root-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 8px;
+    z-index: 1000;
+    background: #1a1a2e;
+    border: 1px solid rgba(100, 150, 200, 0.3);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    padding: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.sampler-visual-root-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 2px;
+}
+
+.sampler-visual-root-option {
+    width: 36px;
+    height: 28px;
+    padding: 0;
+    background: rgba(40, 60, 100, 0.3);
+    border: 1px solid rgba(100, 150, 200, 0.15);
+    border-radius: 4px;
+    color: #a0c4ff;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    font-family: inherit;
+}
+
+.sampler-visual-root-option:hover {
+    background: rgba(60, 100, 160, 0.5);
+    border-color: rgba(100, 150, 200, 0.4);
+}
+
+.sampler-visual-root-option.selected {
+    background: linear-gradient(180deg, #3a7aaa 0%, #2a6a9a 100%);
+    border-color: #64b5f6;
+    color: #fff;
+}
+
+/* ============================================================================
+   ADSR Section
+   ============================================================================ */
+
+.sampler-visual-adsr-section {
+    background: rgba(40, 60, 100, 0.15);
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid rgba(100, 150, 200, 0.15);
+}
+
+.sampler-visual-adsr-label {
+    font-size: 11px;
+    color: rgba(150, 180, 220, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    text-align: center;
+}
+
+.sampler-visual-adsr-controls {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.sampler-visual-adsr-knob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.sampler-visual-adsr-value {
+    width: 70px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(50, 80, 130, 0.4) 0%, rgba(30, 60, 110, 0.3) 100%);
+    border: 2px solid rgba(100, 150, 200, 0.25);
+    border-radius: 10px;
+    color: #a0c4ff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: ns-resize;
+    user-select: none;
+    transition: all 0.15s ease;
+}
+
+.sampler-visual-adsr-value:hover {
+    background: linear-gradient(180deg, rgba(60, 100, 150, 0.5) 0%, rgba(40, 80, 130, 0.4) 100%);
+    border-color: rgba(100, 150, 200, 0.5);
+}
+
+.sampler-visual-adsr-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #7aa0d0;
+}
+
+/* ============================================================================
+   ADSR Graph (Interactive SVG Envelope)
+   ============================================================================ */
+
+.sampler-visual-adsr-graph {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    border: 1px solid rgba(100, 150, 200, 0.1);
+}
+
+.sampler-visual-adsr-svg {
+    display: block;
+    cursor: crosshair;
+}
+
+.sampler-visual-adsr-svg .adsr-grid {
+    stroke: rgba(100, 150, 200, 0.15);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+}
+
+.sampler-visual-adsr-svg .adsr-fill {
+    fill: rgba(162, 155, 254, 0.15);
+}
+
+.sampler-visual-adsr-svg .adsr-line {
+    fill: none;
+    stroke: #a29bfe;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 4px rgba(162, 155, 254, 0.4));
+}
+
+.sampler-visual-adsr-svg .adsr-point {
+    fill: #a29bfe;
+    stroke: #fff;
+    stroke-width: 2;
+    cursor: pointer;
+    transition: r 0.1s ease, fill 0.1s ease;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+
+.sampler-visual-adsr-svg .adsr-point:hover {
+    r: 9;
+    fill: #c4b5fd;
+}
+
+.sampler-visual-adsr-svg .adsr-point.dragging {
+    r: 10;
+    fill: #ddd6fe;
+    filter: drop-shadow(0 0 8px rgba(162, 155, 254, 0.8));
+}
+
+.sampler-visual-adsr-svg .adsr-point.attack {
+    fill: #ff6b6b;
+}
+
+.sampler-visual-adsr-svg .adsr-point.attack:hover,
+.sampler-visual-adsr-svg .adsr-point.attack.dragging {
+    fill: #ff8787;
+}
+
+.sampler-visual-adsr-svg .adsr-point.decay {
+    fill: #feca57;
+}
+
+.sampler-visual-adsr-svg .adsr-point.decay:hover,
+.sampler-visual-adsr-svg .adsr-point.decay.dragging {
+    fill: #fed373;
+}
+
+.sampler-visual-adsr-svg .adsr-point.sustain {
+    fill: #48dbfb;
+}
+
+.sampler-visual-adsr-svg .adsr-point.sustain:hover,
+.sampler-visual-adsr-svg .adsr-point.sustain.dragging {
+    fill: #72e2fc;
+}
+
+.sampler-visual-adsr-svg .adsr-point.release {
+    fill: #1dd1a1;
+}
+
+.sampler-visual-adsr-svg .adsr-point.release:hover,
+.sampler-visual-adsr-svg .adsr-point.release.dragging {
+    fill: #55efc4;
+}
+
+.sampler-visual-adsr-svg .adsr-phase-label {
+    font-size: 9px;
+    font-weight: 600;
+    fill: rgba(150, 180, 220, 0.5);
+    text-anchor: middle;
+    pointer-events: none;
+}
+
+/* ============================================================================
+   Root Note Section with Mini Keyboard
+   ============================================================================ */
+
+.sampler-visual-root-section {
+    background: rgba(40, 60, 100, 0.15);
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid rgba(100, 150, 200, 0.15);
+}
+
+.sampler-visual-mini-keyboard {
+    display: flex;
+    height: 50px;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #1a1a1e;
+    position: relative;
+}
+
+.sampler-visual-mini-keyboard .mini-key {
+    flex: 1;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    border-right: 1px solid rgba(0, 0, 0, 0.3);
+}
+
+.sampler-visual-mini-keyboard .mini-key.white {
+    background: linear-gradient(180deg, #f5f5f5 0%, #e0e0e0 100%);
+    z-index: 1;
+}
+
+.sampler-visual-mini-keyboard .mini-key.white:hover {
+    background: linear-gradient(180deg, #fff 0%, #f0f0f0 100%);
+}
+
+.sampler-visual-mini-keyboard .mini-key.black {
+    background: linear-gradient(180deg, #3a3a40 0%, #2a2a30 100%);
+    width: 60%;
+    height: 60%;
+    position: absolute;
+    z-index: 2;
+    margin-left: -30%;
+    border-radius: 0 0 3px 3px;
+    border-right: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.sampler-visual-mini-keyboard .mini-key.black:hover {
+    background: linear-gradient(180deg, #4a4a50 0%, #3a3a40 100%);
+}
+
+.sampler-visual-mini-keyboard .mini-key.root {
+    background: linear-gradient(180deg, #ff6b6b 0%, #e74c3c 100%) !important;
+    box-shadow: 0 0 10px rgba(231, 76, 60, 0.5);
+}
+
+.sampler-visual-mini-keyboard .mini-key.root:hover {
+    background: linear-gradient(180deg, #ff8787 0%, #f55a4a 100%) !important;
+}
+
+.sampler-visual-mini-keyboard .mini-key .root-marker {
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
+}
+
+.sampler-visual-mini-keyboard .mini-key.black .root-marker {
+    bottom: 4px;
+    font-size: 7px;
+}
+
+.sampler-visual-root-display {
+    display: flex;
+    justify-content: center;
+    position: relative;
+}
+
+/* ============================================================================
+   Generic Sections
+   ============================================================================ */
+
+.sampler-visual-section {
+    background: rgba(40, 60, 100, 0.15);
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid rgba(100, 150, 200, 0.15);
+}
+
+.sampler-visual-section-label {
+    font-size: 11px;
+    color: rgba(150, 180, 220, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+
+.sampler-visual-button-group {
+    display: flex;
+    gap: 8px;
+}
+
+.sampler-visual-button-group.vertical {
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* ============================================================================
+   Velocity Curve Section
+   ============================================================================ */
+
+.sampler-visual-section.velocity-section {
+    padding: 12px;
+}
+
+.velocity-content {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.velocity-graph {
+    position: relative;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 8px;
+    border: 1px solid rgba(100, 150, 200, 0.1);
+}
+
+.velocity-svg {
+    display: block;
+}
+
+.velocity-svg .velocity-grid {
+    stroke: rgba(100, 150, 200, 0.2);
+    stroke-width: 1;
+}
+
+.velocity-svg .velocity-reference {
+    stroke: rgba(100, 150, 200, 0.15);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+
+.velocity-svg .velocity-curve {
+    fill: none;
+    stroke: #feca57;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 4px rgba(254, 202, 87, 0.4));
+}
+
+.velocity-labels {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+.velocity-axis-label {
+    position: absolute;
+    font-size: 8px;
+    color: rgba(150, 180, 220, 0.5);
+    text-transform: uppercase;
+}
+
+.velocity-axis-label.y {
+    top: 8px;
+    left: 10px;
+}
+
+.velocity-axis-label.x {
+    bottom: 8px;
+    right: 10px;
+}
+
+.sampler-visual-option-btn {
+    flex: 1;
+    padding: 8px 12px;
+    background: rgba(40, 60, 100, 0.3);
+    border: 1px solid rgba(100, 150, 200, 0.2);
+    border-radius: 6px;
+    color: #8aa0c0;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.sampler-visual-option-btn:hover {
+    background: rgba(60, 90, 140, 0.4);
+    color: #a0c4ff;
+}
+
+.sampler-visual-option-btn.active {
+    background: linear-gradient(180deg, #3a6a9a 0%, #2a5a8a 100%);
+    border-color: #64b5f6;
+    color: #fff;
+}
+
+/* ============================================================================
+   Ports Section
+   ============================================================================ */
+
+.sampler-visual-ports {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(20, 30, 50, 0.5);
+    border-top: 1px solid rgba(100, 150, 200, 0.15);
+}
+
+.sampler-visual-ports-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sampler-visual-ports-column.inputs {
+    align-items: flex-start;
+}
+
+.sampler-visual-ports-column.outputs {
+    align-items: flex-end;
+}
+
+.sampler-visual-ports-label {
+    font-size: 10px;
+    color: rgba(150, 180, 220, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.sampler-visual-port {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(40, 60, 100, 0.3);
+    border: 1px solid rgba(100, 150, 200, 0.2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.sampler-visual-port:hover {
+    background: rgba(60, 90, 140, 0.4);
+    border-color: rgba(100, 150, 200, 0.4);
+}
+
+.sampler-visual-port.connected {
+    background: rgba(100, 180, 100, 0.2);
+    border-color: rgba(100, 200, 120, 0.4);
+}
+
+.sampler-visual-port.input::before {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #64b5f6;
+    border: 2px solid #fff;
+    box-shadow: 0 0 4px rgba(100, 181, 246, 0.5);
+}
+
+.sampler-visual-port.output::after {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #81c784;
+    border: 2px solid #fff;
+    box-shadow: 0 0 4px rgba(129, 199, 132, 0.5);
+}
+
+.sampler-visual-port .port-name {
+    font-size: 11px;
+    color: #a0c4ff;
+}
+
+/* ============================================================================
+   Scrollbar
+   ============================================================================ */
+
+.sampler-visual-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sampler-visual-content::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.sampler-visual-content::-webkit-scrollbar-thumb {
+    background: rgba(100, 150, 200, 0.3);
+    border-radius: 3px;
+}
+
+.sampler-visual-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 150, 200, 0.5);
+}
+
+.sampler-visual-root-dropdown::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sampler-visual-root-dropdown::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.sampler-visual-root-dropdown::-webkit-scrollbar-thumb {
+    background: rgba(100, 150, 200, 0.3);
+    border-radius: 3px;
+}

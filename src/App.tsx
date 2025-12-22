@@ -138,7 +138,6 @@ function App() {
           };
           await saveProject(graphData);
           lastVersionRef.current = currentVersion;
-          console.log('[Autosave] Project saved');
         } catch (err) {
           console.error('[Autosave] Failed:', err);
         } finally {
@@ -180,7 +179,6 @@ function App() {
         };
         await saveProject(graphData);
         lastVersionRef.current = currentVersion;
-        console.log('[Autosave] Periodic backup saved');
       } catch (err) {
         console.error('[Autosave] Periodic backup failed:', err);
       } finally {
@@ -221,7 +219,6 @@ function App() {
           };
           await saveProject(graphData);
           lastVersionRef.current = currentVersion;
-          console.log('[Autosave] Saved on tab switch');
         } catch (err) {
           console.error('[Autosave] Failed on tab switch:', err);
         } finally {

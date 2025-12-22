@@ -27,6 +27,8 @@ import { MIDINode } from './MIDINode';
 import { MIDIVisualNode } from './MIDIVisualNode';
 import { MiniLab3Node } from './MiniLab3Node';
 import { MiniLab3VisualNode } from './MiniLab3VisualNode';
+import { SamplerNode } from './SamplerNode';
+import { SamplerVisualNode } from './SamplerVisualNode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -53,7 +55,9 @@ const SCHEMATIC_TYPES = [
     'container',
     'add',
     'subtract',
-    'library'
+    'library',
+    'sampler',
+    'sampler-visual'
 ];
 
 export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps) {
@@ -213,7 +217,7 @@ export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps)
             }
 
             const updateNodePorts = useGraphStore.getState().updateNodePorts;
-            const isInstrument = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
+            const isInstrument = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'sampler'].includes(node.type);
 
             // Check if clicking on a ghost port (not yet persisted)
             const isGhostPort = portId.startsWith('ghost-input-');
@@ -331,8 +335,8 @@ export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps)
         setHoverTarget(null);
     }, [setHoverTarget]);
 
-    // Common props for schematic nodes
-    const schematicProps = {
+    // Common props for schematic nodes - memoized to prevent unnecessary re-renders
+    const schematicProps = useMemo(() => ({
         node,
         handlePortMouseDown,
         handlePortMouseUp,
@@ -350,7 +354,21 @@ export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps)
             left: node.position.x,
             top: node.position.y
         }
-    };
+    }), [
+        node,
+        handlePortMouseDown,
+        handlePortMouseUp,
+        handlePortMouseEnter,
+        handlePortMouseLeave,
+        hasConnection,
+        handleHeaderMouseDown,
+        handleNodeMouseEnter,
+        handleNodeMouseLeave,
+        isSelected,
+        isDragging,
+        isHoveredWithConnections,
+        incomingConnectionCount
+    ]);
 
     // For schematic nodes, render the component directly without wrapper
     if (isSchematic) {
@@ -398,6 +416,10 @@ export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps)
                 return <MathNode {...schematicProps} />;
             case 'library':
                 return <LibraryNode {...schematicProps} />;
+            case 'sampler':
+                return <SamplerNode {...schematicProps} />;
+            case 'sampler-visual':
+                return <SamplerVisualNode {...schematicProps} />;
         }
     }
 

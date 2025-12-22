@@ -99,23 +99,110 @@ const RECENT_PROJECTS_KEY = 'openjammer-recent-projects';
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
 /**
- * Validate viewport data to prevent corrupted values from breaking the UI
+ * Check if a path contains traversal attempts
+ * Returns true if the path is safe, false if it contains traversal
+ */
+function isPathSafe(path: string): boolean {
+  if (!path) return false;
+
+  // Block absolute paths
+  if (path.startsWith('/') || path.startsWith('\\')) {
+    return false;
+  }
+
+  // Check each segment for traversal attempts
+  const segments = path.split(/[/\\]/);
+  for (const segment of segments) {
+    // Decode to catch encoded traversal
+    let decoded = segment;
+    try {
+      let prev = '';
+      let iterations = 0;
+      while (decoded !== prev && iterations < 5) {
+        prev = decoded;
+        decoded = decodeURIComponent(decoded);
+        iterations++;
+      }
+    } catch {
+      // Invalid encoding is suspicious
+      return false;
+    }
+
+    // Block parent directory traversal and current directory
+    if (decoded === '..' || decoded === '.') {
+      return false;
+    }
+
+    // Block null bytes and other dangerous characters
+    if (decoded.includes('\0')) {
+      return false;
+    }
+
+    // Block Windows drive letters at start of path
+    if (/^[a-zA-Z]:/.test(decoded)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Validate and sanitize audio file paths in manifest
+ * Removes any paths that could be security risks
+ */
+function validateAudioFilePaths(
+  audioFiles?: Record<string, { path: string; duration?: number; sampleRate?: number }>
+): Record<string, { path: string; duration?: number; sampleRate?: number }> {
+  if (!audioFiles) return {};
+
+  const validated: Record<string, { path: string; duration?: number; sampleRate?: number }> = {};
+
+  for (const [id, info] of Object.entries(audioFiles)) {
+    if (isPathSafe(info.path)) {
+      validated[id] = info;
+    } else {
+      console.warn(`[ProjectStore] Blocked potentially unsafe audio file path: ${info.path}`);
+    }
+  }
+
+  return validated;
+}
+
+/**
+ * Validate viewport data to prevent corrupted values from breaking the UI.
+ * Uses partial recovery - keeps valid values while fixing invalid ones.
  */
 function validateViewport(viewport?: { x: number; y: number; zoom: number }): { x: number; y: number; zoom: number } {
   if (!viewport) return DEFAULT_VIEWPORT;
 
-  const { x, y, zoom } = viewport;
+  // Validate each field independently for partial recovery
+  let { x, y, zoom } = viewport;
+  let hasWarning = false;
 
-  // Check for invalid numbers (NaN, Infinity)
-  if (!isFinite(x) || !isFinite(y) || !isFinite(zoom)) {
-    console.warn('Invalid viewport data detected, using defaults:', viewport);
-    return DEFAULT_VIEWPORT;
+  // Validate x coordinate
+  if (!isFinite(x)) {
+    console.warn('[ProjectStore] Invalid viewport x value, using default:', x);
+    x = DEFAULT_VIEWPORT.x;
+    hasWarning = true;
   }
 
-  // Zoom must be positive and within reasonable bounds
-  if (zoom <= 0 || zoom > 10) {
-    console.warn('Invalid zoom value detected, using defaults:', zoom);
-    return DEFAULT_VIEWPORT;
+  // Validate y coordinate
+  if (!isFinite(y)) {
+    console.warn('[ProjectStore] Invalid viewport y value, using default:', y);
+    y = DEFAULT_VIEWPORT.y;
+    hasWarning = true;
+  }
+
+  // Validate zoom (must be positive and within reasonable bounds)
+  if (!isFinite(zoom) || zoom <= 0 || zoom > 10) {
+    console.warn('[ProjectStore] Invalid viewport zoom value, using default:', zoom);
+    zoom = DEFAULT_VIEWPORT.zoom;
+    hasWarning = true;
+  }
+
+  if (hasWarning) {
+    console.warn('[ProjectStore] Viewport partially recovered:', { x, y, zoom });
   }
 
   return { x, y, zoom };
@@ -230,9 +317,19 @@ async function readProjectManifest(
     const content = await file.text();
     const manifest = JSON.parse(content) as ProjectManifest;
 
-    // Validate
+    // Validate engine
     if (manifest.engine !== 'openjammer') {
       throw new Error('Not an OpenJammer project');
+    }
+
+    // Validate and sanitize audio file paths to prevent path traversal
+    if (manifest.audioFiles) {
+      manifest.audioFiles = validateAudioFilePaths(manifest.audioFiles);
+    }
+
+    // Validate viewport data
+    if (manifest.graph?.viewport) {
+      manifest.graph.viewport = validateViewport(manifest.graph.viewport);
     }
 
     return manifest;
@@ -369,8 +466,9 @@ export const useProjectStore = create<ProjectState>()(
             recentProjects: updated,
           });
 
-          // Auto-connect sample library
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, projectName);
+          // Auto-connect sample library (non-blocking, errors don't affect project creation)
+          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, projectName)
+            .catch(err => console.warn('[Project] Failed to connect sample library:', err));
 
           return handle;
         } catch (err) {
@@ -431,8 +529,9 @@ export const useProjectStore = create<ProjectState>()(
             recentProjects: updated,
           });
 
-          // Auto-connect sample library
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name);
+          // Auto-connect sample library (non-blocking, errors don't affect project opening)
+          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name)
+            .catch(err => console.warn('[Project] Failed to connect sample library:', err));
 
           return { handle, manifest };
         } catch (err) {
@@ -496,8 +595,9 @@ export const useProjectStore = create<ProjectState>()(
             recentProjects: updated,
           });
 
-          // Auto-connect sample library
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name);
+          // Auto-connect sample library (non-blocking, errors don't affect project opening)
+          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name)
+            .catch(err => console.warn('[Project] Failed to connect sample library:', err));
 
           return { handle, manifest };
         } catch (err) {
@@ -687,8 +787,9 @@ export async function ensureProjectStoreInitialized(): Promise<void> {
         if (handle) {
           const hasPermission = await verifyPermission(handle, false);
           if (hasPermission) {
-            // Reconnect sample library silently
-            useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, state.name);
+            // Reconnect sample library silently (non-blocking)
+            useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, state.name)
+              .catch(err => console.warn('[Project] Failed to reconnect sample library:', err));
           }
         }
       } catch (err) {

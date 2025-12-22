@@ -72,7 +72,7 @@ export const arturiaMinilab3Preset: MIDIDevicePreset = {
   },
 
   visualization: {
-    // TODO: Add SVG path for MiniLab 3 visualization
+    // Uses custom MiniLab3Visual React component instead of SVG path
     svgPath: undefined,
     width: 400,
     height: 250,

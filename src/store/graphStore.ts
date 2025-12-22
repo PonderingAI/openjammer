@@ -552,17 +552,19 @@ export const useGraphStore = create<GraphStore>()(
                         }
                     }
 
-                    // If this is a MIDI node and deviceId/presetId changed, propagate to internal midi-visual nodes
-                    if (node.type === 'midi' && (('deviceId' in data) || ('presetId' in data))) {
+                    // If this is a MIDI node and deviceId/presetId changed, propagate to internal visual nodes
+                    const midiNodeTypes = ['midi', 'minilab-3'];
+                    const midiVisualTypes = ['midi-visual', 'minilab3-visual'];
+                    if (midiNodeTypes.includes(node.type) && (('deviceId' in data) || ('presetId' in data))) {
                         node.childIds.forEach(childId => {
                             const child = newNodes.get(childId);
-                            if (child && child.type === 'midi-visual') {
+                            if (child && midiVisualTypes.includes(child.type)) {
                                 newNodes.set(childId, {
                                     ...child,
                                     data: {
                                         ...child.data,
-                                        ...('deviceId' in data ? { deviceId: data.deviceId } : {}),
-                                        ...('presetId' in data ? { presetId: data.presetId } : {})
+                                        ...('deviceId' in data ? { deviceId: (data as { deviceId: unknown }).deviceId } : {}),
+                                        ...('presetId' in data ? { presetId: (data as { presetId: unknown }).presetId } : {})
                                     }
                                 });
                             }
@@ -705,6 +707,9 @@ export const useGraphStore = create<GraphStore>()(
                 get().pushHistory();
 
                 // For audio inputs, remove existing connection (only one allowed)
+                // Note: We don't call removeConnection() here because it also pushes history,
+                // which would create duplicate undo entries. Instead, we'll remove it in the set() below.
+                let existingInputToRemove: string | null = null;
                 if (targetPort.type === 'audio' && targetPort.direction === 'input') {
                     const existingInput = Array.from(state.connections.values()).find(
                         conn =>
@@ -712,7 +717,7 @@ export const useGraphStore = create<GraphStore>()(
                             conn.targetPortId === targetPortId
                     );
                     if (existingInput) {
-                        get().removeConnection(existingInput.id);
+                        existingInputToRemove = existingInput.id;
                     }
                 }
 
@@ -730,6 +735,12 @@ export const useGraphStore = create<GraphStore>()(
 
                 set((state) => {
                     const newConnections = new Map(state.connections);
+
+                    // Remove existing connection if replacing (for audio inputs)
+                    if (existingInputToRemove) {
+                        newConnections.delete(existingInputToRemove);
+                    }
+
                     newConnections.set(id, connection);
                     let newNodes = new Map(state.nodes);
 

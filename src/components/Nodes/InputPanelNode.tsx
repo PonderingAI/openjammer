@@ -109,7 +109,7 @@ export const InputPanelNode = memo(function InputPanelNode({
     }, [node.id, node.ports, updateNodePorts]);
 
     // Start editing a port label
-    const handleLabelClick = useCallback((portId: string, currentLabel: string, e: React.MouseEvent) => {
+    const handleLabelClick = useCallback((portId: string, currentLabel: string, e: React.MouseEvent | React.KeyboardEvent) => {
         e.stopPropagation();
         setEditingPort(portId);
         setEditValue(currentLabel);
@@ -224,7 +224,7 @@ export const InputPanelNode = memo(function InputPanelNode({
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
                                                     e.preventDefault();
-                                                    handleLabelClick(port.id, label, e as unknown as React.MouseEvent);
+                                                    handleLabelClick(port.id, label, e);
                                                 }
                                             }}
                                         >

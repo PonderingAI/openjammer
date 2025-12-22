@@ -56,6 +56,7 @@ export function KeyboardVisualNode({
     style
 }: KeyboardVisualNodeProps) {
     const activeKeys = useAudioStore((s) => s.activeKeys);
+    const controlDown = useAudioStore((s) => s.controlDown);
     const flashingNodes = useUIFeedbackStore((s) => s.flashingNodes);
     const isFlashing = flashingNodes.has(node.id);
 
@@ -81,8 +82,8 @@ export function KeyboardVisualNode({
     };
 
     const isSpaceActive = (): boolean => {
-        // Space is tracked via controlDown in audio store
-        return useAudioStore.getState().controlDown;
+        // Space is tracked via controlDown in audio store (now properly subscribed)
+        return controlDown;
     };
 
     const renderKey = (key: string, _row: number) => {

@@ -8,7 +8,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
-import { useAudioStore } from '../../store/audioStore';
 import { nodeDefinitions } from '../../engine/registry';
 import { InstrumentLoader } from '../../audio/Instruments';
 
@@ -213,7 +212,6 @@ export function InstrumentNode({
         : { rows: [] }; // Default empty data if validation fails
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const updateNodeType = useGraphStore((s) => s.updateNodeType);
-    const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
     // Refs
     const nodeRef = useRef<HTMLDivElement>(null);
@@ -231,11 +229,6 @@ export function InstrumentNode({
     const availableCategories = useMemo(() => {
         return getAllowedCategories(node.type);
     }, [node.type]);
-
-    // Initialize instrument audio - managed by AudioGraphManager
-    useEffect(() => {
-        // AudioGraphManager handles instrument creation
-    }, [isAudioContextReady, node.type]);
 
     // Handle keyboard shortcuts for popup
     useEffect(() => {
@@ -277,11 +270,15 @@ export function InstrumentNode({
             }
         };
 
-        setTimeout(() => {
+        // Delay adding listener to avoid immediate trigger from the click that opened the popup
+        const timeoutId = setTimeout(() => {
             document.addEventListener('mousedown', handleClickOutside);
         }, 0);
 
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        return () => {
+            clearTimeout(timeoutId);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, [showPopup]);
 
     // Dynamic dropdown positioning

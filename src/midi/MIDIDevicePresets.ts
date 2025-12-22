@@ -98,9 +98,9 @@ class MIDIPresetRegistry {
       }
     }
 
-    // If has preferred port but device name doesn't match, still allow
-    // (in case device naming varies by OS/driver)
-    return true;
+    // If preferredPort is specified but device name doesn't match, reject
+    // This ensures multi-port devices only use the intended port
+    return false;
   }
 
   /**

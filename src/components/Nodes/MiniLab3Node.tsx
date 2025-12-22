@@ -7,9 +7,10 @@
  * MIDI connection is managed here. Device selection persists with the node.
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import type { GraphNode, MIDIInputNodeData } from '../../engine/types';
 import { useMIDIStore } from '../../store/midiStore';
+import { useGraphStore } from '../../store/graphStore';
 import './MIDIVisualNode.css';
 
 interface MiniLab3NodeProps {
@@ -63,6 +64,24 @@ export function MiniLab3Node({
         }
     }, [isSupported, isInitialized, initialize]);
 
+    // Track if we've propagated the deviceId on mount
+    const hasPropagedOnMount = useRef(false);
+
+    // Re-propagate deviceId to children on mount (handles page reload case)
+    // This ensures internal minilab3-visual nodes get the deviceId even if it wasn't saved
+    useEffect(() => {
+        if (hasPropagedOnMount.current) return;
+        if (!data.deviceId || !node.childIds.length) return;
+
+        // Trigger updateNodeData to propagate deviceId to children
+        const updateNodeData = useGraphStore.getState().updateNodeData;
+        updateNodeData(node.id, {
+            deviceId: data.deviceId,
+            presetId: data.presetId
+        });
+        hasPropagedOnMount.current = true;
+    }, [node.id, node.childIds.length, data.deviceId, data.presetId]);
+
     // Handle clicking on the header to open MIDI device browser
     const handleDeviceClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
@@ -73,7 +92,7 @@ export function MiniLab3Node({
     if (!isSupported) {
         return (
             <div
-                className={`minilab3-node schematic-node midi-unsupported ${isSelected ? 'selected' : ''}`}
+                className={`minilab3-node keyboard-node schematic-node midi-unsupported ${isSelected ? 'selected' : ''}`}
                 style={style}
                 onMouseEnter={handleNodeMouseEnter}
                 onMouseLeave={handleNodeMouseLeave}
@@ -81,9 +100,11 @@ export function MiniLab3Node({
                 <div className="schematic-header" onMouseDown={handleHeaderMouseDown}>
                     <span className="schematic-title">MiniLab 3</span>
                 </div>
-                <div className="midi-unsupported-message">
-                    <span>Web MIDI not supported</span>
-                    <span className="midi-browser-hint">Use Chrome, Edge, or Firefox</span>
+                <div className="keyboard-schematic-body">
+                    <div className="midi-unsupported-message">
+                        <span>Web MIDI not supported</span>
+                        <span className="midi-browser-hint">Use Chrome, Edge, or Firefox</span>
+                    </div>
                 </div>
             </div>
         );
@@ -91,7 +112,7 @@ export function MiniLab3Node({
 
     return (
         <div
-            className={`minilab3-node schematic-node ${isConnected ? 'connected' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`minilab3-node keyboard-node schematic-node ${isConnected ? 'connected' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
             style={style}
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
@@ -110,8 +131,8 @@ export function MiniLab3Node({
                 )}
             </div>
 
-            {/* Body - Show synced ports from internal canvas */}
-            <div className="minilab3-schematic-body">
+            {/* Body - Show synced ports from internal canvas (same layout as keyboard node) */}
+            <div className="keyboard-schematic-body">
                 {/* Connect button - only shows when not connected */}
                 {!isConnected && (
                     <button
@@ -125,10 +146,10 @@ export function MiniLab3Node({
 
                 {/* Render ports dynamically (auto-synced from internal output-panel) */}
                 {node.ports.filter(p => p.direction === 'output' && p.name).map((port) => (
-                    <div key={port.id} className="port-row output">
+                    <div key={port.id} className={`port-row ${port.direction}`}>
                         <span className="port-label">{port.name}</span>
                         <div
-                            className={`port-circle-marker control-port output-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
+                            className={`port-circle-marker ${port.type}-port ${port.direction}-port ${hasConnection?.(port.id) ? 'connected' : ''}`}
                             data-node-id={node.id}
                             data-port-id={port.id}
                             data-port-type={port.type}
@@ -136,15 +157,10 @@ export function MiniLab3Node({
                             onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
                             onMouseEnter={() => handlePortMouseEnter?.(port.id)}
                             onMouseLeave={handlePortMouseLeave}
+                            title={port.name}
                         />
                     </div>
                 ))}
-
-                {/* Hint to enter node */}
-                <div className="enter-hint">
-                    <span className="enter-hint-key">E</span>
-                    <span className="enter-hint-text">to edit</span>
-                </div>
             </div>
         </div>
     );

@@ -8,7 +8,7 @@
  * Used inside InputPanelNode to show incoming bundle connections.
  */
 
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, useEffect, memo } from 'react';
 import type { BundlePortDefinition } from '../engine/types';
 import './BundlePortGroup.css';
 
@@ -48,8 +48,15 @@ export const BundlePortGroup = memo(function BundlePortGroup({
 }: BundlePortGroupProps) {
     const bundleInfo = port.bundleInfo;
 
-    // Local expansion state (could be controlled externally via bundleInfo.expanded)
+    // Local expansion state (synced with bundleInfo.expanded prop)
     const [isExpanded, setIsExpanded] = useState(bundleInfo?.expanded ?? false);
+
+    // Sync local state when prop changes
+    useEffect(() => {
+        if (bundleInfo?.expanded !== undefined) {
+            setIsExpanded(bundleInfo.expanded);
+        }
+    }, [bundleInfo?.expanded]);
 
     const handleToggle = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
@@ -210,7 +217,9 @@ export const BundlePortGroup = memo(function BundlePortGroup({
                         <div
                             className={`bundle-channel-marker ${port.type}-port ${port.direction}-port`}
                             data-channel-id={channel.id}
-                            aria-label={channel.label}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${channel.label} channel`}
                         />
 
                         {labelPosition === 'right' && (

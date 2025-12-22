@@ -167,8 +167,8 @@ export function useServiceWorker(): UseServiceWorkerResult {
         onOfflineReady() {
           setOfflineReady(true);
         },
-        onRegistered(registration: ServiceWorkerRegistration | undefined) {
-          console.log('[SW] Registered:', registration);
+        onRegistered(_registration: ServiceWorkerRegistration | undefined) {
+          // SW registered successfully
         },
         onRegisterError(error: Error) {
           console.error('[SW] Registration error:', error);
@@ -177,7 +177,6 @@ export function useServiceWorker(): UseServiceWorkerResult {
       setUpdateSW(() => update);
     }).catch(() => {
       // PWA not available (dev mode or unsupported)
-      console.log('[SW] Not available');
     });
   }, []);
 

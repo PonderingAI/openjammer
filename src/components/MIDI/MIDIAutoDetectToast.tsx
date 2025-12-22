@@ -34,7 +34,7 @@ export function MIDIAutoDetectToast({ onAddDevice }: MIDIAutoDetectToastProps) {
     // Track which device the countdown is for to handle rapid device changes
     const lastDeviceIdRef = useRef<string | null>(null);
 
-    // Countdown timer - handles reset on new device and auto-dismiss
+    // Countdown timer - handles reset on new device
     useEffect(() => {
         if (!pendingDevice) {
             lastDeviceIdRef.current = null;
@@ -48,19 +48,18 @@ export function MIDIAutoDetectToast({ onAddDevice }: MIDIAutoDetectToastProps) {
         }
 
         const interval = setInterval(() => {
-            setCountdown((prev) => {
-                if (prev <= 1) {
-                    // Auto-dismiss when countdown reaches 0
-                    // Use setTimeout to avoid setState during render
-                    setTimeout(() => dismissPendingDevice(), 0);
-                    return 0;
-                }
-                return prev - 1;
-            });
+            setCountdown((prev) => (prev <= 1 ? 0 : prev - 1));
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [pendingDevice, dismissPendingDevice]);
+    }, [pendingDevice]);
+
+    // Auto-dismiss when countdown reaches 0 (separate effect to avoid race condition)
+    useEffect(() => {
+        if (countdown === 0 && pendingDevice) {
+            dismissPendingDevice();
+        }
+    }, [countdown, pendingDevice, dismissPendingDevice]);
 
     // Handle adding the device
     const handleAdd = useCallback(() => {

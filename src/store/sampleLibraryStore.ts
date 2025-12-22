@@ -187,25 +187,29 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
         const library = get().libraries[libraryId];
         if (!library) return;
 
-        // Remove handle
+        // Remove library handle
         await removeHandle(library.handleKey);
 
-        // Remove samples
+        // Get samples to remove
         const samplesToRemove = Object.values(get().samples)
-          .filter(s => s.libraryId === libraryId)
-          .map(s => s.id);
+          .filter(s => s.libraryId === libraryId);
 
-        // Remove waveforms
-        for (const sampleId of samplesToRemove) {
-          await idbDel(WAVEFORM_PREFIX + sampleId);
+        // Remove waveforms and sample handles
+        for (const sample of samplesToRemove) {
+          await idbDel(WAVEFORM_PREFIX + sample.id);
+          if (sample.handleKey) {
+            await idbDel(sample.handleKey);
+          }
         }
+
+        const sampleIdsToRemove = samplesToRemove.map(s => s.id);
 
         set(state => {
           const newLibraries = { ...state.libraries };
           delete newLibraries[libraryId];
 
           const newSamples = { ...state.samples };
-          for (const sampleId of samplesToRemove) {
+          for (const sampleId of sampleIdsToRemove) {
             delete newSamples[sampleId];
           }
 
@@ -578,28 +582,40 @@ export const useSampleLibraryStore = create<SampleLibraryStore>()(
       },
 
       relinkSample: async (sampleId: string, newHandle: FileSystemFileHandle) => {
-        const file = await newHandle.getFile();
-
-        // Get the old handle key to clean up orphaned data
+        // Check if sample exists first
         const sample = get().samples[sampleId];
-        const oldHandleKey = sample?.handleKey;
-
-        // Update handle in IndexedDB (using consistent prefix)
-        const handleKey = await storeSampleHandle(sampleId, newHandle);
-
-        // Clean up old handle if it's different from the new one
-        if (oldHandleKey && oldHandleKey !== handleKey) {
-          await idbDel(oldHandleKey).catch(() => {});
+        if (!sample) {
+          console.warn(`[SampleLibrary] Cannot relink non-existent sample: ${sampleId}`);
+          return;
         }
 
-        // Update sample metadata
-        if (sample) {
+        try {
+          const file = await newHandle.getFile();
+
+          // Get the old handle key to clean up orphaned data
+          const oldHandleKey = sample.handleKey;
+
+          // Update handle in IndexedDB (using consistent prefix)
+          const handleKey = await storeSampleHandle(sampleId, newHandle);
+
+          // Clean up old handle if it's different from the new one
+          if (oldHandleKey && oldHandleKey !== handleKey) {
+            await idbDel(oldHandleKey).catch(() => {});
+          }
+
+          // Update sample metadata
           get().updateSample(sampleId, {
             fileName: file.name,
             fileSize: file.size,
             lastModified: file.lastModified,
             status: 'available',
             handleKey,
+          });
+        } catch (err) {
+          console.error(`[SampleLibrary] Failed to relink sample ${sampleId}:`, err);
+          // Mark sample as missing since we couldn't access the file
+          get().updateSample(sampleId, {
+            status: 'missing',
           });
         }
       },

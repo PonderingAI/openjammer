@@ -475,7 +475,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         description: 'Record and loop audio with auto-detection',
         defaultPorts: [
             { ...audioInput, position: { x: 0, y: 0.5 } },
-            { ...audioOutput, position: { x: 1, y: 0.5 } }
+            { ...audioOutput, position: { x: 1, y: 0.35 } },
+            { id: 'sample-out', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.65 } }
         ],
         defaultData: {
             duration: 10,
@@ -672,7 +673,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         description: 'Local audio file library for samples, loops, and sound effects',
         defaultPorts: [
             { id: 'trigger', name: 'Trigger', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
-            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.3 } },
+            { id: 'sample-out', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.7 } }
         ],
         defaultData: {
             libraryId: undefined,
@@ -684,6 +686,66 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         },
         dimensions: { width: 280, height: 200 },
         canEnter: false  // Sample browser is inline, not a sub-canvas
+    },
+
+    // Sampler Instrument Node
+    sampler: {
+        type: 'sampler',
+        category: 'instruments',
+        name: 'Sampler',
+        description: 'Play a sample chromatically via keyboard/MIDI input',
+        defaultPorts: [
+            // Input ports on left side
+            { id: 'input-1', name: 'In', type: 'audio', direction: 'input', position: { x: 0, y: 0.3 } },
+            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
+            // Output port on right side
+            { id: 'output', name: 'Out', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {
+            sampleId: null,
+            sampleName: 'No sample',
+            rootNote: 60,
+            attack: 0.01,
+            decay: 0.1,
+            sustain: 0.8,
+            release: 0.3,
+            velocityCurve: 'exponential',
+            triggerMode: 'gate',
+            loopEnabled: false,
+            loopStart: 0,
+            loopEnd: 0,
+            maxVoices: 16,
+            activePreset: 'chromatic',
+            rows: []
+        },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.3, endY: 0.7 }
+        },
+        dimensions: { width: 240, height: 180 },
+        canEnter: true  // Allows E key to view internal structure
+    },
+
+    // Sampler Visual - inside view with detailed controls (ADSR, root note, loop, etc.)
+    'sampler-visual': {
+        type: 'sampler-visual',
+        category: 'instruments',
+        name: 'Sampler Visual',
+        description: 'Internal visual representation of sampler with detailed controls',
+        defaultPorts: [
+            { id: 'keys-in', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
+            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+        ],
+        defaultData: {},
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.3, endY: 0.7 }
+        },
+        dimensions: { width: 440, height: 400 },
+        canEnter: false  // This IS the internal view
     }
 };
 
@@ -706,7 +768,7 @@ export const menuCategories: MenuCategory[] = [
     {
         name: 'Instruments',
         icon: '🎻',
-        items: ['strings', 'keys', 'winds']
+        items: ['strings', 'keys', 'winds', 'sampler']
     },
     {
         name: 'Routing',

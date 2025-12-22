@@ -142,6 +142,17 @@
     z-index: 10; /* Above connections by default */
 }
 
+.clips-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 15; /* Above nodes, below selection box */
+    pointer-events: none; /* Let clicks through to nodes */
+}
+
+.clips-layer > * {
+    pointer-events: auto; /* But clips themselves are interactive */
+}
+
 /* ============================================================================
    Selection Box - Drag to select multiple nodes
    ============================================================================ */

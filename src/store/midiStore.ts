@@ -40,6 +40,10 @@ interface MIDIStoreState extends MIDIPersistedState {
     // Global subscription cleanup function
     globalUnsubscribe: (() => void) | null;
 
+    // Device connection/disconnection listener cleanup functions
+    deviceConnectedCleanup: (() => void) | null;
+    deviceDisconnectedCleanup: (() => void) | null;
+
     // Real-time data (use transient updates for high-frequency data)
     lastMessage: MIDIEvent | null;
 
@@ -108,6 +112,8 @@ export const useMIDIStore = create<MIDIStore>()(
                 outputs: new Map(),
                 subscriptions: new Map(),
                 globalUnsubscribe: null,
+                deviceConnectedCleanup: null,
+                deviceDisconnectedCleanup: null,
 
                 lastMessage: null,
 
@@ -145,12 +151,12 @@ export const useMIDIStore = create<MIDIStore>()(
                 outputs.set(device.id, device);
             });
 
-            // Set up hot-plug listeners
-            manager.onDeviceConnected((device) => {
+            // Set up hot-plug listeners and store cleanup functions
+            const deviceConnectedCleanup = manager.onDeviceConnected((device) => {
                 get().handleDeviceConnected(device);
             });
 
-            manager.onDeviceDisconnected((device) => {
+            const deviceDisconnectedCleanup = manager.onDeviceDisconnected((device) => {
                 get().handleDeviceDisconnected(device);
             });
 
@@ -158,14 +164,20 @@ export const useMIDIStore = create<MIDIStore>()(
             // This allows any component to use subscribeMIDIMessages to react to messages
             // Store the unsubscribe function to prevent memory leaks
             const globalSubscription = manager.subscribeAll((event) => {
-                get().handleMIDIMessage(event);
+                try {
+                    get().handleMIDIMessage(event);
+                } catch (err) {
+                    console.error('[midiStore] Error in global MIDI callback:', err);
+                }
             });
 
             set({
                 isInitialized: true,
                 inputs,
                 outputs,
-                globalUnsubscribe: globalSubscription.unsubscribe
+                globalUnsubscribe: globalSubscription.unsubscribe,
+                deviceConnectedCleanup,
+                deviceDisconnectedCleanup
             });
         },
 
@@ -177,14 +189,27 @@ export const useMIDIStore = create<MIDIStore>()(
                 state.globalUnsubscribe();
             }
 
+            // Unsubscribe from device connection/disconnection listeners
+            if (state.deviceConnectedCleanup) {
+                state.deviceConnectedCleanup();
+            }
+            if (state.deviceDisconnectedCleanup) {
+                state.deviceDisconnectedCleanup();
+            }
+
             // Unsubscribe from all device-specific subscriptions
             state.subscriptions.forEach((unsubscribe) => {
                 unsubscribe();
             });
 
+            // Destroy MIDIManager to clean up all resources and event handlers
+            getMIDIManager().destroy();
+
             set({
                 isInitialized: false,
                 globalUnsubscribe: null,
+                deviceConnectedCleanup: null,
+                deviceDisconnectedCleanup: null,
                 subscriptions: new Map(),
                 inputs: new Map(),
                 outputs: new Map(),
@@ -197,10 +222,20 @@ export const useMIDIStore = create<MIDIStore>()(
         // ================================================================
 
         subscribeToDevice: (deviceId, callback) => {
+            // Clean up existing subscription for this device before adding new one
+            const existingUnsubscribe = get().subscriptions.get(deviceId);
+            if (existingUnsubscribe) {
+                existingUnsubscribe();
+            }
+
             const manager = getMIDIManager();
             const subscription = manager.subscribe(deviceId, (event) => {
-                get().handleMIDIMessage(event);
-                callback(event);
+                try {
+                    get().handleMIDIMessage(event);
+                    callback(event);
+                } catch (err) {
+                    console.error('[midiStore] Error in subscription callback:', err);
+                }
             });
 
             // Store subscription
@@ -381,6 +416,12 @@ export const useMIDIStore = create<MIDIStore>()(
             const registry = getPresetRegistry();
             const preset = registry.matchDevice(device.name);
 
+            // Only show auto-detect toast for devices we should use
+            // This handles multi-port devices like MiniLab 3 - only show toast for preferred port
+            if (preset && !registry.shouldUsePort(device.name, preset)) {
+                return; // Don't show toast for non-preferred ports
+            }
+
             // Show auto-detect toast
             // Note: Auto-dismiss is handled by the MIDIAutoDetectToast component
             // to avoid duplicate timers and race conditions
@@ -408,7 +449,7 @@ export const useMIDIStore = create<MIDIStore>()(
         },
 
         handleMIDIMessage: (event) => {
-            // Update last message (for debugging/monitoring)
+            // Update last message (for transient subscriptions)
             set({ lastMessage: event });
         }
             }),

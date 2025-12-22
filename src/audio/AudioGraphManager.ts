@@ -13,10 +13,12 @@ import { createEffect, Effect } from './Effects';
 import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import { LocalSampleAdapter } from './samplers/LocalSampleAdapter';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData, LibraryNodeData, MIDIInputNodeData } from '../engine/types';
+import { SamplerAdapter } from './samplers/SamplerAdapter';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData, LibraryNodeData, MIDIInputNodeData, SamplerNodeData } from '../engine/types';
 import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
 import type { MIDIEvent } from '../midi/types';
 import { useMIDIStore } from '../store/midiStore';
+import { toast } from 'sonner';
 
 // Validation constants for instrument row data
 const VALIDATION_BOUNDS = {
@@ -105,7 +107,7 @@ import { TonePianoInstrument } from './samplers/TonePianoAdapter';
 // ============================================================================
 
 /** Valid instrument node types for keyboard triggering */
-const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'instrument'] as const;
+const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'instrument', 'sampler'] as const;
 
 // ============================================================================
 // Audio Node Instance Types
@@ -137,6 +139,7 @@ type AudioNodeInstanceType =
     | Looper
     | Recorder
     | LocalSampleAdapter
+    | SamplerAdapter
     | GainNode
     | MediaStreamAudioSourceNode
     | SpeakerNodeInstance
@@ -705,7 +708,8 @@ class AudioGraphManager {
             }
 
             // MIDI Input - subscribes to MIDI device and routes messages to instruments
-            case 'midi': {
+            case 'midi':
+            case 'minilab-3': {
                 // MIDI nodes don't process audio, they send control signals
                 // Subscribe to MIDI device if configured
                 const midiData = graphNode.data as MIDIInputNodeData;
@@ -778,6 +782,7 @@ class AudioGraphManager {
                 audioElement.srcObject = destination.stream;
                 audioElement.play().catch(e => {
                     console.warn('Failed to start audio element:', e);
+                    toast.error('Audio playback failed. Please check your audio permissions.');
                 });
 
                 // Apply device selection if supported
@@ -785,6 +790,7 @@ class AudioGraphManager {
                     (audioElement as any).setSinkId(speakerData.deviceId)
                         .catch((err: Error) => {
                             console.error('Failed to set output device:', err);
+                            toast.error('Could not switch audio output device. Using default.');
                         });
                 }
 
@@ -851,6 +857,51 @@ class AudioGraphManager {
 
                 baseInstance.instance = { input1, input2, inverter, outputMixer } as SubtractNodeInstance;
                 baseInstance.inputNode = input1;  // Primary input
+                baseInstance.outputNode = gainEnvelope;
+                break;
+            }
+
+            // Sampler Node - pitch-shifting sampler instrument
+            case 'sampler': {
+                const samplerData = graphNode.data as SamplerNodeData;
+                const sampler = new SamplerAdapter({
+                    rootNote: samplerData.rootNote ?? 60,
+                    attack: samplerData.attack ?? 0.01,
+                    decay: samplerData.decay ?? 0.1,
+                    sustain: samplerData.sustain ?? 0.8,
+                    release: samplerData.release ?? 0.3,
+                    velocityCurve: samplerData.velocityCurve ?? 'exponential',
+                    maxVoices: samplerData.maxVoices ?? 16,
+                    loopEnabled: samplerData.loopEnabled ?? false,
+                    loopStart: samplerData.loopStart ?? 0,
+                    loopEnd: samplerData.loopEnd ?? 0,
+                    triggerMode: samplerData.triggerMode ?? 'gate',
+                });
+
+                // Connect sampler output to routing chain
+                const connectSamplerOutput = () => {
+                    const output = sampler.getOutput();
+                    if (output) {
+                        try {
+                            output.disconnect();
+                        } catch {
+                            // May not be connected
+                        }
+                        output.connect(gainEnvelope);
+                    }
+                };
+
+                // Connect now if output exists
+                connectSamplerOutput();
+
+                // Also connect when sampler finishes loading
+                sampler.setOnLoadingStateChange((state) => {
+                    if (state === 'loaded') {
+                        connectSamplerOutput();
+                    }
+                });
+
+                baseInstance.instance = sampler;
                 baseInstance.outputNode = gainEnvelope;
                 break;
             }
@@ -1418,6 +1469,17 @@ class AudioGraphManager {
     }
 
     /**
+     * Get sampler adapter for a sampler node
+     */
+    getSamplerAdapter(nodeId: string): SamplerAdapter | null {
+        const audioNode = this.audioNodes.get(nodeId);
+        if (audioNode?.instance instanceof SamplerAdapter) {
+            return audioNode.instance;
+        }
+        return null;
+    }
+
+    /**
      * Trigger a sample in a library node
      */
     triggerSample(nodeId: string, velocity: number = 1.0): void {
@@ -1434,6 +1496,31 @@ class AudioGraphManager {
         const adapter = this.getSampleAdapter(nodeId);
         if (adapter) {
             adapter.release();
+        }
+    }
+
+    /**
+     * Send an AudioBuffer from a source node (Library, Looper) to connected Samplers
+     * via the sample-out port
+     */
+    sendSampleBuffer(sourceNodeId: string, buffer: AudioBuffer): void {
+        const connections = this.getConnectionsRef?.();
+        const nodes = this.getNodesRef?.();
+        if (!connections || !nodes) return;
+
+        // Find all connections from this node's sample-out port to sampler sample-in ports
+        for (const connection of connections.values()) {
+            if (connection.sourceNodeId === sourceNodeId && connection.sourcePortId === 'sample-out') {
+                // Check if target is a sampler
+                const targetNode = nodes.get(connection.targetNodeId);
+                if (targetNode?.type === 'sampler' && connection.targetPortId === 'sample-in') {
+                    const sampler = this.getSamplerAdapter(connection.targetNodeId);
+                    if (sampler) {
+                        sampler.setBuffer(buffer);
+                        console.log(`[AudioGraphManager] Sent sample buffer to sampler ${connection.targetNodeId}`);
+                    }
+                }
+            }
         }
     }
 

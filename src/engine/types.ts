@@ -163,7 +163,9 @@ export type NodeType =
     | 'container'      // Empty container node for grouping
     | 'add'            // Addition node (mixes signals)
     | 'subtract'       // Subtraction node (phase cancellation)
-    | 'library';       // Sample library node for local audio files
+    | 'library'        // Sample library node for local audio files
+    | 'sampler'        // Pitch-shifting sampler instrument (outside view)
+    | 'sampler-visual'; // Visual sampler with detailed controls (inside view)
 
 export interface Position {
     x: number;
@@ -296,6 +298,33 @@ export interface LibraryNodeData extends NodeData {
 
     // Missing samples detected on load
     missingSampleIds?: string[];
+}
+
+export interface SamplerNodeData extends NodeData {
+    // Sample reference
+    sampleId: string | null;
+    sampleName: string;
+
+    // Core parameters (visible outside)
+    rootNote: number;              // MIDI note (default: 60 = C4)
+    attack: number;                // seconds
+    decay: number;                 // seconds
+    sustain: number;               // 0-1
+    release: number;               // seconds
+
+    // Internal parameters (visible inside)
+    velocityCurve: 'linear' | 'exponential' | 'logarithmic';
+    triggerMode: 'gate' | 'oneshot' | 'toggle';
+    loopEnabled: boolean;
+    loopStart: number;
+    loopEnd: number;
+    maxVoices: number;
+
+    // Preset
+    activePreset: string;
+
+    // Row configuration for bundle connections (like instrument)
+    rows?: InstrumentRow[];
 }
 
 export interface MIDILearnedMapping {
@@ -438,6 +467,98 @@ export interface NodeDefinition {
     // Whether this node can be entered with E key (default: true)
     // If false, pressing E will flash red instead of entering
     canEnter?: boolean;
+}
+
+// ============================================================================
+// Audio Clip Types - Lightweight draggable audio references
+// ============================================================================
+
+/**
+ * AudioClip - Lightweight audio reference with non-destructive crop region
+ *
+ * Unlike nodes, clips are simple visual elements that reference audio
+ * stored in the sample library. Crop points are metadata only - the
+ * original audio is never modified.
+ *
+ * Usage:
+ * - Drag from LooperNode loops onto canvas
+ * - Drag from LibraryNode samples onto canvas
+ * - Drag clips into compatible drop target nodes
+ * - Double-click to open waveform editor for cropping
+ */
+export interface AudioClip {
+    id: string;
+
+    // Reference to source audio in sample library
+    sampleId: string;           // ID in sampleLibraryStore
+    sampleName: string;         // Display name (filename)
+
+    // Non-destructive crop region (in sample frames, not seconds)
+    // This allows precise, sample-accurate cropping
+    startFrame: number;         // Start point (0 = beginning)
+    endFrame: number;           // End point (-1 = end of file)
+
+    // Cached metadata for UI (derived from sample library)
+    durationSeconds: number;    // Duration of cropped region
+    sampleRate: number;         // For frame-to-time conversion
+
+    // Waveform preview data (downsampled for mini display)
+    waveformPeaks: number[];    // 64-128 values for mini waveform
+
+    // Canvas position (null if not placed on canvas)
+    position: Position | null;
+
+    // Visual dimensions
+    width: number;              // Default: 120px
+    height: number;             // Default: 40px
+
+    // Origin tracking
+    sourceType: 'looper' | 'library' | 'imported';
+    sourceNodeId?: string;      // If from looper/library node
+
+    // Timestamps
+    createdAt: number;
+    lastModifiedAt: number;
+}
+
+/**
+ * ClipDropTarget - Interface for nodes that can accept clip drops
+ *
+ * Any node can implement this interface to become a drop target for audio clips.
+ * Register with audioClipStore.registerDropTarget() on mount, unregister on unmount.
+ *
+ * Example usage in a node component:
+ * ```tsx
+ * useEffect(() => {
+ *     registerDropTarget({
+ *         nodeId: node.id,
+ *         targetName: 'Looper',
+ *         onClipDrop: async (clip) => {
+ *             const buffer = await loadClipAudio(clip);
+ *             // Add as new loop layer
+ *         },
+ *         canAcceptClip: () => true,
+ *         getDropZoneBounds: () => ref.current?.getBoundingClientRect() ?? null,
+ *     });
+ *     return () => unregisterDropTarget(node.id);
+ * }, []);
+ * ```
+ */
+export interface ClipDropTarget {
+    /** Unique identifier for this drop target (node ID) */
+    nodeId: string;
+
+    /** Human-readable target name for UI feedback */
+    targetName: string;
+
+    /** Callback when clip is dropped onto this target */
+    onClipDrop: (clip: AudioClip) => Promise<void>;
+
+    /** Check if this target can accept the given clip */
+    canAcceptClip: (clip: AudioClip) => boolean;
+
+    /** Get drop zone bounds for hit testing during drag */
+    getDropZoneBounds: () => DOMRect | null;
 }
 
 // ============================================================================

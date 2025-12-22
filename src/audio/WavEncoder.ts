@@ -7,6 +7,38 @@
  * - Pure JavaScript, no dependencies
  */
 
+import { getAudioContext } from './AudioEngine';
+
+// ============================================================================
+// Constants - PCM Audio Sample Conversion
+// ============================================================================
+
+/**
+ * PCM sample conversion multipliers for different bit depths.
+ * These convert normalized float samples (-1.0 to 1.0) to signed integers.
+ *
+ * For negative samples: multiply by the positive max value (asymmetric due to two's complement)
+ * For positive samples: multiply by max positive value
+ *
+ * 16-bit: -32768 (0x8000) to 32767 (0x7FFF)
+ * 24-bit: -8388608 (0x800000) to 8388607 (0x7FFFFF)
+ * 32-bit: -2147483648 (0x80000000) to 2147483647 (0x7FFFFFFF)
+ */
+const PCM_MULTIPLIERS = {
+  16: { negative: 0x8000, positive: 0x7FFF },
+  24: { negative: 0x800000, positive: 0x7FFFFF },
+  32: { negative: 0x80000000, positive: 0x7FFFFFFF },
+} as const;
+
+/** WAV header size in bytes (RIFF + fmt + data headers) */
+const WAV_HEADER_SIZE = 44;
+
+/** WAV format code for PCM audio */
+const WAV_FORMAT_PCM = 1;
+
+/** Size of fmt sub-chunk for PCM (no extra format bytes) */
+const FMT_SUBCHUNK_SIZE = 16;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -17,23 +49,34 @@ export interface WavEncoderOptions {
   channels?: 1 | 2;
 }
 
+/** Error thrown when WAV encoding fails */
+export class WavEncoderError extends Error {
+  readonly cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'WavEncoderError';
+    this.cause = cause;
+  }
+}
+
 // ============================================================================
 // Decoder: WebM/Opus -> AudioBuffer
 // ============================================================================
 
 /**
  * Decode a WebM blob (from MediaRecorder) to an AudioBuffer
+ * Reuses the application's AudioContext to avoid exhausting browser resources
  */
 export async function decodeWebMToAudioBuffer(webmBlob: Blob): Promise<AudioBuffer> {
-  const audioContext = new AudioContext();
-
-  try {
-    const arrayBuffer = await webmBlob.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    return audioBuffer;
-  } finally {
-    await audioContext.close();
+  const audioContext = getAudioContext();
+  if (!audioContext) {
+    throw new WavEncoderError('AudioContext not initialized');
   }
+
+  const arrayBuffer = await webmBlob.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  return audioBuffer;
 }
 
 // ============================================================================
@@ -51,6 +94,7 @@ function writeString(view: DataView, offset: number, str: string): void {
 
 /**
  * Encode an AudioBuffer to WAV format (16-bit PCM)
+ * @throws {WavEncoderError} If encoding fails due to invalid input
  */
 export function encodeWAV(
   audioBuffer: AudioBuffer,
@@ -60,6 +104,16 @@ export function encodeWAV(
     bitDepth = 16,
   } = options;
 
+  // Validate input
+  if (!audioBuffer || audioBuffer.length === 0) {
+    throw new WavEncoderError('Cannot encode empty or invalid AudioBuffer');
+  }
+
+  if (!(bitDepth in PCM_MULTIPLIERS)) {
+    throw new WavEncoderError(`Unsupported bit depth: ${bitDepth}. Use 16, 24, or 32.`);
+  }
+
+  const multipliers = PCM_MULTIPLIERS[bitDepth];
   const numChannels = audioBuffer.numberOfChannels;
   const sampleRate = audioBuffer.sampleRate;
   const bytesPerSample = bitDepth / 8;
@@ -78,8 +132,7 @@ export function encodeWAV(
 
   // Calculate sizes
   const dataLength = length * bytesPerSample;
-  const headerSize = 44;
-  const fileSize = headerSize + dataLength;
+  const fileSize = WAV_HEADER_SIZE + dataLength;
 
   // Create buffer
   const buffer = new ArrayBuffer(fileSize);
@@ -91,13 +144,13 @@ export function encodeWAV(
 
   // RIFF chunk descriptor
   writeString(view, 0, 'RIFF');
-  view.setUint32(4, fileSize - 8, true); // File size - 8
+  view.setUint32(4, fileSize - 8, true); // File size - 8 (RIFF header size)
   writeString(view, 8, 'WAVE');
 
   // fmt sub-chunk
   writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true); // Sub-chunk size (16 for PCM)
-  view.setUint16(20, 1, true); // Audio format (1 = PCM)
+  view.setUint32(16, FMT_SUBCHUNK_SIZE, true);
+  view.setUint16(20, WAV_FORMAT_PCM, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true); // Byte rate
@@ -112,22 +165,20 @@ export function encodeWAV(
   // Write PCM samples
   // ========================================
 
-  let offset = headerSize;
+  let offset = WAV_HEADER_SIZE;
 
   if (bitDepth === 16) {
     for (let i = 0; i < interleaved.length; i++) {
-      // Clamp to -1...1 range
       const sample = Math.max(-1, Math.min(1, interleaved[i]));
-      // Convert to 16-bit signed integer
-      const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      const int16 = sample < 0 ? sample * multipliers.negative : sample * multipliers.positive;
       view.setInt16(offset, int16, true);
       offset += 2;
     }
   } else if (bitDepth === 24) {
     for (let i = 0; i < interleaved.length; i++) {
       const sample = Math.max(-1, Math.min(1, interleaved[i]));
-      const int24 = sample < 0 ? sample * 0x800000 : sample * 0x7fffff;
-      // 24-bit is written as 3 bytes
+      const int24 = sample < 0 ? sample * multipliers.negative : sample * multipliers.positive;
+      // 24-bit is written as 3 bytes (little-endian)
       view.setUint8(offset, int24 & 0xff);
       view.setUint8(offset + 1, (int24 >> 8) & 0xff);
       view.setUint8(offset + 2, (int24 >> 16) & 0xff);
@@ -136,7 +187,7 @@ export function encodeWAV(
   } else if (bitDepth === 32) {
     for (let i = 0; i < interleaved.length; i++) {
       const sample = Math.max(-1, Math.min(1, interleaved[i]));
-      const int32 = sample < 0 ? sample * 0x80000000 : sample * 0x7fffffff;
+      const int32 = sample < 0 ? sample * multipliers.negative : sample * multipliers.positive;
       view.setInt32(offset, int32, true);
       offset += 4;
     }
@@ -151,14 +202,26 @@ export function encodeWAV(
 
 /**
  * Convert a WebM blob (from MediaRecorder) to a WAV blob
+ * @throws {WavEncoderError} If decoding or encoding fails
  */
 export async function convertWebMToWAV(
   webmBlob: Blob,
   options: WavEncoderOptions = {}
 ): Promise<Blob> {
-  const audioBuffer = await decodeWebMToAudioBuffer(webmBlob);
-  const wavBuffer = encodeWAV(audioBuffer, options);
-  return new Blob([wavBuffer], { type: 'audio/wav' });
+  if (!webmBlob || webmBlob.size === 0) {
+    throw new WavEncoderError('Cannot convert empty or invalid blob');
+  }
+
+  try {
+    const audioBuffer = await decodeWebMToAudioBuffer(webmBlob);
+    const wavBuffer = encodeWAV(audioBuffer, options);
+    return new Blob([wavBuffer], { type: 'audio/wav' });
+  } catch (error) {
+    if (error instanceof WavEncoderError) {
+      throw error;
+    }
+    throw new WavEncoderError('Failed to convert WebM to WAV', error);
+  }
 }
 
 /**

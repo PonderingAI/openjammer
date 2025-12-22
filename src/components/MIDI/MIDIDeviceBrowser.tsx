@@ -15,7 +15,7 @@ import { MIDIDeviceCard } from './MIDIDeviceCard';
 import './MIDIDeviceBrowser.css';
 
 interface MIDIDeviceBrowserProps {
-    onSelectDevice: (deviceId: string | null, presetId: string) => void;
+    onSelectDevice: (deviceId: string | null, presetId: string) => boolean;
 }
 
 export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
@@ -133,19 +133,27 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
     }, [inputs]);
 
     // Handle selecting a preset
+    // Only closes browser if node was successfully created
     const handleSelectPreset = useCallback(
         (presetId: string, deviceId: string | null = null) => {
-            onSelectDevice(deviceId, presetId);
-            closeBrowser();
+            const success = onSelectDevice(deviceId, presetId);
+            if (success) {
+                closeBrowser();
+            }
+            // If not success, browser stays open and existing node flashes red
         },
         [onSelectDevice, closeBrowser]
     );
 
     // Handle selecting a connected device
+    // Only closes browser if node was successfully created
     const handleSelectDevice = useCallback(
         (deviceId: string, presetId: string) => {
-            onSelectDevice(deviceId, presetId);
-            closeBrowser();
+            const success = onSelectDevice(deviceId, presetId);
+            if (success) {
+                closeBrowser();
+            }
+            // If not success, browser stays open and existing node flashes red
         },
         [onSelectDevice, closeBrowser]
     );
@@ -200,6 +208,7 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
+                        aria-label="Search MIDI devices"
                     />
                 </div>
 

@@ -17,9 +17,12 @@ import {
   getSampleFile,
   type LibrarySample,
 } from '../../store/sampleLibraryStore';
+import { useAudioClipStore } from '../../store/audioClipStore';
 import { isFileSystemAccessSupported, selectLibraryFolder } from '../../utils/fileSystemAccess';
 import { formatDuration } from '../../utils/audioMetadata';
 import { getAudioContext } from '../../audio/AudioEngine';
+import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { createClipFromSample, generateWaveformPeaks } from '../../utils/clipUtils';
 
 interface LibraryNodeProps {
   node: GraphNode;
@@ -58,6 +61,11 @@ export function LibraryNode({
   const data = node.data as LibraryNodeData;
   const updateNodeData = useGraphStore(s => s.updateNodeData);
 
+  // Audio clip store for drag-out
+  const addClip = useAudioClipStore(s => s.addClip);
+  const startClipDrag = useAudioClipStore(s => s.startDrag);
+  const getClipById = useAudioClipStore(s => s.getClipById);
+
   // Sample library store
   const libraries = useSampleLibraryStore(s => s.libraries);
   const samples = useSampleLibraryStore(s => s.samples);
@@ -89,6 +97,7 @@ export function LibraryNode({
   // Get ports
   const triggerPort = node.ports.find(p => p.id === 'trigger');
   const audioOutPort = node.ports.find(p => p.id === 'audio-out');
+  const sampleOutPort = node.ports.find(p => p.id === 'sample-out');
 
   // Get current library (use effective library ID which falls back to project library)
   const currentLibrary = effectiveLibraryId ? libraries[effectiveLibraryId] : null;
@@ -136,7 +145,7 @@ export function LibraryNode({
 
   // Handle sample selection
   const handleSelectSample = useCallback(
-    (sampleId: string) => {
+    async (sampleId: string) => {
       const sample = samples[sampleId];
       if (!sample) return;
 
@@ -152,6 +161,23 @@ export function LibraryNode({
           },
         ],
       });
+
+      // Load and send buffer to connected samplers via sample-out port
+      try {
+        const file = await getSampleFile(sampleId);
+        if (!file) return;
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const arrayBuffer = await file.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+        // Send to connected samplers
+        audioGraphManager.sendSampleBuffer(node.id, audioBuffer);
+      } catch (err) {
+        console.error('Failed to load sample for sampler:', err);
+      }
     },
     [node.id, samples, data.sampleRefs, updateNodeData]
   );
@@ -232,6 +258,49 @@ export function LibraryNode({
     [node.id, updateNodeData]
   );
 
+  // Handle drag start for sample (drag-out to canvas)
+  const handleSampleDragStart = useCallback(
+    async (e: React.MouseEvent, sample: LibrarySample) => {
+      e.stopPropagation();
+      e.preventDefault();
+
+      try {
+        // Load audio to generate waveform
+        const file = await getSampleFile(sample.id);
+        if (!file) return;
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const arrayBuffer = await file.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+        // Generate waveform peaks
+        const waveformPeaks = generateWaveformPeaks(audioBuffer, 64);
+
+        // Create clip from sample
+        const clipData = createClipFromSample(sample, waveformPeaks, node.id);
+
+        // Add clip to store (without id/timestamps - store will add them)
+        const { id: _id, createdAt: _ca, lastModifiedAt: _lm, ...clipWithoutMeta } = clipData;
+        const clipId = addClip(clipWithoutMeta);
+
+        // Get the created clip to pass to startDrag
+        const clip = getClipById(clipId);
+        if (!clip) return;
+
+        // Create a temporary bounds for the drag origin
+        const bounds = new DOMRect(e.clientX - 60, e.clientY - 20, 120, 40);
+
+        // Start dragging
+        startClipDrag(clipId, { x: e.clientX, y: e.clientY }, bounds);
+      } catch (err) {
+        console.error('Failed to create clip from sample:', err);
+      }
+    },
+    [node.id, addClip, startClipDrag, getClipById]
+  );
+
   // Render sample row
   const renderSampleRow = (sample: LibrarySample) => {
     const isSelected = data.currentSampleId === sample.id;
@@ -245,6 +314,22 @@ export function LibraryNode({
         onClick={() => handleSelectSample(sample.id)}
         onDoubleClick={() => handlePreviewSample(sample.id)}
       >
+        {/* Drag handle */}
+        <div
+          className="sample-drag-handle"
+          onMouseDown={(e) => handleSampleDragStart(e, sample)}
+          title="Drag to canvas"
+        >
+          <svg viewBox="0 0 24 24" width="10" height="10">
+            <circle cx="8" cy="7" r="1.5" fill="currentColor" />
+            <circle cx="8" cy="12" r="1.5" fill="currentColor" />
+            <circle cx="8" cy="17" r="1.5" fill="currentColor" />
+            <circle cx="14" cy="7" r="1.5" fill="currentColor" />
+            <circle cx="14" cy="12" r="1.5" fill="currentColor" />
+            <circle cx="14" cy="17" r="1.5" fill="currentColor" />
+          </svg>
+        </div>
+
         {/* Play/Stop button */}
         <button
           className={`sample-preview-btn ${isPreviewing ? 'playing' : ''}`}
@@ -452,6 +537,23 @@ export function LibraryNode({
           onMouseUp={e => handlePortMouseUp?.(audioOutPort.id, e)}
           onMouseEnter={() => handlePortMouseEnter?.(audioOutPort.id)}
           onMouseLeave={handlePortMouseLeave}
+        />
+      )}
+
+      {sampleOutPort && (
+        <div
+          className={`library-port output sample-out ${hasConnection(sampleOutPort.id) ? 'connected' : ''}`}
+          style={{
+            left: `${(sampleOutPort.position?.x || 1) * 100}%`,
+            top: `${(sampleOutPort.position?.y || 0.7) * 100}%`,
+          }}
+          data-node-id={node.id}
+          data-port-id={sampleOutPort.id}
+          onMouseDown={e => handlePortMouseDown?.(sampleOutPort.id, e)}
+          onMouseUp={e => handlePortMouseUp?.(sampleOutPort.id, e)}
+          onMouseEnter={() => handlePortMouseEnter?.(sampleOutPort.id)}
+          onMouseLeave={handlePortMouseLeave}
+          title="Sample buffer output - connect to Sampler"
         />
       )}
     </div>
