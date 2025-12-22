@@ -1,56 +1,53 @@
 /**
- * Library Node - Local audio sample library browser
+ * Library Node - Two-panel audio library browser with tag management
+ *
+ * Layout:
+ * - Left panel: Tags (pinned at top, others below, resizable separator)
+ * - Right panel: Search bar + file list with tag badges
  *
  * Features:
- * - Link local folders containing audio samples
- * - Browse and preview samples
- * - Search and filter by tags/BPM
- * - Virtualized list for large libraries
- * - Missing file detection and relinking
+ * - Link local folders containing audio files
+ * - Tag management with auto-colors
+ * - Drag files onto tags to tag them
+ * - Drag files to canvas to create clips
+ * - Resizable node
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import type { GraphNode, LibraryNodeData } from '../../engine/types';
+import type { GraphNode, LibraryNodeData, LibraryItemRef } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import {
-  useSampleLibraryStore,
+  useLibraryStore,
   getSampleFile,
-  type LibrarySample,
-} from '../../store/sampleLibraryStore';
-import { useAudioClipStore } from '../../store/audioClipStore';
+  getTagColor,
+  getTagColorDark,
+  type LibraryItem,
+} from '../../store/libraryStore';
 import { isFileSystemAccessSupported, selectLibraryFolder } from '../../utils/fileSystemAccess';
-import { formatDuration } from '../../utils/audioMetadata';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
-import { createClipFromSample, generateWaveformPeaks } from '../../utils/clipUtils';
+import { useResize } from '../../hooks/useResize';
+import { usePanelResize } from '../../hooks/usePanelResize';
+import { ResizeHandles } from '../common/ResizeHandles';
+import { PanelSeparator } from '../common/PanelSeparator';
+import { ScrollContainer } from '../common/ScrollContainer';
 
 interface LibraryNodeProps {
   node: GraphNode;
-  handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
-  handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
-  handlePortMouseEnter?: (portId: string) => void;
-  handlePortMouseLeave?: () => void;
-  hasConnection: (portId: string) => boolean;
   handleHeaderMouseDown: (e: React.MouseEvent) => void;
   handleNodeMouseEnter: () => void;
   handleNodeMouseLeave: () => void;
   isSelected: boolean;
   isDragging: boolean;
-  isHoveredWithConnections: boolean;
-  incomingConnectionCount: number;
   style: React.CSSProperties;
 }
 
-// Maximum samples to show without scrolling
-const MAX_VISIBLE_SAMPLES = 5;
+// Minimum dimensions for resizing
+const MIN_WIDTH = 400;
+const MIN_HEIGHT = 300;
 
 export function LibraryNode({
   node,
-  handlePortMouseDown,
-  handlePortMouseUp,
-  handlePortMouseEnter,
-  handlePortMouseLeave,
-  hasConnection,
   handleHeaderMouseDown,
   handleNodeMouseEnter,
   handleNodeMouseLeave,
@@ -61,61 +58,148 @@ export function LibraryNode({
   const data = node.data as LibraryNodeData;
   const updateNodeData = useGraphStore(s => s.updateNodeData);
 
-  // Audio clip store for drag-out
-  const addClip = useAudioClipStore(s => s.addClip);
-  const startClipDrag = useAudioClipStore(s => s.startDrag);
-  const getClipById = useAudioClipStore(s => s.getClipById);
+  // Library store
+  const libraries = useLibraryStore(s => s.libraries);
+  const items = useLibraryStore(s => s.items);
+  const scanProgress = useLibraryStore(s => s.scanProgress);
+  const addLibrary = useLibraryStore(s => s.addLibrary);
+  const scanLibrary = useLibraryStore(s => s.scanLibrary);
+  const getItemsByLibrary = useLibraryStore(s => s.getItemsByLibrary);
+  const projectLibraryId = useLibraryStore(s => s.projectLibraryId);
 
-  // Sample library store
-  const libraries = useSampleLibraryStore(s => s.libraries);
-  const samples = useSampleLibraryStore(s => s.samples);
-  const scanProgress = useSampleLibraryStore(s => s.scanProgress);
-  const addLibrary = useSampleLibraryStore(s => s.addLibrary);
-  const scanLibrary = useSampleLibraryStore(s => s.scanLibrary);
-  const getSamplesByLibrary = useSampleLibraryStore(s => s.getSamplesByLibrary);
-  const projectLibraryId = useSampleLibraryStore(s => s.projectLibraryId);
+  // Tag management from store
+  const pinnedTags = useLibraryStore(s => s.pinnedTags);
+  const allTags = useLibraryStore(s => s.allTags);
+  const createTag = useLibraryStore(s => s.createTag);
+  const pinTag = useLibraryStore(s => s.pinTag);
+  const unpinTag = useLibraryStore(s => s.unpinTag);
+  const addTagToItem = useLibraryStore(s => s.addTagToItem);
+  const activeFilterTag = useLibraryStore(s => s.activeFilterTag);
+  const setActiveFilterTag = useLibraryStore(s => s.setActiveFilterTag);
+  const trashItem = useLibraryStore(s => s.trashItem);
+  const restoreItem = useLibraryStore(s => s.restoreItem);
 
-  // Auto-connect to project library if available and no library set
+  // Auto-connect to project library if available
+  // Priority: node's own libraryId > projectLibraryId
   const effectiveLibraryId = data.libraryId || projectLibraryId;
 
-  // Auto-set the library ID if project library is available
+  // Auto-set the library ID when project library becomes available
   useEffect(() => {
-    if (!data.libraryId && projectLibraryId) {
+    // If node doesn't have a library set and project library is available, auto-select it
+    if (!data.libraryId && projectLibraryId && libraries[projectLibraryId]) {
       updateNodeData<LibraryNodeData>(node.id, { libraryId: projectLibraryId });
     }
-  }, [data.libraryId, projectLibraryId, node.id, updateNodeData]);
+  }, [data.libraryId, projectLibraryId, libraries, node.id, updateNodeData]);
+
+  // Also trigger scan if library exists but hasn't been scanned
+  useEffect(() => {
+    if (effectiveLibraryId && libraries[effectiveLibraryId]) {
+      const lib = libraries[effectiveLibraryId];
+      // If library has never been scanned (lastScanAt = 0), trigger a scan
+      if (lib.lastScanAt === 0 && lib.status !== 'scanning') {
+        scanLibrary(effectiveLibraryId, false).catch(console.error);
+      }
+    }
+  }, [effectiveLibraryId, libraries, scanLibrary]);
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
-  const [previewingSampleId, setPreviewingSampleId] = useState<string | null>(null);
+  const [previewingItemId, setPreviewingItemId] = useState<string | null>(null);
   const [isLinking, setIsLinking] = useState(false);
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [dragOverTag, setDragOverTag] = useState<string | null>(null);
+  const [dragOverPinnedSection, setDragOverPinnedSection] = useState(false);
+  const [draggingTag, setDraggingTag] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
 
-  // Audio preview
+  // Multi-selection state
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+
+  // Refs
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
+  const newTagInputRef = useRef<HTMLInputElement>(null);
+  const editNameInputRef = useRef<HTMLInputElement>(null);
+  const filesContainerRef = useRef<HTMLDivElement>(null);
+  const fileRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Get ports
-  const triggerPort = node.ports.find(p => p.id === 'trigger');
-  const audioOutPort = node.ports.find(p => p.id === 'audio-out');
-  const sampleOutPort = node.ports.find(p => p.id === 'sample-out');
+  // Get updateItem from store
+  const updateItem = useLibraryStore(s => s.updateItem);
 
-  // Get current library (use effective library ID which falls back to project library)
+  // Node resize hook
+  const {
+    width: nodeWidth,
+    height: nodeHeight,
+    handleResizeStart,
+    nodeRef,
+    isResizing,
+  } = useResize({
+    nodeId: node.id,
+    initialWidth: data.width ?? 500,
+    initialHeight: data.height ?? 400,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
+    onDimensionsChange: (w, h) => updateNodeData<LibraryNodeData>(node.id, { width: w, height: h }),
+  });
+
+  // Panel separator hook
+  const {
+    position: separatorPos,
+    isDragging: isDraggingSeparator,
+    handleSeparatorMouseDown,
+    containerRef: leftPanelRef,
+  } = usePanelResize({
+    nodeId: node.id,
+    initialPosition: data.separatorPosition ?? 0.5,
+    mode: 'percentage',
+    min: 0.2,
+    max: 0.8,
+    direction: 'vertical',
+    onPositionChange: (pos) => updateNodeData<LibraryNodeData>(node.id, { separatorPosition: pos }),
+  });
+
+  // Get current library
   const currentLibrary = effectiveLibraryId ? libraries[effectiveLibraryId] : null;
 
-  // Get filtered samples
-  const librarySamples = useMemo(() => {
+  // Get other (non-pinned) tags
+  const otherTags = useMemo(() => {
+    return allTags.filter(t => !pinnedTags.includes(t));
+  }, [allTags, pinnedTags]);
+
+  // Get filtered items
+  const libraryItems = useMemo(() => {
     if (!effectiveLibraryId) return [];
-    const allSamples = getSamplesByLibrary(effectiveLibraryId);
+    let allItems = getItemsByLibrary(effectiveLibraryId);
 
-    if (!searchQuery.trim()) return allSamples;
+    // Hide trashed items unless 'trash' is the active filter
+    if (activeFilterTag !== 'trash') {
+      allItems = allItems.filter((item: LibraryItem) => !item.tags.includes('trash'));
+    }
 
-    const query = searchQuery.toLowerCase();
-    return allSamples.filter(
-      s =>
-        s.fileName.toLowerCase().includes(query) ||
-        s.tags.some(t => t.toLowerCase().includes(query))
-    );
-  }, [effectiveLibraryId, getSamplesByLibrary, searchQuery, samples]);
+    // Filter by active tag
+    if (activeFilterTag) {
+      allItems = allItems.filter((item: LibraryItem) => item.tags.includes(activeFilterTag));
+    }
+
+    // Filter by search
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      allItems = allItems.filter(
+        (s: LibraryItem) =>
+          s.fileName.toLowerCase().includes(query) ||
+          s.tags.some((t: string) => t.toLowerCase().includes(query))
+      );
+    }
+
+    return allItems;
+  }, [effectiveLibraryId, getItemsByLibrary, searchQuery, items, activeFilterTag]);
 
   // Handle linking a new folder
   const handleLinkFolder = useCallback(async () => {
@@ -128,11 +212,7 @@ export function LibraryNode({
     try {
       const handle = await selectLibraryFolder();
       const libraryId = await addLibrary(handle);
-
-      // Update node data
       updateNodeData<LibraryNodeData>(node.id, { libraryId });
-
-      // Start scanning
       await scanLibrary(libraryId, true);
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
@@ -143,241 +223,533 @@ export function LibraryNode({
     }
   }, [node.id, addLibrary, scanLibrary, updateNodeData]);
 
-  // Handle sample selection
-  const handleSelectSample = useCallback(
-    async (sampleId: string) => {
-      const sample = samples[sampleId];
-      if (!sample) return;
+  // Handle item selection
+  const handleSelectItem = useCallback(
+    async (itemId: string) => {
+      const item = items[itemId];
+      if (!item) return;
 
       updateNodeData<LibraryNodeData>(node.id, {
-        currentSampleId: sampleId,
-        sampleRefs: [
-          ...data.sampleRefs.filter(r => r.id !== sampleId),
+        currentItemId: itemId,
+        itemRefs: [
+          ...(data.itemRefs || []).filter((r: LibraryItemRef) => r.id !== itemId),
           {
-            id: sampleId,
-            relativePath: sample.relativePath,
-            displayName: sample.fileName,
-            libraryId: sample.libraryId,
+            id: itemId,
+            relativePath: item.relativePath,
+            displayName: item.fileName,
+            libraryId: item.libraryId,
           },
         ],
       });
 
-      // Load and send buffer to connected samplers via sample-out port
+      // Load and send buffer to connected samplers
       try {
-        const file = await getSampleFile(sampleId);
+        const file = await getSampleFile(itemId);
         if (!file) return;
-
         const ctx = getAudioContext();
         if (!ctx) return;
-
         const arrayBuffer = await file.arrayBuffer();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-        // Send to connected samplers
         audioGraphManager.sendSampleBuffer(node.id, audioBuffer);
       } catch (err) {
-        console.error('Failed to load sample for sampler:', err);
+        console.error('Failed to load item for sampler:', err);
       }
     },
-    [node.id, samples, data.sampleRefs, updateNodeData]
+    [node.id, items, data.itemRefs, updateNodeData]
   );
 
-  // Handle sample preview
-  const handlePreviewSample = useCallback(
-    async (sampleId: string) => {
-      // Stop current preview
+  // Handle preview
+  const handlePreviewItem = useCallback(
+    async (itemId: string) => {
       if (audioSourceRef.current) {
-        try {
-          audioSourceRef.current.stop();
-        } catch {
-          // Already stopped
-        }
+        try { audioSourceRef.current.stop(); } catch { /* */ }
         audioSourceRef.current = null;
       }
 
-      if (previewingSampleId === sampleId) {
-        setPreviewingSampleId(null);
+      if (previewingItemId === itemId) {
+        setPreviewingItemId(null);
         return;
       }
 
-      setPreviewingSampleId(sampleId);
+      setPreviewingItemId(itemId);
+
+      // Capture the expected item ID for the onended callback closure
+      const expectedItemId = itemId;
 
       try {
-        const file = await getSampleFile(sampleId);
-        if (!file) {
-          setPreviewingSampleId(null);
-          return;
-        }
+        const file = await getSampleFile(itemId);
+        if (!file) { setPreviewingItemId(null); return; }
 
         const ctx = getAudioContext();
-        if (!ctx) {
-          setPreviewingSampleId(null);
-          return;
-        }
+        if (!ctx) { setPreviewingItemId(null); return; }
 
         const arrayBuffer = await file.arrayBuffer();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-        audioBufferRef.current = audioBuffer;
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(ctx.destination);
         source.onended = () => {
-          setPreviewingSampleId(null);
-          audioSourceRef.current = null;
+          // Only clear preview state if this source's item is still the current preview
+          // This prevents race conditions where a new preview starts before this one ends
+          setPreviewingItemId((current) => current === expectedItemId ? null : current);
+          if (audioSourceRef.current === source) {
+            audioSourceRef.current = null;
+          }
         };
         source.start();
-
         audioSourceRef.current = source;
       } catch (err) {
         console.error('Preview failed:', err);
-        setPreviewingSampleId(null);
+        setPreviewingItemId(null);
       }
     },
-    [previewingSampleId]
+    [previewingItemId]
   );
 
   // Cleanup preview on unmount
   useEffect(() => {
     return () => {
       if (audioSourceRef.current) {
-        try {
-          audioSourceRef.current.stop();
-        } catch {
-          // Already stopped
-        }
+        try { audioSourceRef.current.stop(); } catch { /* */ }
       }
     };
   }, []);
 
-  // Handle playback mode change
-  const handlePlaybackModeChange = useCallback(
-    (mode: 'oneshot' | 'loop' | 'hold') => {
-      updateNodeData<LibraryNodeData>(node.id, { playbackMode: mode });
-    },
-    [node.id, updateNodeData]
-  );
+  // Handle double-click to edit file name
+  const handleStartEditFileName = useCallback((itemId: string) => {
+    const item = items[itemId];
+    if (!item) return;
+    // Get base name without extension
+    const baseName = item.fileName.replace(/\.[^.]+$/, '');
+    setEditingItemId(itemId);
+    setEditingName(baseName);
+  }, [items]);
 
-  // Handle drag start for sample (drag-out to canvas)
-  const handleSampleDragStart = useCallback(
-    async (e: React.MouseEvent, sample: LibrarySample) => {
+  // Handle save file name
+  const handleSaveFileName = useCallback(() => {
+    if (!editingItemId || !editingName.trim()) {
+      setEditingItemId(null);
+      setEditingName('');
+      return;
+    }
+
+    const item = items[editingItemId];
+    if (!item) {
+      setEditingItemId(null);
+      setEditingName('');
+      return;
+    }
+
+    // Get original extension
+    const extMatch = item.fileName.match(/\.[^.]+$/);
+    const extension = extMatch ? extMatch[0] : '';
+    const newFileName = editingName.trim() + extension;
+
+    // Only update if name changed
+    if (newFileName !== item.fileName) {
+      updateItem(editingItemId, { fileName: newFileName });
+    }
+
+    setEditingItemId(null);
+    setEditingName('');
+  }, [editingItemId, editingName, items, updateItem]);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingItemId && editNameInputRef.current) {
+      editNameInputRef.current.focus();
+      editNameInputRef.current.select();
+    }
+  }, [editingItemId]);
+
+  // Handle drag start for file - only set drag data, don't create clip yet
+  // Clip will be created when dropped on canvas (handled by NodeCanvas)
+  const handleFileDragStart = useCallback(
+    (e: React.DragEvent, item: LibraryItem) => {
       e.stopPropagation();
-      e.preventDefault();
 
-      try {
-        // Load audio to generate waveform
-        const file = await getSampleFile(sample.id);
-        if (!file) return;
+      // If this item is selected, drag all selected items; otherwise just this one
+      const itemsToDrag = selectedItemIds.has(item.id) && selectedItemIds.size > 1
+        ? Array.from(selectedItemIds)
+        : [item.id];
 
-        const ctx = getAudioContext();
-        if (!ctx) return;
+      // Set drag data - item IDs for tagging (comma-separated), single item data for canvas drop
+      e.dataTransfer.setData('application/library-item-ids', itemsToDrag.join(','));
+      e.dataTransfer.setData('application/library-item-id', item.id); // For backwards compatibility
+      e.dataTransfer.setData('application/library-item', JSON.stringify({
+        id: item.id,
+        fileName: item.fileName,
+        duration: item.duration,
+        sampleRate: item.sampleRate,
+        sourceNodeId: node.id,
+      }));
+      e.dataTransfer.effectAllowed = 'copyMove';
 
-        const arrayBuffer = await file.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-        // Generate waveform peaks
-        const waveformPeaks = generateWaveformPeaks(audioBuffer, 64);
-
-        // Create clip from sample
-        const clipData = createClipFromSample(sample, waveformPeaks, node.id);
-
-        // Add clip to store (without id/timestamps - store will add them)
-        const { id: _id, createdAt: _ca, lastModifiedAt: _lm, ...clipWithoutMeta } = clipData;
-        const clipId = addClip(clipWithoutMeta);
-
-        // Get the created clip to pass to startDrag
-        const clip = getClipById(clipId);
-        if (!clip) return;
-
-        // Create a temporary bounds for the drag origin
-        const bounds = new DOMRect(e.clientX - 60, e.clientY - 20, 120, 40);
-
-        // Start dragging
-        startClipDrag(clipId, { x: e.clientX, y: e.clientY }, bounds);
-      } catch (err) {
-        console.error('Failed to create clip from sample:', err);
+      // Set a drag image
+      const dragEl = e.currentTarget as HTMLElement;
+      if (dragEl) {
+        e.dataTransfer.setDragImage(dragEl, 60, 20);
       }
     },
-    [node.id, addClip, startClipDrag, getClipById]
+    [node.id, selectedItemIds]
   );
 
-  // Render sample row
-  const renderSampleRow = (sample: LibrarySample) => {
-    const isSelected = data.currentSampleId === sample.id;
-    const isPreviewing = previewingSampleId === sample.id;
-    const isMissing = sample.status === 'missing';
+  // Handle drop on tag (tag all dragged files)
+  const handleTagDrop = useCallback(
+    (e: React.DragEvent, tagName: string) => {
+      e.preventDefault();
+      e.stopPropagation(); // Prevent canvas from also handling the drop
+      setDragOverTag(null);
+
+      // Try to get multiple item IDs first
+      const itemIdsStr = e.dataTransfer.getData('application/library-item-ids');
+      if (itemIdsStr) {
+        const itemIds = itemIdsStr.split(',').filter(Boolean);
+        itemIds.forEach(id => addTagToItem(id, tagName));
+      } else {
+        // Fallback to single item
+        const itemId = e.dataTransfer.getData('application/library-item-id');
+        if (itemId) {
+          addTagToItem(itemId, tagName);
+        }
+      }
+    },
+    [addTagToItem]
+  );
+
+  // Selection box handlers for files panel
+  // Use refs to track selection state for window event listeners
+  const isSelectingRef = useRef(false);
+  const selectionStartRef = useRef({ x: 0, y: 0 });
+
+  // Window-level handlers for robust selection (using refs to avoid stale closures)
+  useEffect(() => {
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (!isSelectingRef.current) return;
+
+      const container = filesContainerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      // Get the scroll container inside for scroll offset
+      const scrollEl = container.querySelector('.library-files');
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const scrollLeft = scrollEl?.scrollLeft ?? 0;
+
+      const x = e.clientX - rect.left + scrollLeft;
+      const y = e.clientY - rect.top + scrollTop;
+
+      setSelectionBox({
+        startX: selectionStartRef.current.x,
+        startY: selectionStartRef.current.y,
+        currentX: x,
+        currentY: y,
+      });
+    };
+
+    const handleWindowMouseUp = (e: MouseEvent) => {
+      if (!isSelectingRef.current) return;
+
+      isSelectingRef.current = false;
+      const container = filesContainerRef.current;
+      if (!container) {
+        setSelectionBox(null);
+        return;
+      }
+
+      // Get current selection box state for calculating selection
+      const rect = container.getBoundingClientRect();
+      const scrollEl = container.querySelector('.library-files');
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const scrollLeft = scrollEl?.scrollLeft ?? 0;
+
+      const currentX = e.clientX - rect.left + scrollLeft;
+      const currentY = e.clientY - rect.top + scrollTop;
+      const startX = selectionStartRef.current.x;
+      const startY = selectionStartRef.current.y;
+
+      // Calculate selection rectangle
+      const minX = Math.min(startX, currentX);
+      const maxX = Math.max(startX, currentX);
+      const minY = Math.min(startY, currentY);
+      const maxY = Math.max(startY, currentY);
+
+      // Only select if dragged more than 5 pixels
+      if (maxX - minX < 5 && maxY - minY < 5) {
+        setSelectionBox(null);
+        return;
+      }
+
+      const newSelected = new Set<string>();
+
+      // Check each file row's play button against selection box
+      fileRowRefs.current.forEach((rowEl, itemId) => {
+        const playBtn = rowEl.querySelector('.file-preview-btn');
+        if (!playBtn) return;
+
+        const btnRect = playBtn.getBoundingClientRect();
+        // Convert to container-relative coordinates
+        const btnLeft = btnRect.left - rect.left + scrollLeft;
+        const btnRight = btnRect.right - rect.left + scrollLeft;
+        const btnTop = btnRect.top - rect.top + scrollTop;
+        const btnBottom = btnRect.bottom - rect.top + scrollTop;
+
+        // Check if entire play button is within selection box
+        if (btnLeft >= minX && btnRight <= maxX && btnTop >= minY && btnBottom <= maxY) {
+          newSelected.add(itemId);
+        }
+      });
+
+      setSelectedItemIds(newSelected);
+      setSelectionBox(null);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, []);
+
+  const handleFilesMouseDown = useCallback((e: React.MouseEvent) => {
+    // Only start selection if clicking on empty space (not on a file row)
+    const target = e.target as HTMLElement;
+    if (target.closest('.library-file-row')) return;
+    // Also ignore if clicking on scroll container padding or other interactive elements
+    if (target.closest('button') || target.closest('input')) return;
+
+    // Stop propagation to prevent canvas from starting its selection box
+    e.stopPropagation();
+    e.preventDefault(); // Prevent text selection during drag
+
+    const container = filesContainerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    // Get the scroll container inside for scroll offset
+    const scrollEl = container.querySelector('.library-files');
+    const scrollTop = scrollEl?.scrollTop ?? 0;
+    const scrollLeft = scrollEl?.scrollLeft ?? 0;
+
+    const x = e.clientX - rect.left + scrollLeft;
+    const y = e.clientY - rect.top + scrollTop;
+
+    // Store start position in ref for window event listeners
+    selectionStartRef.current = { x, y };
+    isSelectingRef.current = true;
+
+    setSelectionBox({ startX: x, startY: y, currentX: x, currentY: y });
+    setSelectedItemIds(new Set()); // Clear selection when starting new box
+  }, []);
+
+  // Clear selection when clicking elsewhere
+  const handleFileRowClick = useCallback((itemId: string, e: React.MouseEvent) => {
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      // Multi-select with modifier key
+      setSelectedItemIds(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(itemId)) {
+          newSet.delete(itemId);
+        } else {
+          newSet.add(itemId);
+        }
+        return newSet;
+      });
+    } else {
+      // Single select
+      setSelectedItemIds(new Set([itemId]));
+    }
+    handleSelectItem(itemId);
+  }, [handleSelectItem]);
+
+  // Handle tag click (filter)
+  const handleTagClick = useCallback((tagName: string) => {
+    if (activeFilterTag === tagName) {
+      setActiveFilterTag(null);
+    } else {
+      setActiveFilterTag(tagName);
+    }
+  }, [activeFilterTag, setActiveFilterTag]);
+
+  // Handle creating new tag
+  const handleCreateTag = useCallback(() => {
+    const name = newTagName.trim();
+    if (name) {
+      createTag(name);
+      // New tags go to "other tags" first - user can drag to pin
+    }
+    setNewTagName('');
+    setIsCreatingTag(false);
+  }, [newTagName, createTag]);
+
+  // Handle tag drag start (from other tags section)
+  const handleTagDragStart = useCallback((e: React.DragEvent, tagName: string) => {
+    e.dataTransfer.setData('application/tag-name', tagName);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingTag(tagName);
+  }, []);
+
+  // Handle tag drag end
+  const handleTagDragEnd = useCallback(() => {
+    setDraggingTag(null);
+    setDragOverPinnedSection(false);
+  }, []);
+
+  // Handle drop on pinned tags section (to pin a tag)
+  const handlePinnedSectionDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation(); // Prevent canvas from also handling the drop
+    setDragOverPinnedSection(false);
+
+    const tagName = e.dataTransfer.getData('application/tag-name');
+    if (tagName && !pinnedTags.includes(tagName)) {
+      pinTag(tagName);
+    }
+  }, [pinnedTags, pinTag]);
+
+  // Focus input when creating tag
+  useEffect(() => {
+    if (isCreatingTag && newTagInputRef.current) {
+      newTagInputRef.current.focus();
+    }
+  }, [isCreatingTag]);
+
+
+  // Render tag item
+  const renderTag = (tagName: string, isPinned: boolean) => {
+    const isActive = activeFilterTag === tagName;
+    const color = getTagColor(tagName);
+    const isDragging = draggingTag === tagName;
 
     return (
       <div
-        key={sample.id}
-        className={`library-sample-row ${isSelected ? 'selected' : ''} ${isMissing ? 'missing' : ''}`}
-        onClick={() => handleSelectSample(sample.id)}
-        onDoubleClick={() => handlePreviewSample(sample.id)}
+        key={tagName}
+        className={`library-tag ${isActive ? 'active' : ''} ${dragOverTag === tagName ? 'drag-over' : ''} ${isDragging ? 'dragging' : ''}`}
+        style={{ '--tag-color': color } as React.CSSProperties}
+        onClick={() => handleTagClick(tagName)}
+        draggable={!isPinned}
+        onDragStart={(e) => !isPinned && handleTagDragStart(e, tagName)}
+        onDragEnd={handleTagDragEnd}
+        onDragOver={(e) => { e.preventDefault(); setDragOverTag(tagName); }}
+        onDragLeave={() => setDragOverTag(null)}
+        onDrop={(e) => handleTagDrop(e, tagName)}
+        title={isPinned ? 'Click to filter, drop file to tag' : 'Drag up to pin, click to filter'}
       >
-        {/* Drag handle */}
-        <div
-          className="sample-drag-handle"
-          onMouseDown={(e) => handleSampleDragStart(e, sample)}
-          title="Drag to canvas"
-        >
-          <svg viewBox="0 0 24 24" width="10" height="10">
-            <circle cx="8" cy="7" r="1.5" fill="currentColor" />
-            <circle cx="8" cy="12" r="1.5" fill="currentColor" />
-            <circle cx="8" cy="17" r="1.5" fill="currentColor" />
-            <circle cx="14" cy="7" r="1.5" fill="currentColor" />
-            <circle cx="14" cy="12" r="1.5" fill="currentColor" />
-            <circle cx="14" cy="17" r="1.5" fill="currentColor" />
-          </svg>
-        </div>
+        <span className="tag-indicator" style={{ backgroundColor: color }} />
+        <span className="tag-name">{tagName}</span>
+        {isPinned && (
+          <button
+            className="tag-unpin-btn"
+            onClick={(e) => { e.stopPropagation(); unpinTag(tagName); }}
+            title="Unpin tag"
+          >
+            ×
+          </button>
+        )}
+      </div>
+    );
+  };
 
+  // Render file row
+  const renderFileRow = (item: LibraryItem) => {
+    const isActive = data.currentItemId === item.id;
+    const isPreviewing = previewingItemId === item.id;
+    const isMissing = item.status === 'missing';
+    const isTrashed = item.tags.includes('trash');
+    const isEditing = editingItemId === item.id;
+    const isMultiSelected = selectedItemIds.has(item.id);
+
+    return (
+      <div
+        key={item.id}
+        ref={(el) => {
+          if (el) fileRowRefs.current.set(item.id, el);
+          else fileRowRefs.current.delete(item.id);
+        }}
+        className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''}`}
+        onClick={(e) => !isEditing && handleFileRowClick(item.id, e)}
+        draggable={!isTrashed && !isEditing}
+        onDragStart={(e) => !isTrashed && !isEditing && handleFileDragStart(e, item)}
+      >
         {/* Play/Stop button */}
         <button
-          className={`sample-preview-btn ${isPreviewing ? 'playing' : ''}`}
-          onClick={e => {
-            e.stopPropagation();
-            handlePreviewSample(sample.id);
-          }}
-          title={isPreviewing ? 'Stop preview' : 'Preview sample'}
+          className={`file-preview-btn ${isPreviewing ? 'playing' : ''}`}
+          onClick={e => { e.stopPropagation(); handlePreviewItem(item.id); }}
+          title={isPreviewing ? 'Stop' : 'Preview'}
         >
-          {isPreviewing ? (
-            <svg viewBox="0 0 24 24" width="12" height="12">
-              <rect x="6" y="6" width="12" height="12" fill="currentColor" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="12" height="12">
-              <path d="M8 5v14l11-7z" fill="currentColor" />
-            </svg>
-          )}
+          {isPreviewing ? '■' : '▶'}
         </button>
 
-        {/* Sample info */}
-        <div className="sample-info">
-          <span className="sample-name" title={sample.relativePath}>
-            {sample.fileName}
-          </span>
-          <span className="sample-meta">
-            {formatDuration(sample.duration)}
-            {sample.bpm && ` • ${sample.bpm} BPM`}
-          </span>
-        </div>
-
-        {/* Missing indicator */}
-        {isMissing && (
-          <span className="sample-missing-badge" title="File not found">
-            !
+        {/* File name - editable on double-click */}
+        {isEditing ? (
+          <input
+            ref={editNameInputRef}
+            type="text"
+            className="file-name-input"
+            value={editingName}
+            onChange={(e) => setEditingName(e.target.value)}
+            onBlur={handleSaveFileName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSaveFileName();
+              } else if (e.key === 'Escape') {
+                setEditingItemId(null);
+                setEditingName('');
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="file-name"
+            title={`${item.relativePath} (double-click to rename)`}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              handleStartEditFileName(item.id);
+            }}
+          >
+            {item.fileName}
           </span>
         )}
 
-        {/* Favorite star */}
+        {/* Tag badges (right-aligned) */}
+        <div className="file-tags">
+          {item.tags.filter(t => t !== 'trash').slice(0, 2).map(tag => (
+            <span
+              key={tag}
+              className="file-tag-badge"
+              style={{
+                '--tag-bg': getTagColor(tag),
+                '--tag-text': getTagColorDark(tag),
+              } as React.CSSProperties}
+              onClick={(e) => { e.stopPropagation(); handleTagClick(tag); }}
+              title={`Filter by ${tag}`}
+            >
+              {tag}
+            </span>
+          ))}
+          {item.tags.filter(t => t !== 'trash').length > 2 && (
+            <span className="file-tag-more">+{item.tags.filter(t => t !== 'trash').length - 2}</span>
+          )}
+        </div>
+
+        {/* Trash/Restore button */}
         <button
-          className={`sample-favorite-btn ${sample.favorite ? 'active' : ''}`}
-          onClick={e => {
+          className={`file-trash-btn ${isTrashed ? 'restore' : ''}`}
+          onClick={(e) => {
             e.stopPropagation();
-            useSampleLibraryStore.getState().toggleFavorite(sample.id);
+            if (isTrashed) {
+              restoreItem(item.id);
+            } else {
+              trashItem(item.id);
+            }
           }}
-          title={sample.favorite ? 'Remove from favorites' : 'Add to favorites'}
+          title={isTrashed ? 'Restore' : 'Move to trash'}
         >
-          ★
+          {isTrashed ? '↩' : '×'}
         </button>
       </div>
     );
@@ -387,50 +759,42 @@ export function LibraryNode({
   const isScanning =
     scanProgress !== null && scanProgress.libraryId === effectiveLibraryId && scanProgress.phase !== 'complete';
 
+  // Combined style with dimensions
+  const nodeStyle: React.CSSProperties = {
+    ...style,
+    width: nodeWidth,
+    height: nodeHeight,
+  };
+
   return (
     <div
-      className={`schematic-node library-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
-      style={style}
+      ref={nodeRef}
+      className={`schematic-node library-node library-two-panel ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+      style={nodeStyle}
       onMouseEnter={handleNodeMouseEnter}
       onMouseLeave={handleNodeMouseLeave}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div className="schematic-header" onMouseDown={handleHeaderMouseDown}>
         <span className="schematic-title">
-          {currentLibrary ? currentLibrary.name : 'Sample Library'}
+          {currentLibrary ? currentLibrary.name : 'Library'}
         </span>
         {currentLibrary && (
-          <span className="library-count">{currentLibrary.sampleCount}</span>
+          <span className="library-count">{currentLibrary.itemCount}</span>
         )}
       </div>
 
-      {/* Content */}
-      <div className="library-content">
+      {/* Content - Two panel layout */}
+      <div className="library-panels">
         {!currentLibrary ? (
           // No library linked - show link button
           <div className="library-empty">
-            <button
-              className="library-link-btn"
-              onClick={handleLinkFolder}
-              disabled={isLinking}
-            >
-              {isLinking ? (
-                'Linking...'
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" width="16" height="16">
-                    <path
-                      d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
-                      fill="currentColor"
-                    />
-                  </svg>
-                  Link Folder
-                </>
-              )}
+            <button className="library-link-btn" onClick={handleLinkFolder} disabled={isLinking}>
+              {isLinking ? 'Linking...' : '+ Link Folder'}
             </button>
-            <p className="library-hint">
-              Select a folder containing audio samples
-            </p>
+            <p className="library-hint">Select a folder containing audio files</p>
           </div>
         ) : isScanning ? (
           // Scanning progress
@@ -438,13 +802,7 @@ export function LibraryNode({
             <div className="scan-progress">
               <div
                 className="scan-progress-bar"
-                style={{
-                  width: `${
-                    scanProgress && scanProgress.total > 0
-                      ? (scanProgress.current / scanProgress.total) * 100
-                      : 0
-                  }%`,
-                }}
+                style={{ width: `${scanProgress && scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0}%` }}
               />
             </div>
             <span className="scan-status">
@@ -452,110 +810,141 @@ export function LibraryNode({
             </span>
           </div>
         ) : (
-          // Sample browser
           <>
-            {/* Search */}
-            <div className="library-search">
-              <input
-                type="text"
-                placeholder="Search samples..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                onMouseDown={e => e.stopPropagation()}
-              />
-            </div>
-
-            {/* Sample list */}
-            <div
-              className="library-samples"
-              onWheel={e => e.stopPropagation()}
-            >
-              {librarySamples.length === 0 ? (
-                <div className="library-no-samples">
-                  {searchQuery ? 'No matching samples' : 'No samples found'}
-                </div>
-              ) : (
-                librarySamples.slice(0, MAX_VISIBLE_SAMPLES).map(renderSampleRow)
-              )}
-              {librarySamples.length > MAX_VISIBLE_SAMPLES && (
-                <div className="library-more">
-                  +{librarySamples.length - MAX_VISIBLE_SAMPLES} more
-                </div>
-              )}
-            </div>
-
-            {/* Playback mode */}
-            <div className="library-playback-mode">
-              {(['oneshot', 'loop', 'hold'] as const).map(mode => (
-                <button
-                  key={mode}
-                  className={`mode-btn ${data.playbackMode === mode ? 'active' : ''}`}
-                  onClick={() => handlePlaybackModeChange(mode)}
-                  title={
-                    mode === 'oneshot'
-                      ? 'Play once'
-                      : mode === 'loop'
-                        ? 'Loop continuously'
-                        : 'Play while triggered'
+            {/* Left Panel: Tags */}
+            <div className="library-left-panel" ref={leftPanelRef}>
+              {/* Pinned Tags Section - drop zone for pinning */}
+              <div
+                className={`library-tags-section pinned ${dragOverPinnedSection ? 'drag-over' : ''}`}
+                style={{ height: `${separatorPos * 100}%` }}
+                onDragOver={(e) => {
+                  if (draggingTag) {
+                    e.preventDefault();
+                    setDragOverPinnedSection(true);
                   }
-                >
-                  {mode === 'oneshot' ? '1x' : mode === 'loop' ? '∞' : '⏵'}
-                </button>
-              ))}
+                }}
+                onDragLeave={() => setDragOverPinnedSection(false)}
+                onDrop={handlePinnedSectionDrop}
+              >
+                <div className="tags-section-header">
+                  <span>pinned Tags</span>
+                </div>
+                <ScrollContainer mode="dropdown" className="tags-list">
+                  {pinnedTags.map(tag => renderTag(tag, true))}
+                  {pinnedTags.length === 0 && (
+                    <div className="no-tags-hint">Drag tags here to pin</div>
+                  )}
+                </ScrollContainer>
+              </div>
+
+              {/* Separator */}
+              <PanelSeparator
+                direction="vertical"
+                onMouseDown={handleSeparatorMouseDown}
+                isDragging={isDraggingSeparator}
+                className="library-separator"
+              />
+
+              {/* Other Tags Section */}
+              <div className="library-tags-section other" style={{ height: `${(1 - separatorPos) * 100}%` }}>
+                <div className="tags-section-header">
+                  <span>other Tags</span>
+                  <button
+                    className="add-tag-btn"
+                    onClick={() => setIsCreatingTag(true)}
+                    title="Create new tag"
+                  >
+                    +
+                  </button>
+                </div>
+                <ScrollContainer mode="dropdown" className="tags-list">
+                  {isCreatingTag && (
+                    <div className="tag-input-row">
+                      <input
+                        ref={newTagInputRef}
+                        type="text"
+                        value={newTagName}
+                        onChange={(e) => setNewTagName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleCreateTag();
+                          if (e.key === 'Escape') { setIsCreatingTag(false); setNewTagName(''); }
+                        }}
+                        onBlur={handleCreateTag}
+                        placeholder="Tag name..."
+                        onMouseDown={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  )}
+                  {otherTags.map(tag => renderTag(tag, false))}
+                  {otherTags.length === 0 && !isCreatingTag && (
+                    <div className="no-tags-hint">Click + to create tags</div>
+                  )}
+                </ScrollContainer>
+              </div>
+            </div>
+
+            {/* Right Panel: Files */}
+            <div className="library-right-panel">
+              {/* Search bar */}
+              <div className="library-search">
+                <input
+                  type="text"
+                  placeholder="Search files and tags..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onMouseDown={e => e.stopPropagation()}
+                />
+                {activeFilterTag && (
+                  <button
+                    className="clear-filter-btn"
+                    onClick={() => setActiveFilterTag(null)}
+                    title="Clear tag filter"
+                  >
+                    × {activeFilterTag}
+                  </button>
+                )}
+              </div>
+
+              {/* File list with selection box support */}
+              <div
+                ref={filesContainerRef}
+                className="library-files-container"
+                onMouseDownCapture={handleFilesMouseDown}
+              >
+                <ScrollContainer mode="dropdown" className="library-files">
+                  {libraryItems.length === 0 ? (
+                    <div className="library-no-files">
+                      {searchQuery || activeFilterTag ? 'No matching files' : 'No files found'}
+                    </div>
+                  ) : (
+                    libraryItems.map(renderFileRow)
+                  )}
+                </ScrollContainer>
+
+                {/* Selection box overlay */}
+                {selectionBox && (
+                  <div
+                    className="library-selection-box"
+                    style={{
+                      left: Math.min(selectionBox.startX, selectionBox.currentX),
+                      top: Math.min(selectionBox.startY, selectionBox.currentY),
+                      width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                      height: Math.abs(selectionBox.currentY - selectionBox.startY),
+                    }}
+                  />
+                )}
+              </div>
             </div>
           </>
         )}
       </div>
 
-      {/* Ports */}
-      {triggerPort && (
-        <div
-          className={`library-port input ${hasConnection(triggerPort.id) ? 'connected' : ''}`}
-          style={{
-            left: `${(triggerPort.position?.x || 0) * 100}%`,
-            top: `${(triggerPort.position?.y || 0.3) * 100}%`,
-          }}
-          data-node-id={node.id}
-          data-port-id={triggerPort.id}
-          onMouseDown={e => handlePortMouseDown?.(triggerPort.id, e)}
-          onMouseUp={e => handlePortMouseUp?.(triggerPort.id, e)}
-          onMouseEnter={() => handlePortMouseEnter?.(triggerPort.id)}
-          onMouseLeave={handlePortMouseLeave}
-        />
-      )}
-
-      {audioOutPort && (
-        <div
-          className={`library-port output ${hasConnection(audioOutPort.id) ? 'connected' : ''}`}
-          style={{
-            left: `${(audioOutPort.position?.x || 1) * 100}%`,
-            top: `${(audioOutPort.position?.y || 0.5) * 100}%`,
-          }}
-          data-node-id={node.id}
-          data-port-id={audioOutPort.id}
-          onMouseDown={e => handlePortMouseDown?.(audioOutPort.id, e)}
-          onMouseUp={e => handlePortMouseUp?.(audioOutPort.id, e)}
-          onMouseEnter={() => handlePortMouseEnter?.(audioOutPort.id)}
-          onMouseLeave={handlePortMouseLeave}
-        />
-      )}
-
-      {sampleOutPort && (
-        <div
-          className={`library-port output sample-out ${hasConnection(sampleOutPort.id) ? 'connected' : ''}`}
-          style={{
-            left: `${(sampleOutPort.position?.x || 1) * 100}%`,
-            top: `${(sampleOutPort.position?.y || 0.7) * 100}%`,
-          }}
-          data-node-id={node.id}
-          data-port-id={sampleOutPort.id}
-          onMouseDown={e => handlePortMouseDown?.(sampleOutPort.id, e)}
-          onMouseUp={e => handlePortMouseUp?.(sampleOutPort.id, e)}
-          onMouseEnter={() => handlePortMouseEnter?.(sampleOutPort.id)}
-          onMouseLeave={handlePortMouseLeave}
-          title="Sample buffer output - connect to Sampler"
-        />
-      )}
+      {/* Resize handles */}
+      <ResizeHandles
+        handles={['se', 'e', 's']}
+        onResizeStart={handleResizeStart}
+        isResizing={isResizing}
+      />
     </div>
   );
 }

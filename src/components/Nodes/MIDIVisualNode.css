@@ -318,7 +318,7 @@
     position: absolute;
     display: flex;
     flex-direction: column;
-    background: transparent;
+    /* Uses background from .schematic-node (var(--bg-node)) */
 }
 
 .minilab3-node.selected .minilab3-visual .minilab3-body {

@@ -2,12 +2,13 @@
  * Microphone Node - Live audio input (Schematic Style)
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { GraphNode, MicrophoneNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { ScrollContainer } from '../common/ScrollContainer';
 
 interface MicrophoneNodeProps {
     node: GraphNode;
@@ -306,6 +307,30 @@ export function MicrophoneNode({
 
     const currentLabel = devices.find(d => d.deviceId === selectedDeviceId)?.label || 'Select source';
 
+    // Calculate dynamic dropdown dimensions based on device names and count
+    const dropdownStyle = useMemo(() => {
+        // Include "Default Input" in the list for width calculation
+        const allLabels = ['Default Input', ...devices.map(d => d.label)];
+        const longestLabel = allLabels.reduce((a, b) => a.length > b.length ? a : b, '');
+
+        // Calculate width: ~8px per character + padding (32px for left/right padding)
+        // Min: 150px, Max: 320px
+        const charWidth = 7;
+        const padding = 32;
+        const calculatedWidth = Math.min(320, Math.max(150, longestLabel.length * charWidth + padding));
+
+        // Calculate height: ~36px per item (padding + font size)
+        // +1 for "Default Input", Min: auto, Max: 240px (about 6-7 items)
+        const itemHeight = 36;
+        const itemCount = devices.length + 1; // +1 for Default Input
+        const calculatedHeight = Math.min(240, itemCount * itemHeight);
+
+        return {
+            width: `${calculatedWidth}px`,
+            maxHeight: `${calculatedHeight}px`,
+        };
+    }, [devices]);
+
     return (
         <div
             className={`schematic-node microphone-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
@@ -358,9 +383,10 @@ export function MicrophoneNode({
                         </button>
 
                         {showDevices && (
-                            <div
+                            <ScrollContainer
+                                mode="dropdown"
                                 className="device-dropdown schematic-dropdown"
-                                onWheel={(e) => e.stopPropagation()}
+                                style={dropdownStyle}
                             >
                                 <div
                                     className="device-item"
@@ -383,7 +409,7 @@ export function MicrophoneNode({
                                         {d.label}
                                     </div>
                                 ))}
-                            </div>
+                            </ScrollContainer>
                         )}
                     </div>
 

@@ -18,7 +18,7 @@ import {
   verifyPermission,
   isFileSystemAccessSupported,
 } from '../utils/fileSystemAccess';
-import { useSampleLibraryStore } from './sampleLibraryStore';
+import { useLibraryStore } from './libraryStore';
 
 // ============================================================================
 // Types
@@ -253,10 +253,8 @@ async function createProjectStructure(
   handle: FileSystemDirectoryHandle,
   name: string
 ): Promise<ProjectManifest> {
-  // Create folder structure
-  const audio = await handle.getDirectoryHandle('audio', { create: true });
-  await audio.getDirectoryHandle('recordings', { create: true });
-  await audio.getDirectoryHandle('samples', { create: true });
+  // Create folder structure - simplified to single library folder
+  await handle.getDirectoryHandle('library', { create: true });
   await handle.getDirectoryHandle('presets', { create: true });
 
   // Create manifest
@@ -296,8 +294,7 @@ Created: ${new Date().toLocaleDateString()}
 
 This folder contains:
 - ${PROJECT_FILE_NAME}: Main workflow file
-- audio/recordings/: Auto-saved recordings
-- audio/samples/: Imported audio samples
+- library/: Audio files (recordings, samples, loops)
 - presets/: Saved node presets
 
 Open this folder in OpenJammer to continue working on your project.
@@ -466,9 +463,9 @@ export const useProjectStore = create<ProjectState>()(
             recentProjects: updated,
           });
 
-          // Auto-connect sample library (non-blocking, errors don't affect project creation)
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, projectName)
-            .catch(err => console.warn('[Project] Failed to connect sample library:', err));
+          // Auto-connect library (non-blocking, errors don't affect project creation)
+          useLibraryStore.getState().addProjectLibrary(handle, projectName)
+            .catch(err => console.warn('[Project] Failed to connect library:', err));
 
           return handle;
         } catch (err) {
@@ -530,7 +527,7 @@ export const useProjectStore = create<ProjectState>()(
           });
 
           // Auto-connect sample library (non-blocking, errors don't affect project opening)
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name)
+          useLibraryStore.getState().addProjectLibrary(handle, manifest.name)
             .catch(err => console.warn('[Project] Failed to connect sample library:', err));
 
           return { handle, manifest };
@@ -596,7 +593,7 @@ export const useProjectStore = create<ProjectState>()(
           });
 
           // Auto-connect sample library (non-blocking, errors don't affect project opening)
-          useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, manifest.name)
+          useLibraryStore.getState().addProjectLibrary(handle, manifest.name)
             .catch(err => console.warn('[Project] Failed to connect sample library:', err));
 
           return { handle, manifest };
@@ -666,9 +663,9 @@ export const useProjectStore = create<ProjectState>()(
       closeProject: () => {
         const { name } = get();
 
-        // Disconnect sample library
+        // Disconnect library
         if (name) {
-          useSampleLibraryStore.getState().removeProjectLibrary(name);
+          useLibraryStore.getState().removeProjectLibrary(name);
         }
 
         set({
@@ -787,9 +784,9 @@ export async function ensureProjectStoreInitialized(): Promise<void> {
         if (handle) {
           const hasPermission = await verifyPermission(handle, false);
           if (hasPermission) {
-            // Reconnect sample library silently (non-blocking)
-            useSampleLibraryStore.getState().addProjectSamplesLibrary(handle, state.name)
-              .catch(err => console.warn('[Project] Failed to reconnect sample library:', err));
+            // Reconnect library silently (non-blocking)
+            useLibraryStore.getState().addProjectLibrary(handle, state.name)
+              .catch(err => console.warn('[Project] Failed to reconnect library:', err));
           }
         }
       } catch (err) {

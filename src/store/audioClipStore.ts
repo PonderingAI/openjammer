@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import type { AudioClip, ClipDropTarget, Position } from '../engine/types';
+import { useLibraryStore } from './libraryStore';
 
 // ============================================================================
 // Buffer Cache for Looper-originated clips
@@ -55,7 +56,7 @@ interface AudioClipStore {
     // Clip CRUD
     addClip: (clip: Omit<AudioClip, 'id' | 'createdAt' | 'lastModifiedAt'>) => string;
     updateClip: (clipId: string, updates: Partial<AudioClip>) => void;
-    removeClip: (clipId: string) => void;
+    removeClip: (clipId: string, options?: { skipTrash?: boolean }) => void;
     getClipById: (clipId: string) => AudioClip | undefined;
     getClipsOnCanvas: () => AudioClip[];
 
@@ -153,11 +154,22 @@ export const useAudioClipStore = create<AudioClipStore>((set, get) => ({
         });
     },
 
-    removeClip: (clipId) => {
+    removeClip: (clipId, options) => {
         // Get clip before removing to clean up buffer cache
         const clip = get().clips.get(clipId);
         if (clip) {
             removeClipBuffer(clip.sampleId);
+
+            // Trash the corresponding library item (add "trash" tag)
+            // Only trash if:
+            // 1. skipTrash is not set (clip is being deleted, not consumed by a node)
+            // 2. It's a real library item (not a temporary looper buffer)
+            if (!options?.skipTrash) {
+                const libraryState = useLibraryStore.getState();
+                if (libraryState.items[clip.sampleId]) {
+                    libraryState.trashItem(clip.sampleId);
+                }
+            }
         }
 
         set((state) => {
@@ -316,7 +328,8 @@ export const useAudioClipStore = create<AudioClipStore>((set, get) => ({
                 try {
                     await target.onClipDrop(clip);
                     // Remove clip from canvas after successful drop into node
-                    get().removeClip(clip.id);
+                    // Use skipTrash because the clip is being consumed by the node, not deleted
+                    get().removeClip(clip.id, { skipTrash: true });
                 } catch (error) {
                     console.error('Failed to drop clip:', error);
                 }
@@ -419,6 +432,18 @@ export const useAudioClipStore = create<AudioClipStore>((set, get) => ({
     // ========================================================================
 
     clearAllClips: () => {
+        // Clean up buffer cache and trash library items for all clips
+        const clips = get().clips;
+        const libraryState = useLibraryStore.getState();
+
+        for (const clip of clips.values()) {
+            removeClipBuffer(clip.sampleId);
+            // Trash library items that exist
+            if (libraryState.items[clip.sampleId]) {
+                libraryState.trashItem(clip.sampleId);
+            }
+        }
+
         set({
             clips: new Map(),
             selectedClipIds: new Set(),

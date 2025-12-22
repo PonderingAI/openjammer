@@ -18,6 +18,7 @@ export interface Recording {
     duration: number;
     timestamp: number;
     name: string;
+    libraryItemId?: string;  // Reference to saved library item (if saved)
 }
 
 type RecordingCallback = (recording: Recording) => void;
@@ -89,6 +90,7 @@ export class Recorder {
 
     // Callbacks
     private onRecordingComplete: RecordingCallback | null = null;
+    private onRecordingDeleted: RecordingCallback | null = null;
     private onTimeUpdate: TimeUpdateCallback | null = null;
 
     // Time tracking
@@ -126,6 +128,13 @@ export class Recorder {
      */
     setOnRecordingComplete(callback: RecordingCallback): void {
         this.onRecordingComplete = callback;
+    }
+
+    /**
+     * Set callback for when recording is deleted (for trash handling)
+     */
+    setOnRecordingDeleted(callback: RecordingCallback): void {
+        this.onRecordingDeleted = callback;
     }
 
     /**
@@ -291,9 +300,8 @@ export class Recorder {
         if (!recording) return null;
 
         try {
-            // Navigate to audio/recordings folder
-            const audioDir = await projectHandle.getDirectoryHandle('audio', { create: true });
-            const recordingsDir = await audioDir.getDirectoryHandle('recordings', { create: true });
+            // Navigate to library folder
+            const libraryDir = await projectHandle.getDirectoryHandle('library', { create: true });
 
             // Generate filename with timestamp
             const timestamp = new Date(recording.timestamp).toISOString()
@@ -309,7 +317,7 @@ export class Recorder {
             while (suffix < MAX_FILENAME_SUFFIX) {
                 try {
                     // Check if file already exists
-                    await recordingsDir.getFileHandle(filename, { create: false });
+                    await libraryDir.getFileHandle(filename, { create: false });
                     // File exists, try with suffix
                     suffix++;
                     filename = `${safeName}_${timestamp}_${suffix}.wav`;
@@ -320,7 +328,7 @@ export class Recorder {
             }
 
             // Create and write file
-            const fileHandle = await recordingsDir.getFileHandle(filename, { create: true });
+            const fileHandle = await libraryDir.getFileHandle(filename, { create: true });
             const writable = await fileHandle.createWritable();
             try {
                 await writable.write(recording.blob);
@@ -335,7 +343,7 @@ export class Recorder {
             const sampleRate = ctx?.sampleRate ?? 44100;
 
             return {
-                path: `audio/recordings/${filename}`,
+                path: `library/${filename}`,
                 duration: recording.duration,
                 sampleRate
             };
@@ -359,7 +367,11 @@ export class Recorder {
     deleteRecording(recordingId: string): void {
         const index = this.recordings.findIndex(r => r.id === recordingId);
         if (index !== -1) {
+            const recording = this.recordings[index];
             this.recordings.splice(index, 1);
+
+            // Notify for trash handling (if recording was saved to library)
+            this.onRecordingDeleted?.(recording);
         }
     }
 

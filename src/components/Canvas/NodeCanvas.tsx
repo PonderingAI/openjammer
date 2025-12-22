@@ -19,6 +19,9 @@ import { NodeWrapper } from '../Nodes/NodeWrapper';
 import { MIDIDeviceBrowser } from '../MIDI/MIDIDeviceBrowser';
 import { useMIDIStore } from '../../store/midiStore';
 import { useAudioClipStore } from '../../store/audioClipStore';
+import { useLibraryStore, getSampleFile } from '../../store/libraryStore';
+import { createClipFromSample, generateWaveformPeaks } from '../../utils/clipUtils';
+import { getAudioContext } from '../../audio/AudioEngine';
 import { AudioClipVisual } from '../Clips/AudioClipVisual';
 import { ClipDragLayer } from '../Clips/ClipDragLayer';
 import { WaveformEditorModal } from '../Clips/WaveformEditorModal';
@@ -131,6 +134,10 @@ export function NodeCanvas() {
     const setClipPosition = useAudioClipStore((s) => s.setClipPosition);
     const openClipEditor = useAudioClipStore((s) => s.openEditor);
     const removeClip = useAudioClipStore((s) => s.removeClip);
+    const addClip = useAudioClipStore((s) => s.addClip);
+
+    // Library store for item lookup
+    const libraryItems = useLibraryStore((s) => s.items);
 
     // Derive clips on canvas (memoized to avoid infinite loops)
     const clipsOnCanvas = useMemo(() => {
@@ -413,6 +420,73 @@ export function NodeCanvas() {
             });
         }
     }, [setPanning, selectionBox, selectNodesInRect, rightClickStart, isConnecting, stopConnecting, nodes, startConnecting, getPortCanvasPositionForSelection, clipDragState, endClipDrag, setClipPosition, screenToCanvas]);
+
+    // Handle drag over for library items
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        // Allow drop if it's a library item
+        if (e.dataTransfer.types.includes('application/library-item')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        }
+    }, []);
+
+    // Handle drop of library items onto canvas
+    const handleDrop = useCallback(async (e: React.DragEvent) => {
+        const itemDataStr = e.dataTransfer.getData('application/library-item');
+        if (!itemDataStr) return;
+
+        e.preventDefault();
+
+        try {
+            const itemData = JSON.parse(itemDataStr) as {
+                id: string;
+                fileName: string;
+                duration: number;
+                sampleRate: number;
+                sourceNodeId: string;
+            };
+
+            // Get the full item from the library store
+            const item = libraryItems[itemData.id];
+            if (!item) {
+                console.error('Library item not found:', itemData.id);
+                return;
+            }
+
+            // Load the audio file and create clip
+            const file = await getSampleFile(item.id);
+            if (!file) {
+                console.error('Could not load file for item:', item.id);
+                return;
+            }
+
+            const ctx = getAudioContext();
+            if (!ctx) {
+                console.error('No audio context available');
+                return;
+            }
+
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+            const waveformPeaks = generateWaveformPeaks(audioBuffer, 64);
+            const clipData = createClipFromSample(item, waveformPeaks, itemData.sourceNodeId);
+
+            // Calculate canvas position from drop coordinates
+            const canvasPos = screenToCanvas({ x: e.clientX - 60, y: e.clientY - 20 });
+
+            // Add clip with position
+            const { id: _id, createdAt: _ca, lastModifiedAt: _lm, ...clipWithoutMeta } = clipData;
+            const clipId = addClip({
+                ...clipWithoutMeta,
+                position: canvasPos,
+            });
+
+            // Select the new clip
+            selectClip(clipId);
+        } catch (err) {
+            console.error('Failed to create clip from dropped item:', err);
+        }
+    }, [libraryItems, screenToCanvas, addClip, selectClip]);
 
     // Handle wheel for zoom and two-finger trackpad pan
     // Note: This uses a native event listener with { passive: false } to allow preventDefault()
@@ -1002,6 +1076,8 @@ export function NodeCanvas() {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             style={{ cursor: isPanning || (rightClickStart && rightClickMoved.current) ? 'grabbing' : selectionBox ? 'crosshair' : 'default' }}
         >
             <div className="node-canvas-grid" style={{

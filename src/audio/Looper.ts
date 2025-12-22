@@ -18,12 +18,13 @@ export function isInfiniteDuration(duration: number): boolean {
 
 export interface Loop {
     id: string;
-    buffer: AudioBuffer;
+    buffer: AudioBuffer | null;  // Can be nulled when loop is stopped to free memory
     startTime: number;
     isMuted: boolean;
     gainNode: GainNode | null;
     sourceNode: AudioBufferSourceNode | null;
     waveformData: number[];  // Amplitude values over time for visualization
+    libraryItemId?: string;  // Reference to saved library item (if auto-saved)
 }
 
 /**
@@ -72,6 +73,7 @@ export class Looper {
 
     // Callbacks
     private onLoopAdded: ((loop: Loop) => void) | null = null;
+    private onLoopDeleted: ((loop: Loop) => void) | null = null;
     private onTimeUpdate: ((time: number) => void) | null = null;
     private onWaveformUpdate: ((bars: number[]) => void) | null = null;
     private onWaveformHistoryUpdate: ((history: number[], playheadPosition: number) => void) | null = null;
@@ -160,6 +162,10 @@ export class Looper {
 
     setOnLoopAdded(callback: (loop: Loop) => void): void {
         this.onLoopAdded = callback;
+    }
+
+    setOnLoopDeleted(callback: (loop: Loop) => void): void {
+        this.onLoopDeleted = callback;
     }
 
     setOnTimeUpdate(callback: (time: number) => void): void {
@@ -334,7 +340,11 @@ export class Looper {
         this.mediaRecorder.onstop = () => this.processRecordingCycle();
 
         this.mediaRecorder.onerror = (event) => {
-            console.error('[Looper] MediaRecorder error:', event);
+            // Extract the actual error from the event
+            // TypeScript doesn't expose MediaRecorderErrorEvent in all configs
+            const error = (event as Event & { error?: DOMException }).error;
+            console.error('[Looper] MediaRecorder error:', error?.name, error?.message || event);
+
             this.isRecording = false;
             if (this.cycleTimerId !== null) {
                 clearTimeout(this.cycleTimerId);
@@ -584,6 +594,8 @@ export class Looper {
             loop.gainNode.disconnect();
             loop.gainNode = null;
         }
+        // Release buffer to allow garbage collection
+        loop.buffer = null;
     }
 
     /**
@@ -610,6 +622,9 @@ export class Looper {
         const loop = this.loops[index];
         this.stopLoop(loop);
         this.loops.splice(index, 1);
+
+        // Notify for trash handling (if loop was saved to library)
+        this.onLoopDeleted?.(loop);
     }
 
     /**

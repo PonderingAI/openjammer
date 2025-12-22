@@ -273,22 +273,25 @@ export interface RecordingData {
     timestamp: number;
 }
 
-export interface LibrarySampleRef {
+export interface LibraryItemRef {
     id: string;
     relativePath: string;
     displayName: string;
     libraryId: string;
 }
 
+// Keep old name as alias for backwards compatibility
+export type LibrarySampleRef = LibraryItemRef;
+
 export interface LibraryNodeData extends NodeData {
     // Library reference
     libraryId?: string;
 
-    // Current sample selection
-    currentSampleId?: string;
+    // Current item selection
+    currentItemId?: string;
 
-    // Samples used in this node (for workflow persistence)
-    sampleRefs: LibrarySampleRef[];
+    // Items used in this node (for workflow persistence)
+    itemRefs: LibraryItemRef[];
 
     // Playback mode
     playbackMode: 'oneshot' | 'loop' | 'hold';
@@ -296,14 +299,21 @@ export interface LibraryNodeData extends NodeData {
     // Volume (0-1)
     volume: number;
 
-    // Missing samples detected on load
-    missingSampleIds?: string[];
+    // Missing items detected on load
+    missingItemIds?: string[];
+
+    // Tag panel state
+    separatorPosition?: number;  // Position of pinned/other tags separator (0-1)
+
+    // Node resizing
+    width?: number;
+    height?: number;
 }
 
 export interface SamplerNodeData extends NodeData {
     // Sample reference
     sampleId: string | null;
-    sampleName: string;
+    sampleName: string | null;
 
     // Core parameters (visible outside)
     rootNote: number;              // MIDI note (default: 60 = C4)
@@ -311,6 +321,12 @@ export interface SamplerNodeData extends NodeData {
     decay: number;                 // seconds
     sustain: number;               // 0-1
     release: number;               // seconds
+
+    // Base note components (for UI display/editing)
+    baseNote: number;              // 0-6 (C-B)
+    baseOctave: number;            // 0-8
+    baseOffset: number;            // Semitone offset (-24 to +24)
+    spread: number;                // Stereo/detuning spread (0-1)
 
     // Internal parameters (visible inside)
     velocityCurve: 'linear' | 'exponential' | 'logarithmic';
@@ -321,10 +337,7 @@ export interface SamplerNodeData extends NodeData {
     maxVoices: number;
 
     // Preset
-    activePreset: string;
-
-    // Row configuration for bundle connections (like instrument)
-    rows?: InstrumentRow[];
+    activePreset?: string;
 }
 
 export interface MIDILearnedMapping {
@@ -489,8 +502,8 @@ export interface NodeDefinition {
 export interface AudioClip {
     id: string;
 
-    // Reference to source audio in sample library
-    sampleId: string;           // ID in sampleLibraryStore
+    // Reference to source audio in library
+    sampleId: string;           // ID in libraryStore
     sampleName: string;         // Display name (filename)
 
     // Non-destructive crop region (in sample frames, not seconds)

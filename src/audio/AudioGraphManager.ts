@@ -914,10 +914,10 @@ class AudioGraphManager {
                     volume: libraryData.volume ?? 0.8,
                 });
 
-                // Load current sample if set
-                if (libraryData.currentSampleId) {
-                    adapter.loadSample(libraryData.currentSampleId).catch(err => {
-                        console.warn('Failed to load sample:', err);
+                // Load current item if set
+                if (libraryData.currentItemId) {
+                    adapter.loadSample(libraryData.currentItemId).catch(err => {
+                        console.warn('Failed to load item:', err);
                     });
                 }
 

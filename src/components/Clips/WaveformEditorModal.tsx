@@ -12,8 +12,10 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAudioClipStore, getClipBuffer } from '../../store/audioClipStore';
-import { getSampleFile } from '../../store/sampleLibraryStore';
+import { getSampleFile } from '../../store/libraryStore';
 import { getAudioContext } from '../../audio/AudioEngine';
+import { useScrollCapture } from '../../hooks/useScrollCapture';
+import type { ScrollData } from '../../hooks/useScrollCapture';
 import './WaveformEditorModal.css';
 
 // Preview audio state
@@ -443,13 +445,19 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
         handleMouseMove(e);
     }, [getCursor, handleMouseMove]);
 
-    // Handle wheel for zoom and scroll
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-        e.preventDefault();
-
-        if (e.ctrlKey || e.metaKey) {
-            // Ctrl+wheel = zoom into center of current view
-            const zoomDelta = e.deltaY > 0 ? -0.5 : 0.5;
+    // Handle scroll for zoom and pan (uses native event listener via hook)
+    const handleScroll = useCallback((data: ScrollData) => {
+        // Horizontal scroll = pan left/right (when zoomed)
+        if (data.isHorizontal && zoom > 1) {
+            const visibleRange = 1 / zoom;
+            const maxScroll = 1 - visibleRange;
+            const scrollDelta = (data.scrollingRight ? 1 : -1) * 0.05 * visibleRange;
+            setScrollOffset(prev => Math.max(0, Math.min(maxScroll, prev + scrollDelta)));
+        }
+        // Vertical scroll = zoom in/out
+        else if (data.isVertical) {
+            // Use direction helpers for correct behavior on all devices
+            const zoomDelta = data.scrollingUp ? 0.5 : -0.5;
             const newZoom = Math.max(1, Math.min(20, zoom + zoomDelta));
 
             // Zoom into center of current view
@@ -461,16 +469,13 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
 
             setScrollOffset(Math.max(0, Math.min(maxScroll, newScrollOffset)));
             setZoom(newZoom);
-        } else {
-            // Regular wheel = horizontal scroll (when zoomed)
-            if (zoom > 1) {
-                const visibleRange = 1 / zoom;
-                const maxScroll = 1 - visibleRange;
-                const scrollDelta = (e.deltaY / 500) * visibleRange; // Scroll proportional to visible range
-                setScrollOffset(prev => Math.max(0, Math.min(maxScroll, prev + scrollDelta)));
-            }
         }
     }, [zoom, scrollOffset]);
+
+    // Capture scroll events on the canvas container (uses native listener with { passive: false })
+    const { ref: scrollContainerRef } = useScrollCapture<HTMLDivElement>({
+        onScroll: handleScroll,
+    });
 
     // Preview playback
     const handlePreview = useCallback(() => {
@@ -572,37 +577,38 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
                 </div>
 
                 <div className="waveform-editor-content">
-                    {isLoading ? (
-                        <div className="waveform-editor-loading">Loading audio...</div>
-                    ) : (
-                        <div className="waveform-editor-canvas-container">
-                            <canvas
-                                ref={canvasRef}
-                                className="waveform-editor-canvas"
-                                width={800}
-                                height={200}
-                                onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMoveForCursor}
-                                onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseUp}
-                                onWheel={handleWheel}
-                                style={{ cursor: cursorStyle }}
-                            />
-                            {zoom > 1 && (
+                    <div ref={scrollContainerRef} className="waveform-editor-canvas-container">
+                        {isLoading ? (
+                            <div className="waveform-editor-loading">Loading audio...</div>
+                        ) : (
+                            <>
                                 <canvas
-                                    ref={minimapRef}
-                                    className="waveform-editor-minimap"
-                                    width={400}
-                                    height={24}
-                                    onMouseDown={handleMinimapMouseDown}
-                                    onMouseMove={handleMinimapMouseMove}
-                                    onMouseUp={handleMinimapMouseUp}
-                                    onMouseLeave={handleMinimapMouseUp}
-                                    style={{ cursor: minimapDragging ? 'grabbing' : 'grab' }}
+                                    ref={canvasRef}
+                                    className="waveform-editor-canvas"
+                                    width={800}
+                                    height={200}
+                                    onMouseDown={handleMouseDown}
+                                    onMouseMove={handleMouseMoveForCursor}
+                                    onMouseUp={handleMouseUp}
+                                    onMouseLeave={handleMouseUp}
+                                    style={{ cursor: cursorStyle }}
                                 />
-                            )}
-                        </div>
-                    )}
+                                {zoom > 1 && (
+                                    <canvas
+                                        ref={minimapRef}
+                                        className="waveform-editor-minimap"
+                                        width={400}
+                                        height={24}
+                                        onMouseDown={handleMinimapMouseDown}
+                                        onMouseMove={handleMinimapMouseMove}
+                                        onMouseUp={handleMinimapMouseUp}
+                                        onMouseLeave={handleMinimapMouseUp}
+                                        style={{ cursor: minimapDragging ? 'grabbing' : 'grab' }}
+                                    />
+                                )}
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 <div className="waveform-editor-actions">

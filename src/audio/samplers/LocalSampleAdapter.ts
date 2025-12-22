@@ -12,9 +12,24 @@
 
 import { getAudioContext } from '../AudioEngine';
 import { getAudioBufferCache } from '../AudioBufferCache';
-import { getSampleFile } from '../../store/sampleLibraryStore';
+import { getSampleFile } from '../../store/libraryStore';
 
 export type PlaybackMode = 'oneshot' | 'loop' | 'hold';
+
+// Error types for better error handling and UI feedback
+export type SampleLoadErrorCode = 'FILE_NOT_FOUND' | 'PERMISSION_DENIED' | 'DECODE_ERROR' | 'CONTEXT_UNAVAILABLE';
+
+export class SampleLoadError extends Error {
+  readonly code: SampleLoadErrorCode;
+  readonly sampleId: string;
+
+  constructor(code: SampleLoadErrorCode, sampleId: string, message?: string) {
+    super(message ?? `Sample load failed [${code}]: ${sampleId}`);
+    this.name = 'SampleLoadError';
+    this.code = code;
+    this.sampleId = sampleId;
+  }
+}
 
 export interface LocalSampleAdapterOptions {
   playbackMode?: PlaybackMode;
@@ -84,18 +99,49 @@ export class LocalSampleAdapter {
         // Use cache's load method with a loader function
         await cache.load(sampleId, async () => {
           // Load from file system
-          const file = await getSampleFile(sampleId);
+          let file: File | null;
+          try {
+            file = await getSampleFile(sampleId);
+          } catch (err) {
+            // Check for permission errors (File System Access API)
+            if (err instanceof DOMException && err.name === 'NotAllowedError') {
+              throw new SampleLoadError('PERMISSION_DENIED', sampleId,
+                'Permission denied - please grant file access when prompted');
+            }
+            if (err instanceof DOMException && err.name === 'NotFoundError') {
+              throw new SampleLoadError('FILE_NOT_FOUND', sampleId,
+                'File not found - it may have been moved or deleted');
+            }
+            // Re-throw unknown errors with context
+            throw new SampleLoadError('FILE_NOT_FOUND', sampleId,
+              `Failed to access file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          }
+
           if (!file) {
-            throw new Error(`Sample file not found: ${sampleId}`);
+            throw new SampleLoadError('FILE_NOT_FOUND', sampleId,
+              'Sample file not found in library');
           }
 
           const ctx = getAudioContext();
           if (!ctx) {
-            throw new Error('AudioContext not available');
+            throw new SampleLoadError('CONTEXT_UNAVAILABLE', sampleId,
+              'Audio context not available - click anywhere to enable audio');
           }
 
-          const arrayBuffer = await file.arrayBuffer();
-          return await ctx.decodeAudioData(arrayBuffer);
+          let arrayBuffer: ArrayBuffer;
+          try {
+            arrayBuffer = await file.arrayBuffer();
+          } catch (err) {
+            throw new SampleLoadError('FILE_NOT_FOUND', sampleId,
+              `Failed to read file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          }
+
+          try {
+            return await ctx.decodeAudioData(arrayBuffer);
+          } catch (err) {
+            throw new SampleLoadError('DECODE_ERROR', sampleId,
+              'Failed to decode audio - file may be corrupted or unsupported format');
+          }
         });
       } finally {
         // Clean up the loading promise when done (success or failure)

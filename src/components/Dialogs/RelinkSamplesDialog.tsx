@@ -9,15 +9,15 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import {
-  useSampleLibraryStore,
-  type LibrarySample,
-} from '../../store/sampleLibraryStore';
+  useLibraryStore,
+  type LibraryItem,
+} from '../../store/libraryStore';
 import { isFileSystemAccessSupported } from '../../utils/fileSystemAccess';
 import './RelinkSamplesDialog.css';
 
 interface RelinkSamplesDialogProps {
   libraryId: string;
-  missingSamples: LibrarySample[];
+  missingSamples: LibraryItem[];
   onClose: () => void;
 }
 
@@ -26,8 +26,8 @@ export function RelinkSamplesDialog({
   missingSamples,
   onClose,
 }: RelinkSamplesDialogProps) {
-  const relinkSample = useSampleLibraryStore(s => s.relinkSample);
-  const libraries = useSampleLibraryStore(s => s.libraries);
+  const relinkItem = useLibraryStore(s => s.relinkItem);
+  const libraries = useLibraryStore(s => s.libraries);
 
   const [relinkingId, setRelinkingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +41,7 @@ export function RelinkSamplesDialog({
 
   // Handle relinking a single file
   const handleRelinkFile = useCallback(
-    async (sample: LibrarySample) => {
+    async (sample: LibraryItem) => {
       if (!isFileSystemAccessSupported()) {
         setError('File System Access API not supported. Please use Chrome or Edge.');
         return;
@@ -70,7 +70,7 @@ export function RelinkSamplesDialog({
           ],
         });
 
-        await relinkSample(sample.id, fileHandle);
+        await relinkItem(sample.id, fileHandle);
         setRelinkedIds(prev => new Set([...prev, sample.id]));
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
@@ -80,7 +80,7 @@ export function RelinkSamplesDialog({
         setRelinkingId(null);
       }
     },
-    [relinkSample]
+    [relinkItem]
   );
 
   // Handle relinking by browsing a folder (auto-scan)
@@ -109,7 +109,7 @@ export function RelinkSamplesDialog({
           const fileHandle = await findFileInDirectory(dirHandle, fileName);
 
           if (fileHandle) {
-            await relinkSample(sample.id, fileHandle);
+            await relinkItem(sample.id, fileHandle);
             setRelinkedIds(prev => new Set([...prev, sample.id]));
             foundCount++;
           }
@@ -128,7 +128,7 @@ export function RelinkSamplesDialog({
     } finally {
       setRelinkingId(null);
     }
-  }, [remainingMissing, relinkSample]);
+  }, [remainingMissing, relinkItem]);
 
   // Close if all samples have been relinked
   const handleClose = useCallback(() => {

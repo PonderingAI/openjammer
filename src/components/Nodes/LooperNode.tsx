@@ -10,10 +10,15 @@ import type { GraphNode, LooperNodeData, AudioClip, ClipDropTarget } from '../..
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { useAudioClipStore, setClipBuffer, getClipBuffer } from '../../store/audioClipStore';
+import { useLibraryStore } from '../../store/libraryStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { INFINITE_DURATION, isInfiniteDuration, type Loop } from '../../audio/Looper';
 import { createClipFromLoop, loadClipAudio } from '../../utils/clipUtils';
+import { useScrollCapture } from '../../hooks/useScrollCapture';
+import type { ScrollData } from '../../hooks/useScrollCapture';
+import { ScrollContainer } from '../common/ScrollContainer';
+import { toast } from 'sonner';
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -36,6 +41,7 @@ interface LoopState {
     id: string;
     waveformData: number[];  // The recorded waveform shape
     isMuted: boolean;
+    libraryItemId?: string;  // Reference to saved library item
 }
 
 export function LooperNode({
@@ -62,6 +68,10 @@ export function LooperNode({
     const registerDropTarget = useAudioClipStore((s) => s.registerDropTarget);
     const unregisterDropTarget = useAudioClipStore((s) => s.unregisterDropTarget);
     const clipDragState = useAudioClipStore((s) => s.dragState);
+
+    // Library store for auto-saving loops and trashing deleted items
+    const saveAudioToLibrary = useLibraryStore((s) => s.saveAudioToLibrary);
+    const trashItem = useLibraryStore((s) => s.trashItem);
 
     // Ref for drop target bounds
     const nodeRef = useRef<HTMLDivElement>(null);
@@ -105,11 +115,12 @@ export function LooperNode({
             if (!l || isSetup) return;
             isSetup = true;
 
-            l.setOnLoopAdded((audioLoop: Loop) => {
+            l.setOnLoopAdded(async (audioLoop: Loop) => {
                 const newLoop: LoopState = {
                     id: audioLoop.id,
                     waveformData: audioLoop.waveformData || [],
-                    isMuted: audioLoop.isMuted
+                    isMuted: audioLoop.isMuted,
+                    libraryItemId: undefined  // Will be set after save completes
                 };
                 setLoops(prev => [...prev, newLoop]);
                 // Reset active waveform history for next recording
@@ -119,6 +130,30 @@ export function LooperNode({
                 // Send the loop's audio buffer to connected samplers via sample-out port
                 if (audioLoop.buffer) {
                     audioGraphManager.sendSampleBuffer(node.id, audioLoop.buffer);
+
+                    // Auto-save to project library with "loop" tag
+                    try {
+                        const itemId = await saveAudioToLibrary(audioLoop.buffer, 'Loop', ['loop']);
+                        if (itemId) {
+                            // Store the library item ID on both the Loop object and React state
+                            audioLoop.libraryItemId = itemId;
+                            setLoops(prev => prev.map(loop =>
+                                loop.id === audioLoop.id ? { ...loop, libraryItemId: itemId } : loop
+                            ));
+                        } else {
+                            toast.error('Failed to save loop to library');
+                        }
+                    } catch (err) {
+                        console.warn('[Looper] Failed to auto-save loop to library:', err);
+                        toast.error('Failed to save loop to library');
+                    }
+                }
+            });
+
+            l.setOnLoopDeleted((deletedLoop: Loop) => {
+                // Trash the library item if the loop was saved
+                if (deletedLoop.libraryItemId) {
+                    trashItem(deletedLoop.libraryItemId);
                 }
             });
 
@@ -138,7 +173,8 @@ export function LooperNode({
                 setLoops(existingLoops.map(loop => ({
                     id: loop.id,
                     waveformData: loop.waveformData || [],
-                    isMuted: loop.isMuted
+                    isMuted: loop.isMuted,
+                    libraryItemId: loop.libraryItemId
                 })));
             }
         };
@@ -175,10 +211,11 @@ export function LooperNode({
             const l = getLooper();
             if (l) {
                 l.setOnLoopAdded(() => {});
+                l.setOnLoopDeleted(() => {});
                 l.setOnWaveformHistoryUpdate(() => {});
             }
         };
-    }, [isAudioContextReady, node.id, duration, getLooper]);
+    }, [isAudioContextReady, node.id, duration, getLooper, saveAudioToLibrary, trashItem]);
 
     // Auto-scroll to show newest loops when new loop is added
     useEffect(() => {
@@ -244,23 +281,27 @@ export function LooperNode({
         }
     }, [node.id, updateNodeData, getLooper]);
 
-    const handleDurationWheel = useCallback((e: React.WheelEvent) => {
+    // Handle scroll on duration value (uses native listener for proper trackpad support)
+    const handleDurationScroll = useCallback((data: ScrollData) => {
         if (isRecording || isEditingDuration) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const scrollingUp = e.deltaY < 0;
 
-        if (isInfinite && !scrollingUp) {
+        if (isInfinite && data.scrollingDown) {
             // Scrolling down from infinite goes to 60
             handleDurationChange(60);
-        } else if (duration === 60 && scrollingUp) {
+        } else if (duration === 60 && data.scrollingUp) {
             // Scrolling up from 60 goes to infinite
             handleDurationChange(INFINITE_DURATION);
         } else if (!isInfinite) {
-            const delta = scrollingUp ? 1 : -1;
+            const delta = data.scrollingUp ? 1 : -1;
             handleDurationChange(duration + delta);
         }
     }, [duration, isInfinite, isRecording, isEditingDuration, handleDurationChange]);
+
+    // Scroll capture for duration adjustment
+    const { ref: durationScrollRef } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleDurationScroll,
+        enabled: !isRecording && !isEditingDuration,
+    });
 
     const handleDurationClick = useCallback((e: React.MouseEvent) => {
         if (isRecording) return;
@@ -311,6 +352,7 @@ export function LooperNode({
 
         // Create the clip
         const clipData = createClipFromLoop(loop, tempSampleId, tempSampleName, node.id);
+        if (!clipData) return; // Buffer was null (shouldn't happen since we checked above)
 
         // Add to store and get the ID
         const clipId = addClip(clipData);
@@ -417,9 +459,9 @@ export function LooperNode({
                         />
                     ) : (
                         <span
+                            ref={durationScrollRef}
                             className={`looper-duration editable-value ${isRecording ? 'disabled' : ''}`}
                             onClick={handleDurationClick}
-                            onWheel={handleDurationWheel}
                             title="Click to edit, scroll to adjust"
                         >
                             {isInfinite ? '∞' : duration}
@@ -483,10 +525,10 @@ export function LooperNode({
 
             {/* Completed loops as line waveforms */}
             {loops.length > 0 && (
-                <div
+                <ScrollContainer
+                    mode="dropdown"
                     className="looper-loops"
                     ref={loopsContainerRef}
-                    onWheel={(e) => e.stopPropagation()}
                 >
                     {loops.map((loop) => (
                         <div
@@ -540,7 +582,7 @@ export function LooperNode({
                             </div>
                         </div>
                     ))}
-                </div>
+                </ScrollContainer>
             )}
 
             {/* Record button - centered red circle with white center */}

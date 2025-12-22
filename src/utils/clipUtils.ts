@@ -7,7 +7,7 @@
 
 import type { AudioClip } from '../engine/types';
 import type { Loop } from '../audio/Looper';
-import { useSampleLibraryStore, getSampleFile, type LibrarySample } from '../store/sampleLibraryStore';
+import { useLibraryStore, getSampleFile, type LibraryItem } from '../store/libraryStore';
 
 // ============================================================================
 // Clip Creation
@@ -24,8 +24,13 @@ export function createClipFromLoop(
     sampleId: string,
     sampleName: string,
     sourceNodeId: string
-): AudioClip {
+): AudioClip | null {
     const buffer = loop.buffer;
+    if (!buffer) {
+        console.warn('[clipUtils] Cannot create clip from loop with null buffer');
+        return null;
+    }
+
     const now = Date.now();
 
     return {
@@ -53,7 +58,7 @@ export function createClipFromLoop(
  * This is used when dragging a sample from the LibraryNode onto the canvas.
  */
 export function createClipFromSample(
-    sample: LibrarySample,
+    sample: LibraryItem,
     waveformData: number[] | Float32Array,
     sourceNodeId?: string
 ): AudioClip {
@@ -128,12 +133,12 @@ export async function loadClipAudio(
     clip: AudioClip,
     audioContext: AudioContext
 ): Promise<AudioBuffer> {
-    // Get sample file from library
-    const store = useSampleLibraryStore.getState();
-    const sample = store.samples[clip.sampleId];
+    // Get item from library
+    const store = useLibraryStore.getState();
+    const item = store.items[clip.sampleId];
 
-    if (!sample) {
-        throw new Error(`Sample not found: ${clip.sampleId}`);
+    if (!item) {
+        throw new Error(`Item not found: ${clip.sampleId}`);
     }
 
     // Load full audio buffer
@@ -305,11 +310,11 @@ export function calculateClipWidth(durationSeconds: number): number {
 // ============================================================================
 
 /**
- * Check if a clip references a valid sample in the library
+ * Check if a clip references a valid item in the library
  */
 export function isClipValid(clip: AudioClip): boolean {
-    const store = useSampleLibraryStore.getState();
-    return clip.sampleId in store.samples;
+    const store = useLibraryStore.getState();
+    return clip.sampleId in store.items;
 }
 
 /**

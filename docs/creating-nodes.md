@@ -434,6 +434,132 @@ generateUniqueId(prefix?: string): string
 
 ---
 
+## Scroll Capture (Preventing Canvas Scroll)
+
+When your node has scrollable elements (dropdowns, lists) or uses scroll gestures for value adjustment (knobs, sliders), you must prevent scroll events from propagating to the canvas.
+
+### The Problem
+
+By default, scroll/wheel events bubble up to the canvas and trigger panning. React's `onWheel` with `stopPropagation()` doesn't work for trackpad gestures because React uses passive event listeners.
+
+### The Solution: `useScrollCapture` and `ScrollContainer`
+
+Import from `src/hooks/useScrollCapture` or `src/components/common/ScrollContainer`:
+
+```typescript
+import { useScrollCapture } from '../../hooks/useScrollCapture';
+import type { ScrollData } from '../../hooks/useScrollCapture';
+import { ScrollContainer } from '../common/ScrollContainer';
+```
+
+### Use Case 1: Scrollable Dropdowns/Lists
+
+For elements with native scroll (`overflow: auto`), use `mode="dropdown"`:
+
+```tsx
+// Allows native scroll inside, blocks events from reaching canvas
+<ScrollContainer mode="dropdown" className="my-dropdown">
+    {items.map(item => <div key={item.id}>{item.label}</div>)}
+</ScrollContainer>
+```
+
+### Use Case 2: Value Adjustment (Scroll to Change Number)
+
+For scroll-to-adjust controls, use `useScrollCapture` with direction helpers:
+
+```tsx
+const handleScroll = useCallback((data: ScrollData) => {
+    // Use direction helpers - they work correctly on all devices!
+    if (data.scrollingUp) setValue(v => v + 1);
+    if (data.scrollingDown) setValue(v => v - 1);
+}, []);
+
+const { ref } = useScrollCapture<HTMLSpanElement>({
+    onScroll: handleScroll,
+});
+
+return (
+    <span ref={ref} className="editable-value">
+        {value}
+    </span>
+);
+```
+
+### Use Case 3: Zoom/Pan Controls
+
+For custom zoom and pan with scroll:
+
+```tsx
+const handleScroll = useCallback((data: ScrollData) => {
+    if (data.isVertical) {
+        // Vertical scroll = zoom
+        if (data.scrollingUp) setZoom(z => Math.min(20, z + 0.5));
+        if (data.scrollingDown) setZoom(z => Math.max(1, z - 0.5));
+    } else if (data.isHorizontal && zoom > 1) {
+        // Horizontal scroll = pan (when zoomed)
+        if (data.scrollingRight) setOffset(o => o + 0.1);
+        if (data.scrollingLeft) setOffset(o => o - 0.1);
+    }
+}, [zoom]);
+
+const { ref } = useScrollCapture<HTMLDivElement>({
+    onScroll: handleScroll,
+});
+```
+
+### ScrollData Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `scrollingUp` | `boolean` | True when scrolling up (works on all devices) |
+| `scrollingDown` | `boolean` | True when scrolling down |
+| `scrollingLeft` | `boolean` | True when scrolling left |
+| `scrollingRight` | `boolean` | True when scrolling right |
+| `isVertical` | `boolean` | Primarily vertical scroll |
+| `isHorizontal` | `boolean` | Primarily horizontal scroll |
+| `isPinch` | `boolean` | Pinch gesture (Ctrl+scroll) |
+| `deltaX`, `deltaY` | `number` | Raw scroll deltas |
+| `shiftKey`, `ctrlKey` | `boolean` | Modifier keys held |
+
+### Common Mistakes
+
+1. **Using `capture={true}` on scrollable lists** - This blocks native scroll!
+   ```tsx
+   // WRONG - blocks scroll inside dropdown
+   <ScrollContainer className="dropdown">...</ScrollContainer>
+
+   // RIGHT - allows native scroll
+   <ScrollContainer mode="dropdown" className="dropdown">...</ScrollContainer>
+   ```
+
+2. **Using raw `deltaY` for direction** - Signs differ between trackpad and mouse!
+   ```tsx
+   // WRONG - breaks on some devices
+   const scrollingUp = e.deltaY < 0;
+
+   // RIGHT - use the helper
+   if (data.scrollingUp) { ... }
+   ```
+
+---
+
+## Resizable Nodes
+
+If your node needs to be resizable (user can drag edges/corners to change size), see the dedicated guide:
+
+**[Creating Resizable Nodes](./creating-resizable-nodes.md)**
+
+Key points:
+- Use `useResize` hook for node-level resize
+- Use `usePanelResize` hook for internal panel separators
+- Store dimensions in `node.data.width` and `node.data.height`
+- Always set `minWidth` and `minHeight` constraints
+- Use flex/grid layouts that respond to size changes
+
+Example node that uses resize: `LibraryNode.tsx`
+
+---
+
 ## Complete Example
 
 Here's a complete example of creating a "Mixer" node with multiple inputs and one output:

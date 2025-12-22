@@ -665,12 +665,12 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         canEnter: false  // Cannot be entered - flashes red on E key
     },
 
-    // Sample Library Node
+    // Library Node - Audio file browser with tags
     library: {
         type: 'library',
         category: 'input',
-        name: 'Sample Library',
-        description: 'Local audio file library for samples, loops, and sound effects',
+        name: 'Library',
+        description: 'Local audio file library with tag management',
         defaultPorts: [
             { id: 'trigger', name: 'Trigger', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
             { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.3 } },
@@ -678,33 +678,44 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         ],
         defaultData: {
             libraryId: undefined,
-            currentSampleId: undefined,
-            sampleRefs: [],
+            currentItemId: undefined,
+            itemRefs: [],
             playbackMode: 'oneshot',
             volume: 1,
-            missingSampleIds: []
+            missingItemIds: [],
+            // Tag panel state
+            separatorPosition: 0.5,  // Position of pinned/other tags separator (0-1)
+            // Node resizing
+            width: 500,
+            height: 400
         },
-        dimensions: { width: 280, height: 200 },
-        canEnter: false  // Sample browser is inline, not a sub-canvas
+        dimensions: { width: 500, height: 400 },
+        canEnter: false  // Library browser is inline, not a sub-canvas
     },
 
-    // Sampler Instrument Node
+    // Sampler Instrument Node - Simplified single-input design
     sampler: {
         type: 'sampler',
         category: 'instruments',
         name: 'Sampler',
-        description: 'Play a sample chromatically via keyboard/MIDI input',
+        description: 'Play a sample chromatically via control input',
         defaultPorts: [
-            // Input ports on left side
-            { id: 'input-1', name: 'In', type: 'audio', direction: 'input', position: { x: 0, y: 0.3 } },
-            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
-            // Output port on right side
-            { id: 'output', name: 'Out', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+            // Single control input on left
+            { id: 'control-in', name: 'In', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } },
+            // Audio output on right
+            { id: 'audio-out', name: 'Out', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         defaultData: {
+            // Sample reference
             sampleId: null,
-            sampleName: 'No sample',
-            rootNote: 60,
+            sampleName: null,
+            // Display parameters
+            baseNote: 0,        // 0-6 (C, D, E, F, G, A, B)
+            baseOctave: 4,      // 0-8
+            baseOffset: 0,      // -24 to +24 semitones
+            spread: 0.5,        // 0-1
+            // Core audio parameters (kept for engine)
+            rootNote: 60,       // MIDI note (C4)
             attack: 0.01,
             decay: 0.1,
             sustain: 0.8,
@@ -714,37 +725,31 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
             loopEnabled: false,
             loopStart: 0,
             loopEnd: 0,
-            maxVoices: 16,
-            activePreset: 'chromatic',
-            rows: []
+            maxVoices: 16
         },
         portLayout: {
-            direction: 'vertical',
-            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
-            outputArea: { x: 1, startY: 0.3, endY: 0.7 }
+            direction: 'horizontal',
+            inputArea: { x: 0, startY: 0.4, endY: 0.6 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         },
-        dimensions: { width: 240, height: 180 },
+        dimensions: { width: 160, height: 80 },
         canEnter: true  // Allows E key to view internal structure
     },
 
-    // Sampler Visual - inside view with detailed controls (ADSR, root note, loop, etc.)
+    // Sampler Visual - compact inside view with waveform
     'sampler-visual': {
         type: 'sampler-visual',
         category: 'instruments',
         name: 'Sampler Visual',
-        description: 'Internal visual representation of sampler with detailed controls',
-        defaultPorts: [
-            { id: 'keys-in', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
-            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
-            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
-        ],
+        description: 'Internal view with waveform and controls',
+        defaultPorts: [],  // Ports handled by input-panel and output-panel children
         defaultData: {},
         portLayout: {
-            direction: 'vertical',
-            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            direction: 'horizontal',
+            inputArea: { x: 0, startY: 0.3, endY: 0.7 },
             outputArea: { x: 1, startY: 0.3, endY: 0.7 }
         },
-        dimensions: { width: 440, height: 400 },
+        dimensions: { width: 280, height: 100 },
         canEnter: false  // This IS the internal view
     }
 };
