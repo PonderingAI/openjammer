@@ -99,70 +99,22 @@
     border: 1px solid var(--border-subtle);
 }
 
-.waveform-editor-scrollbar {
+.waveform-editor-minimap {
     position: absolute;
     bottom: 8px;
     left: 8px;
     right: 8px;
     width: calc(100% - 16px);
-    height: 6px;
-    cursor: pointer;
+    height: 24px;
     opacity: 0;
     transition: opacity var(--transition-fast);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
     background: transparent;
-    -webkit-appearance: none;
-    appearance: none;
 }
 
-.waveform-editor-canvas-container:hover .waveform-editor-scrollbar {
+.waveform-editor-canvas-container:hover .waveform-editor-minimap {
     opacity: 1;
-}
-
-.waveform-editor-scrollbar::-webkit-slider-runnable-track {
-    height: 6px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 3px;
-    backdrop-filter: blur(4px);
-}
-
-.waveform-editor-scrollbar::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 60px;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.4);
-    border-radius: 3px;
-    cursor: grab;
-    transition: background var(--transition-fast);
-}
-
-.waveform-editor-scrollbar::-webkit-slider-thumb:hover {
-    background: rgba(255, 255, 255, 0.6);
-}
-
-.waveform-editor-scrollbar::-webkit-slider-thumb:active {
-    cursor: grabbing;
-    background: rgba(255, 255, 255, 0.7);
-}
-
-.waveform-editor-scrollbar::-moz-range-track {
-    height: 6px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 3px;
-}
-
-.waveform-editor-scrollbar::-moz-range-thumb {
-    width: 60px;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.4);
-    border-radius: 3px;
-    border: none;
-    cursor: grab;
-}
-
-.waveform-editor-scrollbar::-moz-range-thumb:hover {
-    background: rgba(255, 255, 255, 0.6);
 }
 
 /* ============================================
@@ -301,11 +253,32 @@
     flex: 1;
     display: flex;
     align-items: center;
-    margin: 0 var(--space-md);
+    position: relative;
     height: 36px;
+    margin: 0 var(--space-md);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: transparent;
+}
+
+.waveform-editor-zoom-label {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-55%);
+    color: var(--text-muted);
+    font-size: 24px;
+    font-weight: 300;
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+}
+
+.waveform-editor-zoom-label:first-of-type {
+    left: 14px;
+}
+
+.waveform-editor-zoom-label:last-of-type {
+    right: 14px;
 }
 
 .waveform-editor-zoom {
@@ -315,7 +288,7 @@
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
-    margin: 0 4px;
+    margin: 0;
 }
 
 .waveform-editor-zoom::-webkit-slider-runnable-track {

@@ -26,6 +26,7 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
     const updateCropRegion = useAudioClipStore((s) => s.updateCropRegion);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const minimapRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
@@ -41,6 +42,9 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
     // Drag state
     const [dragMode, setDragMode] = useState<'none' | 'start' | 'end' | 'select'>('none');
     const [dragStartX, setDragStartX] = useState(0);
+
+    // Minimap drag state
+    const [minimapDragging, setMinimapDragging] = useState(false);
 
     const clip = editingClipId ? clips.get(editingClipId) : null;
 
@@ -246,6 +250,106 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
 
     }, [audioBuffer, zoom, scrollOffset, startHandle, endHandle]);
 
+    // Draw minimap
+    useEffect(() => {
+        const canvas = minimapRef.current;
+        if (!canvas || !audioBuffer) return;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const width = canvas.width;
+        const height = canvas.height;
+        const channelData = audioBuffer.getChannelData(0);
+
+        // Clear canvas
+        ctx.clearRect(0, 0, width, height);
+
+        // Draw simplified waveform
+        const samplesPerPixel = Math.floor(channelData.length / width);
+        const middleY = height / 2;
+
+        for (let x = 0; x < width; x++) {
+            const startSample = Math.floor(x * samplesPerPixel);
+            const endSample = Math.min(startSample + samplesPerPixel, channelData.length);
+
+            let min = 0, max = 0;
+            for (let i = startSample; i < endSample; i++) {
+                const sample = channelData[i];
+                if (sample < min) min = sample;
+                if (sample > max) max = sample;
+            }
+
+            const minY = middleY + min * middleY * 0.85;
+            const maxY = middleY + max * middleY * 0.85;
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, minY);
+            ctx.lineTo(x, maxY);
+            ctx.stroke();
+        }
+
+        // Draw viewport indicator (only when zoomed)
+        if (zoom > 1) {
+            const visibleRange = 1 / zoom;
+            const maxScroll = 1 - visibleRange;
+            const clampedScroll = Math.max(0, Math.min(maxScroll, scrollOffset));
+
+            const viewportX = clampedScroll * width;
+            const viewportWidth = visibleRange * width;
+
+            // Draw viewport box
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(viewportX + 0.5, 0.5, viewportWidth - 1, height - 1);
+
+            // Dim areas outside viewport
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fillRect(0, 0, viewportX, height);
+            ctx.fillRect(viewportX + viewportWidth, 0, width - viewportX - viewportWidth, height);
+        }
+
+    }, [audioBuffer, zoom, scrollOffset]);
+
+    // Minimap mouse handlers
+    const handleMinimapMouseDown = useCallback((e: React.MouseEvent) => {
+        if (zoom <= 1) return;
+
+        const canvas = minimapRef.current;
+        if (!canvas) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = (e.clientX - rect.left) / rect.width;
+
+        // Center viewport on click position
+        const visibleRange = 1 / zoom;
+        const newOffset = clickX - visibleRange / 2;
+        const maxScroll = 1 - visibleRange;
+        setScrollOffset(Math.max(0, Math.min(maxScroll, newOffset)));
+        setMinimapDragging(true);
+    }, [zoom]);
+
+    const handleMinimapMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!minimapDragging || zoom <= 1) return;
+
+        const canvas = minimapRef.current;
+        if (!canvas) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = (e.clientX - rect.left) / rect.width;
+
+        const visibleRange = 1 / zoom;
+        const newOffset = clickX - visibleRange / 2;
+        const maxScroll = 1 - visibleRange;
+        setScrollOffset(Math.max(0, Math.min(maxScroll, newOffset)));
+    }, [minimapDragging, zoom]);
+
+    const handleMinimapMouseUp = useCallback(() => {
+        setMinimapDragging(false);
+    }, []);
+
     // Get position from mouse event (normalized 0-1 in absolute coordinates)
     const getPositionFromEvent = useCallback((e: React.MouseEvent | MouseEvent): number => {
         const canvas = canvasRef.current;
@@ -368,11 +472,6 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
         }
     }, [zoom, scrollOffset]);
 
-    // Handle scrollbar change
-    const handleScrollbarChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        setScrollOffset(parseFloat(e.target.value));
-    }, []);
-
     // Preview playback
     const handlePreview = useCallback(() => {
         if (!audioBuffer) return;
@@ -490,14 +589,16 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
                                 style={{ cursor: cursorStyle }}
                             />
                             {zoom > 1 && (
-                                <input
-                                    type="range"
-                                    className="waveform-editor-scrollbar"
-                                    min="0"
-                                    max={Math.max(0, 1 - 1 / zoom)}
-                                    step="0.001"
-                                    value={scrollOffset}
-                                    onChange={handleScrollbarChange}
+                                <canvas
+                                    ref={minimapRef}
+                                    className="waveform-editor-minimap"
+                                    width={400}
+                                    height={24}
+                                    onMouseDown={handleMinimapMouseDown}
+                                    onMouseMove={handleMinimapMouseMove}
+                                    onMouseUp={handleMinimapMouseUp}
+                                    onMouseLeave={handleMinimapMouseUp}
+                                    style={{ cursor: minimapDragging ? 'grabbing' : 'grab' }}
                                 />
                             )}
                         </div>
@@ -513,6 +614,7 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
                         {isPlaying ? '■ Stop' : '▶ Play'}
                     </button>
                     <div className="waveform-editor-zoom-track">
+                        <span className="waveform-editor-zoom-label">−</span>
                         <input
                             type="range"
                             min="1"
@@ -521,7 +623,6 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
                             value={zoom}
                             onChange={(e) => {
                                 const newZoom = parseFloat(e.target.value);
-                                // Zoom into center of current view
                                 const oldVisibleRange = 1 / zoom;
                                 const newVisibleRange = 1 / newZoom;
                                 const viewCenter = scrollOffset + oldVisibleRange / 2;
@@ -533,6 +634,7 @@ export const WaveformEditorModal = memo(function WaveformEditorModal() {
                             className="waveform-editor-zoom"
                             title="Ctrl+scroll to zoom"
                         />
+                        <span className="waveform-editor-zoom-label">+</span>
                     </div>
                     <button className="waveform-editor-btn cancel" onClick={handleCancel}>
                         Cancel
