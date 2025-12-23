@@ -28,6 +28,7 @@ interface MIDIStoreState extends MIDIPersistedState {
     // Initialization state
     isSupported: boolean;
     isInitialized: boolean;
+    isInitializing: boolean;
     error: string | null;
 
     // Connected devices
@@ -106,6 +107,7 @@ export const useMIDIStore = create<MIDIStore>()(
                 // Transient state (not persisted)
                 isSupported: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
                 isInitialized: false,
+                isInitializing: false,
                 error: null,
 
                 inputs: new Map(),
@@ -130,55 +132,78 @@ export const useMIDIStore = create<MIDIStore>()(
 
         initialize: async () => {
             const state = get();
-            if (state.isInitialized || !state.isSupported) return;
+            // Prevent concurrent initialization and double-init
+            if (state.isInitialized || state.isInitializing || !state.isSupported) return;
 
-            const manager = getMIDIManager();
-            const success = await manager.init();
+            // Mark as initializing to prevent race conditions
+            set({ isInitializing: true });
 
-            if (!success) {
-                set({ error: manager.getError(), isInitialized: true });
-                return;
-            }
+            try {
+                const manager = getMIDIManager();
+                const success = await manager.init();
 
-            // Get initial devices
-            const inputs = new Map<string, MIDIDeviceInfo>();
-            manager.getInputDevices().forEach((device) => {
-                inputs.set(device.id, device);
-            });
-
-            const outputs = new Map<string, MIDIDeviceInfo>();
-            manager.getOutputDevices().forEach((device) => {
-                outputs.set(device.id, device);
-            });
-
-            // Set up hot-plug listeners and store cleanup functions
-            const deviceConnectedCleanup = manager.onDeviceConnected((device) => {
-                get().handleDeviceConnected(device);
-            });
-
-            const deviceDisconnectedCleanup = manager.onDeviceDisconnected((device) => {
-                get().handleDeviceDisconnected(device);
-            });
-
-            // Subscribe to ALL MIDI messages globally so lastMessage is always updated
-            // This allows any component to use subscribeMIDIMessages to react to messages
-            // Store the unsubscribe function to prevent memory leaks
-            const globalSubscription = manager.subscribeAll((event) => {
-                try {
-                    get().handleMIDIMessage(event);
-                } catch (err) {
-                    console.error('[midiStore] Error in global MIDI callback:', err);
+                if (!success) {
+                    set({ error: manager.getError(), isInitialized: true, isInitializing: false });
+                    return;
                 }
-            });
 
-            set({
-                isInitialized: true,
-                inputs,
-                outputs,
-                globalUnsubscribe: globalSubscription.unsubscribe,
-                deviceConnectedCleanup,
-                deviceDisconnectedCleanup
-            });
+                // Get initial devices
+                const inputs = new Map<string, MIDIDeviceInfo>();
+                manager.getInputDevices().forEach((device) => {
+                    inputs.set(device.id, device);
+                });
+
+                const outputs = new Map<string, MIDIDeviceInfo>();
+                manager.getOutputDevices().forEach((device) => {
+                    outputs.set(device.id, device);
+                });
+
+                // Set up hot-plug listeners and store cleanup functions
+                const deviceConnectedCleanup = manager.onDeviceConnected((device) => {
+                    get().handleDeviceConnected(device);
+                });
+
+                const deviceDisconnectedCleanup = manager.onDeviceDisconnected((device) => {
+                    get().handleDeviceDisconnected(device);
+                });
+
+                // Subscribe to ALL MIDI messages globally so lastMessage is always updated
+                // This allows any component to use subscribeMIDIMessages to react to messages
+                // Store the unsubscribe function to prevent memory leaks
+                const globalSubscription = manager.subscribeAll((event) => {
+                    try {
+                        get().handleMIDIMessage(event);
+                    } catch (err) {
+                        console.error('[midiStore] Error in global MIDI callback:', err);
+                    }
+                });
+
+                set({
+                    isInitialized: true,
+                    isInitializing: false,
+                    inputs,
+                    outputs,
+                    globalUnsubscribe: globalSubscription.unsubscribe,
+                    deviceConnectedCleanup,
+                    deviceDisconnectedCleanup
+                });
+
+                // Trigger handleDeviceConnected for devices that were already connected
+                // at init time. This ensures the toast shows for devices that were
+                // plugged in before the app started. Use setTimeout to ensure state
+                // is fully updated before processing.
+                setTimeout(() => {
+                    const currentState = get();
+                    currentState.inputs.forEach((device) => {
+                        // Only process if no pending device is set (avoid duplicates)
+                        if (!currentState.pendingDevice) {
+                            currentState.handleDeviceConnected(device);
+                        }
+                    });
+                }, 0);
+            } catch (error) {
+                set({ isInitializing: false, error: String(error) });
+            }
         },
 
         cleanup: () => {
@@ -207,6 +232,7 @@ export const useMIDIStore = create<MIDIStore>()(
 
             set({
                 isInitialized: false,
+                isInitializing: false,
                 globalUnsubscribe: null,
                 deviceConnectedCleanup: null,
                 deviceDisconnectedCleanup: null,

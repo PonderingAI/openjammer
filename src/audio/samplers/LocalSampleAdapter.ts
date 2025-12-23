@@ -34,6 +34,7 @@ export class SampleLoadError extends Error {
 export interface LocalSampleAdapterOptions {
   playbackMode?: PlaybackMode;
   volume?: number;
+  maxConcurrentPlaybacks?: number;
 }
 
 interface ActivePlayback {
@@ -45,13 +46,16 @@ interface ActivePlayback {
 export class LocalSampleAdapter {
   private outputNode: GainNode | null = null;
   private activePlaybacks: Map<string, ActivePlayback> = new Map();
+  private _playbackOrder: string[] = []; // FIFO tracking for voice stealing
   private currentSampleId: string | null = null;
   private playbackMode: PlaybackMode = 'oneshot';
+  private _maxConcurrentPlaybacks: number = 16;
   // Track loading promises per sampleId to prevent race conditions when switching samples
   private loadingPromises: Map<string, Promise<void>> = new Map();
 
   constructor(options: LocalSampleAdapterOptions = {}) {
     this.playbackMode = options.playbackMode ?? 'oneshot';
+    this._maxConcurrentPlaybacks = options.maxConcurrentPlaybacks ?? 16;
     this.initOutput();
     if (this.outputNode && options.volume !== undefined) {
       this.outputNode.gain.value = options.volume;
@@ -191,6 +195,11 @@ export class LocalSampleAdapter {
       this.stopPlayback(this.currentSampleId);
     }
 
+    // Voice stealing: stop oldest playback if at limit
+    if (this.activePlaybacks.size >= this._maxConcurrentPlaybacks) {
+      this.stealOldestPlayback();
+    }
+
     // Create playback nodes
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
@@ -211,14 +220,40 @@ export class LocalSampleAdapter {
     };
 
     this.activePlaybacks.set(playbackId, playback);
+    this._playbackOrder.push(playbackId);
 
     // Handle playback end
     source.onended = () => {
       this.activePlaybacks.delete(playbackId);
+      this._playbackOrder = this._playbackOrder.filter(id => id !== playbackId);
       gainNode.disconnect();
     };
 
     source.start();
+  }
+
+  /**
+   * Steal the oldest playback to make room for a new one
+   */
+  private stealOldestPlayback(): void {
+    const ctx = getAudioContext();
+    if (!ctx || this._playbackOrder.length === 0) return;
+
+    const oldestId = this._playbackOrder.shift();
+    if (!oldestId) return;
+
+    const playback = this.activePlaybacks.get(oldestId);
+    if (playback) {
+      // Quick fade out to avoid clicks
+      const now = ctx.currentTime;
+      playback.gainNode.gain.setTargetAtTime(0, now, 0.01);
+      try {
+        playback.source.stop(now + 0.05);
+      } catch {
+        // Already stopped
+      }
+      this.activePlaybacks.delete(oldestId);
+    }
   }
 
   /**
@@ -241,6 +276,7 @@ export class LocalSampleAdapter {
     const ctx = getAudioContext();
     if (!ctx) return;
 
+    const idsToRemove: string[] = [];
     this.activePlaybacks.forEach((playback, id) => {
       if (playback.sampleId === sampleId) {
         // Fade out to avoid clicks
@@ -255,8 +291,11 @@ export class LocalSampleAdapter {
         }
 
         this.activePlaybacks.delete(id);
+        idsToRemove.push(id);
       }
     });
+    // Clean up playback order
+    this._playbackOrder = this._playbackOrder.filter(id => !idsToRemove.includes(id));
   }
 
   /**
@@ -275,6 +314,7 @@ export class LocalSampleAdapter {
       playback.gainNode.disconnect();
       this.activePlaybacks.delete(id);
     });
+    this._playbackOrder = [];
   }
 
   /**

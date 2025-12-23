@@ -115,7 +115,8 @@ export async function restoreHandle(
   try {
     const handle = await get<FileSystemDirectoryHandle>(key);
     return handle || null;
-  } catch {
+  } catch (err) {
+    console.warn('[FileSystemAccess] Failed to restore handle:', name, err);
     return null;
   }
 }

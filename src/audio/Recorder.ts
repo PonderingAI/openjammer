@@ -311,24 +311,38 @@ export class Recorder {
             // Sanitize name using comprehensive sanitization function
             const safeName = sanitizeFilename(recording.name);
 
-            // Generate unique filename - check for duplicates and add suffix if needed
-            let filename = `${safeName}_${timestamp}.wav`;
+            // Generate unique filename with random suffix to prevent race conditions
+            // The timestamp alone could collide if multiple saves happen within the same second
+            const randomSuffix = Math.random().toString(36).slice(2, 6);
+            let filename = `${safeName}_${timestamp}_${randomSuffix}.wav`;
             let suffix = 1;
-            while (suffix < MAX_FILENAME_SUFFIX) {
+
+            // Try to create file, with retry logic if file already exists
+            let fileHandle: FileSystemFileHandle | null = null;
+            while (suffix < MAX_FILENAME_SUFFIX && !fileHandle) {
                 try {
-                    // Check if file already exists
+                    // Check if file already exists first
                     await libraryDir.getFileHandle(filename, { create: false });
-                    // File exists, try with suffix
+                    // File exists, try with incremented suffix
                     suffix++;
-                    filename = `${safeName}_${timestamp}_${suffix}.wav`;
+                    filename = `${safeName}_${timestamp}_${randomSuffix}_${suffix}.wav`;
                 } catch {
-                    // File doesn't exist, we can use this name
-                    break;
+                    // File doesn't exist, create it atomically
+                    try {
+                        fileHandle = await libraryDir.getFileHandle(filename, { create: true });
+                    } catch (createErr) {
+                        // Another process may have created it between check and create
+                        // Try with incremented suffix
+                        suffix++;
+                        filename = `${safeName}_${timestamp}_${randomSuffix}_${suffix}.wav`;
+                    }
                 }
             }
 
-            // Create and write file
-            const fileHandle = await libraryDir.getFileHandle(filename, { create: true });
+            if (!fileHandle) {
+                throw new Error(`Failed to create unique filename after ${MAX_FILENAME_SUFFIX} attempts`);
+            }
+
             const writable = await fileHandle.createWritable();
             try {
                 await writable.write(recording.blob);

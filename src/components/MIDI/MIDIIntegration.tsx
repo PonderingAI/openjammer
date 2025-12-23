@@ -72,12 +72,17 @@ export function MIDIIntegration() {
     // Track which nodes we've already reconnected to prevent redundant processing
     const reconnectedNodesRef = useRef<Set<string>>(new Set());
 
-    // Initialize MIDI on mount
+    // Initialize MIDI on mount, cleanup on unmount
     useEffect(() => {
         if (isSupported && !isInitialized) {
             initialize();
         }
-    }, [isSupported, isInitialized, initialize]);
+
+        // Cleanup on unmount to prevent memory leaks and stale handlers
+        return () => {
+            useMIDIStore.getState().cleanup();
+        };
+    }, []); // Empty deps - only run on mount/unmount, init is idempotent
 
     // Auto-reconnect MIDI nodes when devices become available
     // Only runs when inputs change (device connected/disconnected) - not on every nodes change

@@ -14,93 +14,14 @@ import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import { LocalSampleAdapter } from './samplers/LocalSampleAdapter';
 import { SamplerAdapter } from './samplers/SamplerAdapter';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, NodeData, LibraryNodeData, MIDIInputNodeData, SamplerNodeData } from '../engine/types';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, LibraryNodeData, MIDIInputNodeData, SamplerNodeData } from '../engine/types';
+import { isInstrumentNodeData } from '../engine/typeGuards';
 import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
 import type { MIDIEvent } from '../midi/types';
 import { useMIDIStore } from '../store/midiStore';
 import { toast } from 'sonner';
-
-// Validation constants for instrument row data
-const VALIDATION_BOUNDS = {
-    MIN_PORT_COUNT: 1,
-    MAX_PORT_COUNT: 128,  // Reasonable upper bound for MIDI
-    MIN_NOTE: 0,          // C
-    MAX_NOTE: 11,         // B
-    MIN_OCTAVE: 0,
-    MAX_OCTAVE: 8,
-    MIN_OFFSET: -48,      // 4 octaves down
-    MAX_OFFSET: 48,       // 4 octaves up
-    MIN_SPREAD: 0,
-    MAX_SPREAD: 12,       // Max 1 octave spread per key
-    MIN_KEY_GAIN: 0,      // Minimum per-key gain multiplier
-    MAX_KEY_GAIN: 10,     // Maximum per-key gain multiplier (10x amplification cap)
-} as const;
-
-/**
- * Type guard for instrument node data with runtime validation
- * Validates both structure and content of rows array including value ranges
- */
-function isInstrumentNodeData(data: NodeData): data is InstrumentNodeData {
-    if (typeof data !== 'object' || data === null) return false;
-
-    const d = data as Record<string, unknown>;
-
-    // Check for new row-based system
-    if ('rows' in d && Array.isArray(d.rows)) {
-        // Validate each row has required fields with valid ranges
-        const rows = d.rows as unknown[];
-        const isValidRows = rows.every((row): row is InstrumentRow => {
-            if (typeof row !== 'object' || row === null) return false;
-            const r = row as Record<string, unknown>;
-
-            // Type checks (Number.isFinite rejects NaN/Infinity which would pass range checks)
-            if (typeof r.rowId !== 'string') return false;
-            if (typeof r.portCount !== 'number' || !Number.isFinite(r.portCount)) return false;
-            if (typeof r.baseNote !== 'number' || !Number.isFinite(r.baseNote)) return false;
-            if (typeof r.baseOctave !== 'number' || !Number.isFinite(r.baseOctave)) return false;
-            if (typeof r.baseOffset !== 'number' || !Number.isFinite(r.baseOffset)) return false;
-            if (typeof r.spread !== 'number' || !Number.isFinite(r.spread)) return false;
-
-            // Range validation
-            if (r.portCount < VALIDATION_BOUNDS.MIN_PORT_COUNT ||
-                r.portCount > VALIDATION_BOUNDS.MAX_PORT_COUNT) return false;
-            if (r.baseNote < VALIDATION_BOUNDS.MIN_NOTE ||
-                r.baseNote > VALIDATION_BOUNDS.MAX_NOTE) return false;
-            if (r.baseOctave < VALIDATION_BOUNDS.MIN_OCTAVE ||
-                r.baseOctave > VALIDATION_BOUNDS.MAX_OCTAVE) return false;
-            if (r.baseOffset < VALIDATION_BOUNDS.MIN_OFFSET ||
-                r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
-            if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
-                r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
-
-            // Validate keyGains if present (optional field)
-            if ('keyGains' in r && r.keyGains !== undefined) {
-                if (!Array.isArray(r.keyGains)) return false;
-                const gains = r.keyGains as unknown[];
-                const validGains = gains.every((g): g is number =>
-                    typeof g === 'number' &&
-                    Number.isFinite(g) &&
-                    g >= VALIDATION_BOUNDS.MIN_KEY_GAIN &&
-                    g <= VALIDATION_BOUNDS.MAX_KEY_GAIN
-                );
-                if (!validGains) return false;
-            }
-
-            return true;
-        });
-        return isValidRows;
-    }
-
-    // Check for legacy offset-based system
-    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
-        return true;
-    }
-
-    // Empty data object is valid (no configuration yet)
-    return Object.keys(d).length === 0 || (!('rows' in d) && !('offsets' in d));
-}
 import { useGraphStore } from '../store/graphStore';
-import { TonePianoInstrument } from './samplers/TonePianoAdapter';
+import { getKeyboardControlPortId } from '../utils/connectionActivity';
 
 // ============================================================================
 // Constants
@@ -178,6 +99,7 @@ type NodeChangeCallback = (nodes: Map<string, GraphNode>) => void;
 /** Metadata stored separately from AudioNodeInstance to avoid unsafe type assertions */
 interface AudioNodeMetadata {
     instrumentId?: string;
+    midiDeviceId?: string;
 }
 
 class AudioGraphManager {
@@ -625,6 +547,29 @@ class AudioGraphManager {
                     }
                 }
             }
+
+            // Check for MIDI device changes (MIDI nodes return null, so check separately)
+            if (graphNode.type === 'midi' || graphNode.type === 'minilab-3') {
+                const midiData = graphNode.data as MIDIInputNodeData;
+                const currentDeviceId = midiData.deviceId;
+                const metadata = this.audioNodeMetadata.get(nodeId);
+                const storedDeviceId = metadata?.midiDeviceId;
+
+                // Check if device changed (null -> value, value -> different value, value -> null)
+                const deviceChanged = storedDeviceId !== currentDeviceId;
+
+                if (deviceChanged) {
+                    if (currentDeviceId && midiData.isConnected) {
+                        // Device changed to a new connected device - re-subscribe
+                        this.subscribeMIDINode(nodeId, currentDeviceId);
+                        this.audioNodeMetadata.set(nodeId, { midiDeviceId: currentDeviceId });
+                    } else {
+                        // Device removed or disconnected - unsubscribe
+                        this.unsubscribeMIDINode(nodeId);
+                        this.audioNodeMetadata.delete(nodeId);
+                    }
+                }
+            }
         });
     }
 
@@ -715,6 +660,8 @@ class AudioGraphManager {
                 const midiData = graphNode.data as MIDIInputNodeData;
                 if (midiData.deviceId && midiData.isConnected) {
                     this.subscribeMIDINode(graphNode.id, midiData.deviceId);
+                    // Store device ID in metadata for change detection
+                    this.audioNodeMetadata.set(graphNode.id, { midiDeviceId: midiData.deviceId });
                 }
                 return null;
             }
@@ -1909,11 +1856,8 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the control port
-        const controlPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.id === 'control'
-        )?.id;
-
+        // Find the control port using shared utility
+        const controlPortId = getKeyboardControlPortId(keyboardNode);
         if (!controlPortId) return;
 
         // Find all connections from the control port
@@ -1924,13 +1868,11 @@ class AudioGraphManager {
 
                 if (!targetNode) continue;
 
-                // Check if target is a piano instrument
-                if (targetNode.type !== 'piano') continue;
-
                 // Get the instrument and activate control (pedal)
+                // Use duck-typing: any instrument with setPedal method gets pedal support
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument && 'setPedal' in instrument) {
-                    (instrument as TonePianoInstrument).setPedal(true);
+                    (instrument as { setPedal: (down: boolean) => void }).setPedal(true);
                 }
             }
         }
@@ -1949,11 +1891,8 @@ class AudioGraphManager {
         const keyboardNode = graphNodes.get(keyboardId);
         if (!keyboardNode) return;
 
-        // Find the control port
-        const controlPortId = keyboardNode.ports.find(
-            p => p.direction === 'output' && p.id === 'control'
-        )?.id;
-
+        // Find the control port using shared utility
+        const controlPortId = getKeyboardControlPortId(keyboardNode);
         if (!controlPortId) return;
 
         // Find all connections from the control port
@@ -1964,13 +1903,11 @@ class AudioGraphManager {
 
                 if (!targetNode) continue;
 
-                // Check if target is a piano instrument
-                if (targetNode.type !== 'piano') continue;
-
                 // Get the instrument and deactivate control (pedal)
+                // Use duck-typing: any instrument with setPedal method gets pedal support
                 const instrument = this.getInstrument(targetNodeId);
                 if (instrument && 'setPedal' in instrument) {
-                    (instrument as TonePianoInstrument).setPedal(false);
+                    (instrument as { setPedal: (down: boolean) => void }).setPedal(false);
                 }
             }
         }
@@ -2062,9 +1999,9 @@ class AudioGraphManager {
                 case 'cc': {
                     // Handle CC messages (e.g., sustain pedal CC 64)
                     if (message.controller === 64) {
-                        // Sustain pedal
+                        // Sustain pedal - use duck-typing for any instrument with setPedal
                         if ('setPedal' in instrument) {
-                            (instrument as TonePianoInstrument).setPedal(message.value >= 64);
+                            (instrument as { setPedal: (down: boolean) => void }).setPedal(message.value >= 64);
                         }
                     }
                     // Future: Handle other CC messages (mod wheel, expression, etc.)

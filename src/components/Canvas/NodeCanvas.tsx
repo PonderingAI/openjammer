@@ -16,7 +16,6 @@ import { getConnectionBundleCount } from '../../utils/portSync';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
-import { MIDIDeviceBrowser } from '../MIDI/MIDIDeviceBrowser';
 import { useMIDIStore } from '../../store/midiStore';
 import { useAudioClipStore } from '../../store/audioClipStore';
 import { useLibraryStore, getSampleFile } from '../../store/libraryStore';
@@ -39,8 +38,7 @@ export function NodeCanvas() {
     const [contextMenu, setContextMenu] = useState<Position | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
 
-    // MIDI browser state - track where to create node after device selection
-    const [midiNodePosition, setMidiNodePosition] = useState<Position | null>(null);
+    // MIDI browser - open via store, MIDIIntegration handles rendering
     const openMIDIBrowser = useMIDIStore((s) => s.openBrowser);
 
     // Right-click drag state (for pan vs context menu)
@@ -199,38 +197,10 @@ export function NodeCanvas() {
     }, [screenToCanvas, addNode, currentViewNodeId]);
 
     // Handle opening MIDI browser (when 'Midi' is selected from context menu)
-    const handleOpenMIDIBrowser = useCallback((screenPos: Position) => {
-        const canvasPos = screenToCanvas(screenPos);
-        setMidiNodePosition(canvasPos);
+    // MIDIIntegration handles the browser rendering and device selection
+    const handleOpenMIDIBrowser = useCallback(() => {
         openMIDIBrowser();
-    }, [screenToCanvas, openMIDIBrowser]);
-
-    // Handle MIDI device selection from browser
-    const handleMIDIDeviceSelected = useCallback((deviceId: string | null, presetId: string): boolean => {
-        // Check if browser was opened from an existing node
-        const targetNodeId = useMIDIStore.getState().browserTargetNodeId;
-
-        if (targetNodeId) {
-            // Update existing node with selected device
-            const updateNodeData = useGraphStore.getState().updateNodeData;
-            updateNodeData(targetNodeId, {
-                deviceId,
-                presetId,
-                isConnected: deviceId !== null
-            });
-            return true;
-        } else if (midiNodePosition) {
-            // Create new MIDI node with selected device/preset
-            addNode('midi', midiNodePosition, currentViewNodeId, {
-                deviceId,
-                presetId,
-                isConnected: deviceId !== null
-            });
-            setMidiNodePosition(null);
-            return true;
-        }
-        return false;
-    }, [midiNodePosition, addNode, currentViewNodeId]);
+    }, [openMIDIBrowser]);
 
     // Handle mouse down (start panning or box selection)
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -526,6 +496,10 @@ export function NodeCanvas() {
         3: ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
     };
 
+    // Track active keyboard keys with their source keyboard ID
+    // This prevents stuck notes when mode changes between keydown and keyup
+    const activeKeyboardKeys = useRef<Map<string, { keyboardId: string; row: number; keyIndex: number }>>(new Map());
+
     // Handle keyboard shortcuts using keybindings store
     useEffect(() => {
         const { matchesAction } = useKeybindingsStore.getState();
@@ -764,6 +738,9 @@ export function NodeCanvas() {
 
                         if (keyIndex !== -1) {
                             e.preventDefault();
+                            // Store keyboardId at press time for reliable release
+                            // This prevents stuck notes if mode changes between keydown and keyup
+                            activeKeyboardKeys.current.set(key, { keyboardId: activeKeyboardId, row, keyIndex });
                             emitKeyboardSignal(activeKeyboardId, row, keyIndex);
                             break; // Only one row can match per key
                         }
@@ -776,9 +753,21 @@ export function NodeCanvas() {
             // Skip if typing in input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
+            const key = e.key.toLowerCase();
+
+            // First check if this key was pressed in keyboard mode (stored in activeKeyboardKeys)
+            // This ensures the note is released even if mode changed since keydown
+            const storedKey = activeKeyboardKeys.current.get(key);
+            if (storedKey) {
+                e.preventDefault();
+                releaseKeyboardSignal(storedKey.keyboardId, storedKey.row, storedKey.keyIndex);
+                activeKeyboardKeys.current.delete(key);
+                return;
+            }
+
             const currentMode = useAudioStore.getState().currentMode;
 
-            // Keyboard input mode (modes 2-9) - release notes and control
+            // Keyboard input mode (modes 2-9) - release control signals
             if (currentMode > 1) {
                 const activeKeyboardId = useAudioStore.getState().activeKeyboardId;
                 if (activeKeyboardId) {
@@ -788,19 +777,6 @@ export function NodeCanvas() {
                         const emitControlUp = useAudioStore.getState().emitControlUp;
                         emitControlUp(activeKeyboardId);
                         return;
-                    }
-
-                    // Check all three rows for the released key
-                    const key = e.key.toLowerCase();
-                    for (let row = 1; row <= 3; row++) {
-                        const rowKeys = ROW_KEYS[row];
-                        const keyIndex = rowKeys?.indexOf(key);
-
-                        if (keyIndex !== -1) {
-                            e.preventDefault();
-                            releaseKeyboardSignal(activeKeyboardId, row, keyIndex);
-                            break; // Only one row can match per key
-                        }
                     }
                 }
             }
@@ -1138,9 +1114,6 @@ export function NodeCanvas() {
                     onOpenMIDIBrowser={handleOpenMIDIBrowser}
                 />
             )}
-
-            {/* MIDI Device Browser */}
-            <MIDIDeviceBrowser onSelectDevice={handleMIDIDeviceSelected} />
 
             {/* Audio Clip Drag Layer (portal) */}
             <ClipDragLayer />

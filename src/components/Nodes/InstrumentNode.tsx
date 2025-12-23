@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
+import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
 import { nodeDefinitions } from '../../engine/registry';
 import { InstrumentLoader } from '../../audio/Instruments';
@@ -32,8 +33,8 @@ interface InstrumentNodeProps {
 // Constants
 // ============================================================================
 
-/** Musical note names for display */
-const NOTE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+/** Musical note names for display (chromatic scale) */
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /** Minimum mouse movement before treating interaction as drag */
 const DRAG_THRESHOLD_PX = 5;
@@ -52,7 +53,7 @@ const DROPDOWN_LAYOUT = {
 
 /** Row parameter value ranges */
 const ROW_PARAM_RANGES = {
-    NOTE: { min: 0, max: 6 },       // C to B
+    NOTE: { min: 0, max: 11 },      // C to B (chromatic scale)
     OCTAVE: { min: 0, max: 8 },     // Piano range
     OFFSET: { min: -24, max: 24 },  // +/- 2 octaves
 } as const;
@@ -93,33 +94,8 @@ function getAllowedCategories(nodeType: string): string[] {
 // Main instrument node types to cycle through
 const INSTRUMENT_NODE_TYPES = ['strings', 'keys', 'winds'] as const;
 
-/**
- * Type guard to safely validate instrument node data
- * Provides runtime type checking for data from graph store
- */
-function isInstrumentNodeData(data: unknown): data is InstrumentNodeData {
-    if (typeof data !== 'object' || data === null) return false;
-    const d = data as Record<string, unknown>;
-
-    // Check for row-based system (new format)
-    if ('rows' in d) {
-        if (!Array.isArray(d.rows)) return false;
-        // Validate at least basic structure for rows
-        return d.rows.every((row: unknown) => {
-            if (typeof row !== 'object' || row === null) return false;
-            const r = row as Record<string, unknown>;
-            return typeof r.rowId === 'string';
-        });
-    }
-
-    // Check for legacy offset-based system
-    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
-        return true;
-    }
-
-    // Empty data object is valid (no configuration yet)
-    return Object.keys(d).length === 0;
-}
+// Type guard imported from shared typeGuards module
+const isInstrumentNodeData = isBasicInstrumentNodeData;
 
 // SVG Icons - keeping the icon definitions (abbreviated for brevity)
 const InstrumentIcons: Record<string, React.ReactNode> = {
@@ -370,9 +346,26 @@ export function InstrumentNode({
     // Get output port from the node
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
 
-    // Get display name
-    const instrumentData = node.data as InstrumentNodeData;
-    const instrumentId = instrumentData.instrumentId || node.type;
+    // Memoized port for empty state (first available control input)
+    const emptyStatePort = useMemo(() => {
+        return node.ports.find(p =>
+            p.direction === 'input' &&
+            p.type === 'control'
+        );
+    }, [node.ports]);
+
+    // Memoized port for adding new rows (first available unconnected control input)
+    const availableNewRowPort = useMemo(() => {
+        const connectedPorts = new Set(rows.map(r => r.targetPortId));
+        return node.ports.find(p =>
+            p.direction === 'input' &&
+            p.type === 'control' &&
+            !connectedPorts.has(p.id)
+        );
+    }, [node.ports, rows]);
+
+    // Get display name - use validated 'data' variable instead of unsafe assertion
+    const instrumentId = data.instrumentId || node.type;
     const displayName = INSTRUMENT_LABELS[instrumentId] || nodeDefinitions[node.type]?.name || 'Instrument';
 
     // Filter instruments by node type
@@ -447,9 +440,8 @@ export function InstrumentNode({
 
     // Handle instrument selection
     const handleInstrumentSelect = (instId: string) => {
-        const currentData = node.data as InstrumentNodeData;
         updateNodeData(node.id, {
-            ...currentData,
+            ...data,
             instrumentId: instId
         });
         setShowPopup(false);
@@ -508,29 +500,21 @@ export function InstrumentNode({
                 {/* Rows container */}
                 <div className="instrument-rows-simple">
                     {rows.length === 0 ? (
-                        /* Empty state - find first available input port */
-                        (() => {
-                            const availablePort = node.ports.find(p =>
-                                p.direction === 'input' &&
-                                p.type === 'control'
-                            );
-                            if (!availablePort) return null;
-
-                            return (
-                                <div className="instrument-row-simple empty-state">
-                                    <div
-                                        className="bundle-input-port empty"
-                                        data-node-id={node.id}
-                                        data-port-id={availablePort.id}
-                                        onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
-                                        onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
-                                        onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
-                                        onMouseLeave={handlePortMouseLeave}
-                                        title="Connect keyboard bundle"
-                                    />
-                                </div>
-                            );
-                        })()
+                        /* Empty state - use memoized port */
+                        emptyStatePort && (
+                            <div className="instrument-row-simple empty-state">
+                                <div
+                                    className="bundle-input-port empty"
+                                    data-node-id={node.id}
+                                    data-port-id={emptyStatePort.id}
+                                    onMouseDown={(e) => handlePortMouseDown?.(emptyStatePort.id, e)}
+                                    onMouseUp={(e) => handlePortMouseUp?.(emptyStatePort.id, e)}
+                                    onMouseEnter={() => handlePortMouseEnter?.(emptyStatePort.id)}
+                                    onMouseLeave={handlePortMouseLeave}
+                                    title="Connect keyboard bundle"
+                                />
+                            </div>
+                        )
                     ) : (
                         /* Show rows with connections */
                         <>
@@ -561,7 +545,7 @@ export function InstrumentNode({
                                                 <span
                                                     className="row-value note-value editable-value"
                                                     onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, ROW_PARAM_RANGES.NOTE.min, ROW_PARAM_RANGES.NOTE.max)}
-                                                    title={`Note (C-B) - scroll to change`}
+                                                    title={`Note (chromatic) - scroll to change`}
                                                 >
                                                     {NOTE_NAMES[row.baseNote] || 'C'}
                                                 </span>
@@ -584,31 +568,21 @@ export function InstrumentNode({
                                     </div>
                                 );
                             })}
-                            {/* Empty row for adding new connections - find first available input port */}
-                            {(() => {
-                                const connectedPorts = new Set(rows.map(r => r.targetPortId));
-                                const availablePort = node.ports.find(p =>
-                                    p.direction === 'input' &&
-                                    p.type === 'control' &&
-                                    !connectedPorts.has(p.id)
-                                );
-                                if (!availablePort) return null;
-
-                                return (
-                                    <div className="instrument-row-simple empty-row with-divider">
-                                        <div
-                                            className="bundle-input-port empty"
-                                            data-node-id={node.id}
-                                            data-port-id={availablePort.id}
-                                            onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
-                                            onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
-                                            onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
-                                            onMouseLeave={handlePortMouseLeave}
-                                            title="Connect keyboard bundle"
-                                        />
-                                    </div>
-                                );
-                            })()}
+                            {/* Empty row for adding new connections - use memoized port */}
+                            {availableNewRowPort && (
+                                <div className="instrument-row-simple empty-row with-divider">
+                                    <div
+                                        className="bundle-input-port empty"
+                                        data-node-id={node.id}
+                                        data-port-id={availableNewRowPort.id}
+                                        onMouseDown={(e) => handlePortMouseDown?.(availableNewRowPort.id, e)}
+                                        onMouseUp={(e) => handlePortMouseUp?.(availableNewRowPort.id, e)}
+                                        onMouseEnter={() => handlePortMouseEnter?.(availableNewRowPort.id)}
+                                        onMouseLeave={handlePortMouseLeave}
+                                        title="Connect keyboard bundle"
+                                    />
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -657,7 +631,7 @@ export function InstrumentNode({
                                     )}
                                     <div className="instrument-group-items">
                                         {group.instruments.map(instId => {
-                                            const currentInstrumentId = (node.data as InstrumentNodeData).instrumentId || node.type;
+                                            const currentInstrumentId = data.instrumentId || node.type;
                                             return (
                                                 <div
                                                     key={instId}

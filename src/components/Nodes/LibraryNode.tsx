@@ -14,7 +14,8 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import type { GraphNode, LibraryNodeData, LibraryItemRef } from '../../engine/types';
+import { toast } from 'sonner';
+import type { GraphNode, LibraryNodeData, LibraryItemRef, NodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import {
   useLibraryStore,
@@ -42,9 +43,14 @@ interface LibraryNodeProps {
   style: React.CSSProperties;
 }
 
-// Minimum dimensions for resizing
+// Minimum dimensions for resizing - must match CSS .library-node min-width/min-height
 const MIN_WIDTH = 400;
 const MIN_HEIGHT = 300;
+
+// Type guard for LibraryNodeData
+function isLibraryNodeData(data: NodeData | undefined): data is LibraryNodeData {
+  return data !== null && data !== undefined && typeof data === 'object';
+}
 
 export function LibraryNode({
   node,
@@ -55,7 +61,14 @@ export function LibraryNode({
   isDragging,
   style,
 }: LibraryNodeProps) {
-  const data = node.data as LibraryNodeData;
+  // Validate node data with type guard and provide defaults
+  const data: LibraryNodeData = isLibraryNodeData(node.data) ? node.data : {
+    libraryId: undefined,
+    currentItemId: undefined,
+    itemRefs: [],
+    playbackMode: 'oneshot',
+    volume: 0.8,
+  };
   const updateNodeData = useGraphStore(s => s.updateNodeData);
 
   // Library store
@@ -104,7 +117,9 @@ export function LibraryNode({
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [previewingItemId, setPreviewingItemId] = useState<string | null>(null);
+  const [loadingItemId, setLoadingItemId] = useState<string | null>(null);
   const [isLinking, setIsLinking] = useState(false);
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
@@ -125,10 +140,12 @@ export function LibraryNode({
 
   // Refs
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const newTagInputRef = useRef<HTMLInputElement>(null);
   const editNameInputRef = useRef<HTMLInputElement>(null);
   const filesContainerRef = useRef<HTMLDivElement>(null);
   const fileRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Get updateItem from store
   const updateItem = useLibraryStore(s => s.updateItem);
@@ -168,12 +185,24 @@ export function LibraryNode({
   // Get current library
   const currentLibrary = effectiveLibraryId ? libraries[effectiveLibraryId] : null;
 
+  // Debounce search input for performance (I1)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 150);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Clear selection and tag filter when library changes (C3, I6)
+  useEffect(() => {
+    setSelectedItemIds(new Set());
+    setActiveFilterTag(null);
+  }, [effectiveLibraryId, setActiveFilterTag]);
+
   // Get other (non-pinned) tags
   const otherTags = useMemo(() => {
     return allTags.filter(t => !pinnedTags.includes(t));
   }, [allTags, pinnedTags]);
 
-  // Get filtered items
+  // Get filtered items - uses debounced search for performance (I2)
   const libraryItems = useMemo(() => {
     if (!effectiveLibraryId) return [];
     let allItems = getItemsByLibrary(effectiveLibraryId);
@@ -188,9 +217,9 @@ export function LibraryNode({
       allItems = allItems.filter((item: LibraryItem) => item.tags.includes(activeFilterTag));
     }
 
-    // Filter by search
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
+    // Filter by search (using debounced value)
+    if (debouncedSearch.trim()) {
+      const query = debouncedSearch.toLowerCase();
       allItems = allItems.filter(
         (s: LibraryItem) =>
           s.fileName.toLowerCase().includes(query) ||
@@ -199,12 +228,12 @@ export function LibraryNode({
     }
 
     return allItems;
-  }, [effectiveLibraryId, getItemsByLibrary, searchQuery, items, activeFilterTag]);
+  }, [effectiveLibraryId, getItemsByLibrary, debouncedSearch, activeFilterTag]);
 
   // Handle linking a new folder
   const handleLinkFolder = useCallback(async () => {
     if (!isFileSystemAccessSupported()) {
-      alert('File System Access API not supported. Please use Chrome or Edge.');
+      toast.error('File System Access API not supported. Please use Chrome or Edge.');
       return;
     }
 
@@ -223,11 +252,13 @@ export function LibraryNode({
     }
   }, [node.id, addLibrary, scanLibrary, updateNodeData]);
 
-  // Handle item selection
+  // Handle item selection (I5: with loading state, C5: with toast errors)
   const handleSelectItem = useCallback(
     async (itemId: string) => {
       const item = items[itemId];
       if (!item) return;
+
+      setLoadingItemId(itemId);
 
       updateNodeData<LibraryNodeData>(node.id, {
         currentItemId: itemId,
@@ -245,24 +276,37 @@ export function LibraryNode({
       // Load and send buffer to connected samplers
       try {
         const file = await getSampleFile(itemId);
-        if (!file) return;
+        if (!file) {
+          toast.error('File not found - it may have been moved or deleted');
+          return;
+        }
         const ctx = getAudioContext();
-        if (!ctx) return;
+        if (!ctx) {
+          toast.error('Audio system not available');
+          return;
+        }
         const arrayBuffer = await file.arrayBuffer();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
         audioGraphManager.sendSampleBuffer(node.id, audioBuffer);
       } catch (err) {
         console.error('Failed to load item for sampler:', err);
+        toast.error('Failed to load audio file');
+      } finally {
+        setLoadingItemId(null);
       }
     },
     [node.id, items, data.itemRefs, updateNodeData]
   );
 
-  // Handle preview
+  // Handle preview (C1: track active sources, C5: toast errors, I7: proper error logging)
   const handlePreviewItem = useCallback(
     async (itemId: string) => {
       if (audioSourceRef.current) {
-        try { audioSourceRef.current.stop(); } catch { /* */ }
+        try {
+          audioSourceRef.current.stop();
+        } catch (e) {
+          if (process.env.NODE_ENV === 'development') console.warn('Stop failed:', e);
+        }
         audioSourceRef.current = null;
       }
 
@@ -278,10 +322,18 @@ export function LibraryNode({
 
       try {
         const file = await getSampleFile(itemId);
-        if (!file) { setPreviewingItemId(null); return; }
+        if (!file) {
+          setPreviewingItemId(null);
+          toast.error('File not found');
+          return;
+        }
 
         const ctx = getAudioContext();
-        if (!ctx) { setPreviewingItemId(null); return; }
+        if (!ctx) {
+          setPreviewingItemId(null);
+          toast.error('Audio system not available');
+          return;
+        }
 
         const arrayBuffer = await file.arrayBuffer();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
@@ -289,6 +341,10 @@ export function LibraryNode({
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(ctx.destination);
+
+        // Track this source for cleanup (C1)
+        activeSourcesRef.current.add(source);
+
         source.onended = () => {
           // Only clear preview state if this source's item is still the current preview
           // This prevents race conditions where a new preview starts before this one ends
@@ -296,23 +352,44 @@ export function LibraryNode({
           if (audioSourceRef.current === source) {
             audioSourceRef.current = null;
           }
+          // Remove from active sources set
+          activeSourcesRef.current.delete(source);
         };
         source.start();
         audioSourceRef.current = source;
       } catch (err) {
         console.error('Preview failed:', err);
         setPreviewingItemId(null);
+        toast.error('Preview failed - file may be corrupted');
       }
     },
     [previewingItemId]
   );
 
-  // Cleanup preview on unmount
+  // Cleanup on unmount (C1: stop all audio sources, C2: clear refs)
   useEffect(() => {
     return () => {
+      // Stop all active audio sources (C1)
+      activeSourcesRef.current.forEach(source => {
+        try {
+          source.stop();
+        } catch (e) {
+          if (process.env.NODE_ENV === 'development') console.warn('Stop failed:', e);
+        }
+      });
+      activeSourcesRef.current.clear();
+
+      // Stop current preview source
       if (audioSourceRef.current) {
-        try { audioSourceRef.current.stop(); } catch { /* */ }
+        try {
+          audioSourceRef.current.stop();
+        } catch (e) {
+          if (process.env.NODE_ENV === 'development') console.warn('Stop failed:', e);
+        }
       }
+
+      // Clear file row refs (C2)
+      fileRowRefs.current.clear();
     };
   }, []);
 
@@ -432,10 +509,9 @@ export function LibraryNode({
       if (!container) return;
 
       const rect = container.getBoundingClientRect();
-      // Get the scroll container inside for scroll offset
-      const scrollEl = container.querySelector('.library-files');
-      const scrollTop = scrollEl?.scrollTop ?? 0;
-      const scrollLeft = scrollEl?.scrollLeft ?? 0;
+      // Get scroll offset from scroll container ref (I4: replaced querySelector with ref)
+      const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+      const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0;
 
       const x = e.clientX - rect.left + scrollLeft;
       const y = e.clientY - rect.top + scrollTop;
@@ -460,9 +536,9 @@ export function LibraryNode({
 
       // Get current selection box state for calculating selection
       const rect = container.getBoundingClientRect();
-      const scrollEl = container.querySelector('.library-files');
-      const scrollTop = scrollEl?.scrollTop ?? 0;
-      const scrollLeft = scrollEl?.scrollLeft ?? 0;
+      // Use ref instead of querySelector (I4)
+      const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+      const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0;
 
       const currentX = e.clientX - rect.left + scrollLeft;
       const currentY = e.clientY - rect.top + scrollTop;
@@ -529,10 +605,9 @@ export function LibraryNode({
     if (!container) return;
 
     const rect = container.getBoundingClientRect();
-    // Get the scroll container inside for scroll offset
-    const scrollEl = container.querySelector('.library-files');
-    const scrollTop = scrollEl?.scrollTop ?? 0;
-    const scrollLeft = scrollEl?.scrollLeft ?? 0;
+    // Get scroll offset from scroll container ref (I4)
+    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+    const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0;
 
     const x = e.clientX - rect.left + scrollLeft;
     const y = e.clientY - rect.top + scrollTop;
@@ -653,10 +728,11 @@ export function LibraryNode({
     );
   };
 
-  // Render file row
+  // Render file row (I5: includes loading state)
   const renderFileRow = (item: LibraryItem) => {
     const isActive = data.currentItemId === item.id;
     const isPreviewing = previewingItemId === item.id;
+    const isLoading = loadingItemId === item.id;
     const isMissing = item.status === 'missing';
     const isTrashed = item.tags.includes('trash');
     const isEditing = editingItemId === item.id;
@@ -669,18 +745,19 @@ export function LibraryNode({
           if (el) fileRowRefs.current.set(item.id, el);
           else fileRowRefs.current.delete(item.id);
         }}
-        className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''}`}
+        className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''} ${isLoading ? 'loading' : ''}`}
         onClick={(e) => !isEditing && handleFileRowClick(item.id, e)}
         draggable={!isTrashed && !isEditing}
         onDragStart={(e) => !isTrashed && !isEditing && handleFileDragStart(e, item)}
       >
-        {/* Play/Stop button */}
+        {/* Play/Stop button or loading indicator (I5) */}
         <button
-          className={`file-preview-btn ${isPreviewing ? 'playing' : ''}`}
+          className={`file-preview-btn ${isPreviewing ? 'playing' : ''} ${isLoading ? 'loading' : ''}`}
           onClick={e => { e.stopPropagation(); handlePreviewItem(item.id); }}
-          title={isPreviewing ? 'Stop' : 'Preview'}
+          title={isLoading ? 'Loading...' : (isPreviewing ? 'Stop' : 'Preview')}
+          disabled={isLoading}
         >
-          {isPreviewing ? '■' : '▶'}
+          {isLoading ? '...' : (isPreviewing ? '■' : '▶')}
         </button>
 
         {/* File name - editable on double-click */}
@@ -911,13 +988,19 @@ export function LibraryNode({
                 className="library-files-container"
                 onMouseDownCapture={handleFilesMouseDown}
               >
-                <ScrollContainer mode="dropdown" className="library-files">
+                <ScrollContainer ref={scrollContainerRef} mode="dropdown" className="library-files">
                   {libraryItems.length === 0 ? (
                     <div className="library-no-files">
-                      {searchQuery || activeFilterTag ? 'No matching files' : 'No files found'}
+                      {(searchQuery || activeFilterTag) ? `No matching files` : 'No files found'}
                     </div>
                   ) : (
-                    libraryItems.map(renderFileRow)
+                    <>
+                      {/* Search results count (M5) */}
+                      {(debouncedSearch || activeFilterTag) && (
+                        <div className="library-results-count">{libraryItems.length} item{libraryItems.length !== 1 ? 's' : ''}</div>
+                      )}
+                      {libraryItems.map(renderFileRow)}
+                    </>
                   )}
                 </ScrollContainer>
 

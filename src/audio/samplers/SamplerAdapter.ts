@@ -354,14 +354,17 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
     voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
     voice.gainNode.gain.linearRampToValueAtTime(0, now + 0.01);
 
-    // Stop and cleanup
+    // Stop after fade
     try {
       voice.source.stop(now + 0.02);
     } catch {
       // Already stopped
     }
 
-    this.cleanupVoice(note);
+    // Schedule cleanup after stop completes (30ms > 20ms stop time)
+    this.scheduleCleanup(() => {
+      this.cleanupVoice(note);
+    }, 30);
   }
 
   /**

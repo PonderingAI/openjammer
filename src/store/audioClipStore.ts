@@ -10,21 +10,71 @@ import type { AudioClip, ClipDropTarget, Position } from '../engine/types';
 import { useLibraryStore } from './libraryStore';
 
 // ============================================================================
-// Buffer Cache for Looper-originated clips
+// Buffer Cache for Looper-originated clips (LRU implementation)
 // ============================================================================
 // Clips from loopers don't have samples in the library, so we cache their buffers here
+// Using LRU (Least Recently Used) eviction to prevent unbounded memory growth
+
+/** Maximum number of buffers to keep in cache */
+const MAX_CLIP_BUFFER_CACHE_SIZE = 50;
+
+/** Map storing buffer data - order represents LRU (most recent at end) */
 const clipBufferCache = new Map<string, AudioBuffer>();
+
+/** Track access order for LRU eviction */
+const cacheAccessOrder: string[] = [];
+
+/**
+ * Move a key to the end of the access order (marking it as most recently used)
+ */
+function markAsRecentlyUsed(sampleId: string): void {
+    const index = cacheAccessOrder.indexOf(sampleId);
+    if (index !== -1) {
+        cacheAccessOrder.splice(index, 1);
+    }
+    cacheAccessOrder.push(sampleId);
+}
+
+/**
+ * Evict least recently used entries until cache is under the limit
+ */
+function evictIfNeeded(): void {
+    while (cacheAccessOrder.length > MAX_CLIP_BUFFER_CACHE_SIZE) {
+        const lruKey = cacheAccessOrder.shift();
+        if (lruKey) {
+            clipBufferCache.delete(lruKey);
+        }
+    }
+}
 
 export function setClipBuffer(sampleId: string, buffer: AudioBuffer): void {
     clipBufferCache.set(sampleId, buffer);
+    markAsRecentlyUsed(sampleId);
+    evictIfNeeded();
 }
 
 export function getClipBuffer(sampleId: string): AudioBuffer | undefined {
-    return clipBufferCache.get(sampleId);
+    const buffer = clipBufferCache.get(sampleId);
+    if (buffer) {
+        markAsRecentlyUsed(sampleId);
+    }
+    return buffer;
 }
 
 export function removeClipBuffer(sampleId: string): void {
     clipBufferCache.delete(sampleId);
+    const index = cacheAccessOrder.indexOf(sampleId);
+    if (index !== -1) {
+        cacheAccessOrder.splice(index, 1);
+    }
+}
+
+/**
+ * Clear all cached clip buffers - called when closing project to prevent memory leaks
+ */
+export function clearClipBufferCache(): void {
+    clipBufferCache.clear();
+    cacheAccessOrder.length = 0;
 }
 
 // ============================================================================

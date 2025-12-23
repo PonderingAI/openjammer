@@ -13,6 +13,8 @@ import { INSTRUMENT_DEFINITIONS } from './InstrumentDefinitions';
 
 class InstrumentLoaderClass {
   private definitions: Map<string, InstrumentDefinition> = new Map();
+  /** Cache of preloaded instruments (fully loaded and ready to use) */
+  private preloadedInstruments: Map<string, SampledInstrument> = new Map();
 
   constructor() {
     INSTRUMENT_DEFINITIONS.forEach(def => {
@@ -100,10 +102,59 @@ class InstrumentLoaderClass {
     return instrument;
   }
 
-  // Preload an instrument (useful for UI-triggered preloading)
-  async preload(instrumentId: string): Promise<void> {
-    const instrument = this.create(instrumentId);
+  /**
+   * Preload an instrument and cache it for later use
+   * Returns cached instance if already preloaded
+   */
+  async preload(instrumentId: string): Promise<SampledInstrument> {
+    // Return cached instance if already preloaded
+    const cached = this.preloadedInstruments.get(instrumentId);
+    if (cached) {
+      return cached;
+    }
+
+    // Create and load new instance
+    const instrument = this.createNew(instrumentId);
     await instrument.load();
+
+    // Cache the loaded instrument
+    this.preloadedInstruments.set(instrumentId, instrument);
+    return instrument;
+  }
+
+  /**
+   * Check if an instrument is preloaded and ready
+   */
+  isPreloaded(instrumentId: string): boolean {
+    return this.preloadedInstruments.has(instrumentId);
+  }
+
+  /**
+   * Get a preloaded instrument (returns undefined if not preloaded)
+   */
+  getPreloaded(instrumentId: string): SampledInstrument | undefined {
+    return this.preloadedInstruments.get(instrumentId);
+  }
+
+  /**
+   * Evict a specific instrument from the preload cache
+   */
+  evictPreload(instrumentId: string): void {
+    const instrument = this.preloadedInstruments.get(instrumentId);
+    if (instrument) {
+      instrument.disconnect();
+      this.preloadedInstruments.delete(instrumentId);
+    }
+  }
+
+  /**
+   * Clear all preloaded instruments from the cache
+   */
+  clearPreloadCache(): void {
+    for (const instrument of this.preloadedInstruments.values()) {
+      instrument.disconnect();
+    }
+    this.preloadedInstruments.clear();
   }
 }
 

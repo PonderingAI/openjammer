@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
@@ -15,6 +15,7 @@ import { useAudioStore } from './store/audioStore';
 import { useGraphStore } from './store/graphStore';
 import { useProjectStore } from './store/projectStore';
 import { useCanvasStore } from './store/canvasStore';
+import { useKeybindingsStore } from './store/keybindingsStore';
 import { applyTheme, getSavedThemeId, getThemeById } from './styles/themes';
 import './styles/global.css';
 
@@ -97,7 +98,8 @@ function App() {
   const saveProject = useProjectStore((s) => s.saveProject);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastVersionRef = useRef<number>(useGraphStore.getState().version);
+  // Initialize to null to defer initialization until after hydration (inside useEffect)
+  const lastVersionRef = useRef<number | null>(null);
   const isSavingRef = useRef(false);
 
   // Autosave when graph changes (debounced) - using version counter for efficient change detection
@@ -105,8 +107,10 @@ function App() {
     // Only autosave if a project is open
     if (!projectName || !projectHandleKey) return;
 
-    // Initialize version ref with current state
-    lastVersionRef.current = useGraphStore.getState().version;
+    // Initialize version ref with current state (after hydration is complete)
+    if (lastVersionRef.current === null) {
+      lastVersionRef.current = useGraphStore.getState().version;
+    }
 
     // Subscribe to graph changes
     const unsubscribe = useGraphStore.subscribe((state) => {
@@ -257,6 +261,51 @@ function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [projectName, projectHandleKey]);
+
+  // Global keyboard shortcut for save (Ctrl+S / Cmd+S)
+  useEffect(() => {
+    const { matchesAction } = useKeybindingsStore.getState();
+
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Skip if typing in input
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
+      // Handle Ctrl+S / Cmd+S - Save project
+      if (matchesAction(e, 'file.save')) {
+        e.preventDefault();
+
+        // Only save if a project is open
+        if (!projectName || !projectHandleKey) {
+          // Dispatch event to trigger new project creation in Toolbar
+          window.dispatchEvent(new CustomEvent('openjammer:new-project'));
+          return;
+        }
+
+        // Check if already saving
+        if (useProjectStore.getState().isSaving) return;
+
+        try {
+          const graphData = {
+            nodes: Array.from(useGraphStore.getState().nodes.values()),
+            edges: Array.from(useGraphStore.getState().connections.values()),
+            viewport: {
+              x: useCanvasStore.getState().pan.x,
+              y: useCanvasStore.getState().pan.y,
+              zoom: useCanvasStore.getState().zoom,
+            },
+          };
+          await saveProject(graphData);
+          toast.success('Project saved');
+        } catch (err) {
+          console.error('[Save] Failed:', err);
+          toast.error(`Failed to save project: ${(err as Error).message}`);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [projectName, projectHandleKey, saveProject]);
 
   // Initialize audio context on user gesture
   const handleActivate = useCallback(async () => {

@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import type { SampleMetadata } from '../utils/audioMetadata';
 import {
@@ -58,6 +58,13 @@ export interface LibraryItem extends SampleMetadata {
 // Storage prefixes for IndexedDB keys
 const WAVEFORM_PREFIX = 'openjammer-waveform-';
 const ITEM_HANDLE_PREFIX = 'openjammer-sample-handle-';
+
+// Helper for logging IndexedDB errors in development (I10)
+function logIdbError(operation: string, error: unknown): void {
+  if (process.env.NODE_ENV === 'development') {
+    console.warn(`[Library] IndexedDB ${operation} failed:`, error);
+  }
+}
 
 async function storeWaveform(itemId: string, peaks: Float32Array): Promise<void> {
   await idbSet(WAVEFORM_PREFIX + itemId, peaksToBase64(peaks));
@@ -243,18 +250,18 @@ export const useLibraryStore = create<LibraryStore>()(
         if (!library) return;
 
         // Remove library handle (ignore errors - handle may already be removed)
-        await removeHandle(library.handleKey).catch(() => {});
+        await removeHandle(library.handleKey).catch(e => logIdbError('removeHandle', e));
 
         // Get items to remove
         const itemsToRemove = Object.values(get().items)
           .filter(s => s.libraryId === libraryId);
 
-        // Remove waveforms and item handles - batch with error handling
+        // Remove waveforms and item handles - batch with error handling (I10)
         // Continue even if some deletions fail to avoid orphaned state
         await Promise.all(
           itemsToRemove.flatMap(item => [
-            idbDel(WAVEFORM_PREFIX + item.id).catch(() => {}),
-            ...(item.handleKey ? [idbDel(item.handleKey).catch(() => {})] : []),
+            idbDel(WAVEFORM_PREFIX + item.id).catch(e => logIdbError('deleteWaveform', e)),
+            ...(item.handleKey ? [idbDel(item.handleKey).catch(e => logIdbError('deleteHandle', e))] : []),
           ])
         );
 
@@ -450,9 +457,10 @@ export const useLibraryStore = create<LibraryStore>()(
         } catch (error) {
           console.error('Scan failed:', error);
 
+          // Cleanup written data on error (I10: with error logging)
           await Promise.all([
-            ...writtenHandleKeys.map(k => idbDel(k).catch(() => {})),
-            ...writtenWaveformIds.map(id => idbDel(WAVEFORM_PREFIX + id).catch(() => {})),
+            ...writtenHandleKeys.map(k => idbDel(k).catch(e => logIdbError('cleanupHandle', e))),
+            ...writtenWaveformIds.map(id => idbDel(WAVEFORM_PREFIX + id).catch(e => logIdbError('cleanupWaveform', e))),
           ]);
 
           set(state => ({
@@ -1118,7 +1126,37 @@ export const useLibraryStore = create<LibraryStore>()(
     }),
     {
       name: 'openjammer-library',
-      storage: createJSONStorage(() => localStorage),
+      // Custom storage with error handling for quota exceeded (I8)
+      storage: {
+        getItem: (name: string) => {
+          try {
+            const value = localStorage.getItem(name);
+            return value ? JSON.parse(value) : null;
+          } catch (e) {
+            console.error('[Library] Storage read failed:', e);
+            return null;
+          }
+        },
+        setItem: (name: string, value: unknown) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (e) {
+            if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+              console.error('[Library] Storage quota exceeded - library data may not persist');
+              // Note: toast is not available here, but console error is logged
+            } else {
+              console.error('[Library] Storage write failed:', e);
+            }
+          }
+        },
+        removeItem: (name: string) => {
+          try {
+            localStorage.removeItem(name);
+          } catch (e) {
+            console.error('[Library] Storage remove failed:', e);
+          }
+        },
+      },
       partialize: state => ({
         libraries: state.libraries,
         items: state.items,

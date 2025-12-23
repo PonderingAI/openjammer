@@ -19,6 +19,8 @@ import {
   isFileSystemAccessSupported,
 } from '../utils/fileSystemAccess';
 import { useLibraryStore } from './libraryStore';
+import { useGraphStore } from './graphStore';
+import { useAudioClipStore, clearClipBufferCache } from './audioClipStore';
 
 // ============================================================================
 // Types
@@ -118,7 +120,7 @@ function isPathSafe(path: string): boolean {
     try {
       let prev = '';
       let iterations = 0;
-      while (decoded !== prev && iterations < 5) {
+      while (decoded !== prev && iterations < 10) {
         prev = decoded;
         decoded = decodeURIComponent(decoded);
         iterations++;
@@ -195,7 +197,8 @@ function validateViewport(viewport?: { x: number; y: number; zoom: number }): { 
   }
 
   // Validate zoom (must be positive and within reasonable bounds)
-  if (!isFinite(zoom) || zoom <= 0 || zoom > 10) {
+  // Bounds: 0.1x (10%) to 5.0x (500%) - beyond this causes rendering performance issues
+  if (!isFinite(zoom) || zoom < 0.1 || zoom > 5.0) {
     console.warn('[ProjectStore] Invalid viewport zoom value, using default:', zoom);
     zoom = DEFAULT_VIEWPORT.zoom;
     hasWarning = true;
@@ -206,6 +209,59 @@ function validateViewport(viewport?: { x: number; y: number; zoom: number }): { 
   }
 
   return { x, y, zoom };
+}
+
+// Graph data limits to prevent DoS and corruption
+const MAX_GRAPH_NODES = 10000;
+const MAX_GRAPH_EDGES = 50000;
+
+/**
+ * Validate graph data structure to prevent corruption, DoS, and injection attacks.
+ * Checks array types, size limits, and basic object structure.
+ */
+function validateGraphData(graphData: {
+  nodes: unknown[];
+  edges: unknown[];
+}): { nodes: unknown[]; edges: unknown[] } {
+  // Validate nodes is an array
+  if (!Array.isArray(graphData.nodes)) {
+    throw new Error('Invalid graph: nodes must be an array');
+  }
+
+  // Validate edges is an array
+  if (!Array.isArray(graphData.edges)) {
+    throw new Error('Invalid graph: edges must be an array');
+  }
+
+  // Size limits to prevent DoS
+  if (graphData.nodes.length > MAX_GRAPH_NODES) {
+    throw new Error(`Invalid graph: nodes count (${graphData.nodes.length}) exceeds maximum (${MAX_GRAPH_NODES})`);
+  }
+
+  if (graphData.edges.length > MAX_GRAPH_EDGES) {
+    throw new Error(`Invalid graph: edges count (${graphData.edges.length}) exceeds maximum (${MAX_GRAPH_EDGES})`);
+  }
+
+  // Validate each node is a plain object
+  for (let i = 0; i < graphData.nodes.length; i++) {
+    const node = graphData.nodes[i];
+    if (typeof node !== 'object' || node === null) {
+      throw new Error(`Invalid graph: node ${i} is not an object`);
+    }
+  }
+
+  // Validate each edge is a plain object
+  for (let i = 0; i < graphData.edges.length; i++) {
+    const edge = graphData.edges[i];
+    if (typeof edge !== 'object' || edge === null) {
+      throw new Error(`Invalid graph: edge ${i} is not an object`);
+    }
+  }
+
+  return {
+    nodes: graphData.nodes,
+    edges: graphData.edges
+  };
 }
 
 // ============================================================================
@@ -253,9 +309,18 @@ async function createProjectStructure(
   handle: FileSystemDirectoryHandle,
   name: string
 ): Promise<ProjectManifest> {
-  // Create folder structure - simplified to single library folder
-  await handle.getDirectoryHandle('library', { create: true });
-  await handle.getDirectoryHandle('presets', { create: true });
+  // Create folder structure with error handling
+  try {
+    await handle.getDirectoryHandle('library', { create: true });
+  } catch (err) {
+    throw new Error(`Failed to create library folder: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  try {
+    await handle.getDirectoryHandle('presets', { create: true });
+  } catch (err) {
+    throw new Error(`Failed to create presets folder: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
 
   // Create manifest
   const manifest: ProjectManifest = {
@@ -280,16 +345,26 @@ async function createProjectStructure(
     },
   };
 
-  // Write project file
+  // Write project file with error handling
   const projectFile = await handle.getFileHandle(PROJECT_FILE_NAME, { create: true });
   const writable = await projectFile.createWritable();
-  await writable.write(JSON.stringify(manifest, null, 2));
-  await writable.close();
+  try {
+    await writable.write(JSON.stringify(manifest, null, 2));
+    await writable.close();
+  } catch (err) {
+    // Abort the writable stream on error to prevent corruption
+    await writable.abort().catch((abortErr) => {
+      console.error('[ProjectStore] Failed to abort writable during project creation:', abortErr);
+    });
+    throw new Error(`Failed to write project file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
 
-  // Create README
-  const readme = await handle.getFileHandle('README.txt', { create: true });
-  const readmeWritable = await readme.createWritable();
-  await readmeWritable.write(`OpenJammer Project: ${name}
+  // Create README with error handling (non-fatal - project still valid without README)
+  try {
+    const readme = await handle.getFileHandle('README.txt', { create: true });
+    const readmeWritable = await readme.createWritable();
+    try {
+      await readmeWritable.write(`OpenJammer Project: ${name}
 Created: ${new Date().toLocaleDateString()}
 
 This folder contains:
@@ -300,7 +375,16 @@ This folder contains:
 Open this folder in OpenJammer to continue working on your project.
 https://github.com/PonderingBGI/openjammer
 `);
-  await readmeWritable.close();
+      await readmeWritable.close();
+    } catch (err) {
+      await readmeWritable.abort().catch(() => {});
+      console.warn('[ProjectStore] Failed to write README file:', err);
+      // Don't throw - README failure shouldn't fail project creation
+    }
+  } catch (err) {
+    console.warn('[ProjectStore] Failed to create README file:', err);
+    // Don't throw - README failure shouldn't fail project creation
+  }
 
   return manifest;
 }
@@ -362,7 +446,8 @@ async function loadRecentProjectsFromStorage(): Promise<RecentProject[]> {
   try {
     const projects = await idbGet<RecentProject[]>(RECENT_PROJECTS_KEY);
     return projects || [];
-  } catch {
+  } catch (err) {
+    console.warn('[ProjectStore] Failed to load recent projects from storage:', err);
     return [];
   }
 }
@@ -637,11 +722,12 @@ export const useProjectStore = create<ProjectState>()(
           // Read current manifest
           const manifest = await readProjectManifest(handle);
 
-          // Update with new data, validating viewport to prevent corrupted values
+          // Update with new data, validating graph and viewport to prevent corrupted values
           manifest.modified = new Date().toISOString();
+          const validatedGraph = validateGraphData(graphData);
           manifest.graph = {
-            nodes: graphData.nodes,
-            edges: graphData.edges,
+            nodes: validatedGraph.nodes,
+            edges: validatedGraph.edges,
             viewport: validateViewport(graphData.viewport)
           };
 
@@ -667,6 +753,17 @@ export const useProjectStore = create<ProjectState>()(
         if (name) {
           useLibraryStore.getState().removeProjectLibrary(name);
         }
+
+        // Clear graph state to prevent stale data in the next project
+        const graphStore = useGraphStore.getState();
+        graphStore.clearGraph();
+        graphStore.clearSelection();
+
+        // Clear audio clip state
+        useAudioClipStore.getState().clearAllClips();
+
+        // Clear clip buffer cache to free memory
+        clearClipBufferCache();
 
         set({
           name: null,

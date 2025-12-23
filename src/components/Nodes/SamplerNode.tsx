@@ -33,9 +33,8 @@ interface SamplerNodeProps {
     style?: React.CSSProperties;
 }
 
-function isSamplerNodeData(data: unknown): data is SamplerNodeData {
-    return typeof data === 'object' && data !== null;
-}
+// Type guard imported from shared module
+import { isSamplerNodeData } from '../../engine/typeGuards';
 
 export const SamplerNode = memo(function SamplerNode({
     node,

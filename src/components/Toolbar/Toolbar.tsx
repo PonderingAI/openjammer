@@ -40,6 +40,7 @@ export function Toolbar() {
     const projectName = useProjectStore((s) => s.name);
     const projectIsSupported = useProjectStore((s) => s.isSupported);
     const recentProjects = useProjectStore((s) => s.recentProjects);
+    const isSaving = useProjectStore((s) => s.isSaving);
     const createProject = useProjectStore((s) => s.createProject);
     const openProject = useProjectStore((s) => s.openProject);
     const openRecentProject = useProjectStore((s) => s.openRecentProject);
@@ -66,8 +67,14 @@ export function Toolbar() {
 
     // Export workflow
     const handleExport = useCallback(() => {
-        const workflow = exportWorkflow(nodes, connections, 'OpenJammer Workflow');
-        downloadWorkflow(workflow);
+        try {
+            const workflow = exportWorkflow(nodes, connections, 'OpenJammer Workflow');
+            downloadWorkflow(workflow);
+            toast.success('Workflow exported');
+        } catch (err) {
+            console.error('Failed to export workflow:', err);
+            toast.error(`Failed to export workflow: ${(err as Error).message}`);
+        }
     }, [nodes, connections]);
 
     // Import workflow
@@ -178,6 +185,7 @@ export function Toolbar() {
                 viewport: { x: 0, y: 0, zoom },
             };
             await saveProject(graphData);
+            toast.success('Project saved');
         } catch (err) {
             console.error('Failed to save project:', err);
             toast.error(`Failed to save project: ${(err as Error).message}`);
@@ -250,8 +258,9 @@ export function Toolbar() {
             ...(projectName ? [
                 {
                     id: 'save-project',
-                    label: 'Save Project',
+                    label: isSaving ? 'Saving...' : 'Save Project',
                     shortcut: `${cmdKey}+S`,
+                    disabled: isSaving,
                     onClick: handleSaveProject,
                 },
                 {

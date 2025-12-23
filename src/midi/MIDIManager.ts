@@ -311,6 +311,9 @@ class MIDIManager {
 
     this.isInitialized = false;
     this.access = null;
+
+    // Reset singleton so next getMIDIManager() creates a fresh instance
+    MIDIManager.instance = null;
   }
 }
 

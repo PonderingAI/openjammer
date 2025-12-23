@@ -55,11 +55,9 @@ export function MIDINode({
 }: MIDINodeProps) {
     const data = node.data as MIDIInputNodeData;
 
-    // MIDI store state
+    // MIDI store state (initialization is handled by MIDIIntegration component)
     const isSupported = useMIDIStore((s) => s.isSupported);
-    const isInitialized = useMIDIStore((s) => s.isInitialized);
     const inputs = useMIDIStore((s) => s.inputs);
-    const initialize = useMIDIStore((s) => s.initialize);
     const openBrowser = useMIDIStore((s) => s.openBrowser);
     const renameDevice = useMIDIStore((s) => s.renameDevice);
 
@@ -80,24 +78,25 @@ export function MIDINode({
     const displayName = data.deviceSignature?.deviceName ?? presetName;
 
     // Get connected device info
+    // Safety check: require both deviceId AND isConnected to be true, plus actual device state
     const connectedDevice = data.deviceId ? inputs.get(data.deviceId) : null;
-    const isConnected = data.isConnected && connectedDevice?.state === 'connected';
+    const isConnected = data.isConnected && data.deviceId && connectedDevice?.state === 'connected';
 
-    // Initialize MIDI on mount
-    useEffect(() => {
-        if (isSupported && !isInitialized) {
-            initialize();
-        }
-    }, [isSupported, isInitialized, initialize]);
+    // Track last propagated deviceId to re-propagate when it changes
+    // This fixes the bug where deviceId set after mount never gets propagated
+    const lastPropagatedDeviceId = useRef<string | null>(null);
 
-    // Track if we've propagated the deviceId on mount
-    const hasPropagedOnMount = useRef(false);
-
-    // Re-propagate deviceId to children on mount (handles page reload case)
+    // Re-propagate deviceId to children when it changes (handles page reload and device connect cases)
     // This ensures internal midi-visual nodes get the deviceId even if it wasn't saved
     useEffect(() => {
-        if (hasPropagedOnMount.current) return;
-        if (!data.deviceId || !node.childIds.length) return;
+        // Skip if no children to propagate to
+        if (!node.childIds.length) return;
+
+        // Skip if no deviceId (half-connected state - nothing to propagate yet)
+        if (!data.deviceId) return;
+
+        // Skip if we already propagated this deviceId
+        if (lastPropagatedDeviceId.current === data.deviceId) return;
 
         // Trigger updateNodeData to propagate deviceId to children
         const updateNodeData = useGraphStore.getState().updateNodeData;
@@ -105,7 +104,7 @@ export function MIDINode({
             deviceId: data.deviceId,
             presetId: data.presetId
         });
-        hasPropagedOnMount.current = true;
+        lastPropagatedDeviceId.current = data.deviceId;
     }, [node.id, node.childIds.length, data.deviceId, data.presetId]);
 
     // Handle clicking connect button to open browser

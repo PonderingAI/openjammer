@@ -12,7 +12,7 @@ interface NoteHandle {
   stopTimeout?: number;
 }
 
-export class SmplrInstrument extends SampledInstrument {
+export class SmplrInstrument extends SampledInstrument<boolean> {
   private sampler: Versilian | null = null;
   private instrumentName: VersilianInstrumentName;
   private noteHandles: Map<string, NoteHandle> = new Map();

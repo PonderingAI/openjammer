@@ -34,9 +34,8 @@ function midiToNote(midi: number): string {
     return `${note}${octave}`;
 }
 
-function isSamplerNodeData(data: unknown): data is SamplerNodeData {
-    return typeof data === 'object' && data !== null;
-}
+// Type guard imported from shared module
+import { isSamplerNodeData } from '../../engine/typeGuards';
 
 export const SamplerVisualNode = memo(function SamplerVisualNode({
     node,

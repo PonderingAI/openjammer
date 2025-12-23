@@ -73,7 +73,7 @@ interface WebAudioFontConfig {
   envelope?: EnvelopeConfig;
 }
 
-export class WebAudioFontInstrument extends SampledInstrument {
+export class WebAudioFontInstrument extends SampledInstrument<boolean> {
   private player: WebAudioFontPlayer | null = null;
   private preset: unknown = null;
   private config: WebAudioFontConfig;

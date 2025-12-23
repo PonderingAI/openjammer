@@ -11,7 +11,7 @@ interface ContextMenuProps {
     position: Position;
     onClose: () => void;
     onAddNode: (type: NodeType, position: Position) => void;
-    onOpenMIDIBrowser?: (position: Position) => void;
+    onOpenMIDIBrowser?: () => void;
 }
 
 export function ContextMenu({ position, onClose, onAddNode, onOpenMIDIBrowser }: ContextMenuProps) {
@@ -58,7 +58,7 @@ export function ContextMenu({ position, onClose, onAddNode, onOpenMIDIBrowser }:
     const handleAddNode = (type: NodeType) => {
         // For MIDI, open the device browser instead of creating node directly
         if (type === 'midi' && onOpenMIDIBrowser) {
-            onOpenMIDIBrowser(position);
+            onOpenMIDIBrowser();
             onClose();
             return;
         }

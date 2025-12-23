@@ -8,8 +8,9 @@
  * - Pedal section at bottom
  */
 
-import { useState, useCallback, useRef, memo } from 'react';
-import type { GraphNode, InstrumentRow, InstrumentNodeData } from '../../engine/types';
+import { useState, useCallback, useRef, memo, useEffect } from 'react';
+import type { GraphNode, InstrumentRow } from '../../engine/types';
+import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
 import './InstrumentVisualNode.css';
 
@@ -21,27 +22,8 @@ const PRECISION_FACTOR = 100;
 
 const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-/**
- * Type guard to validate InstrumentNodeData structure
- */
-function isValidInstrumentData(data: unknown): data is InstrumentNodeData {
-    if (typeof data !== 'object' || data === null) return false;
-    const d = data as Record<string, unknown>;
-    // Must have rows array (new system) or offsets object (legacy)
-    if ('rows' in d && Array.isArray(d.rows)) {
-        // Validate rows structure
-        return d.rows.every((row: unknown) =>
-            typeof row === 'object' && row !== null &&
-            'rowId' in (row as Record<string, unknown>) &&
-            'portCount' in (row as Record<string, unknown>)
-        );
-    }
-    if ('offsets' in d && typeof d.offsets === 'object') {
-        return true;
-    }
-    // Empty data is valid (no rows yet)
-    return true;
-}
+// Alias for the shared type guard
+const isValidInstrumentData = isBasicInstrumentNodeData;
 
 interface InstrumentVisualNodeProps {
     node: GraphNode;
@@ -84,24 +66,34 @@ const EditableValue = memo(function EditableValue({
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
     const lastWheelTime = useRef(0);
+    const spanRef = useRef<HTMLSpanElement>(null);
 
     const display = displayFn ? displayFn(value) : String(value);
 
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-        if (disabled) return;
-        e.stopPropagation();
-        e.preventDefault();
+    // Use native wheel listener with { passive: false } to allow preventDefault
+    useEffect(() => {
+        const element = spanRef.current;
+        if (!element) return;
 
-        // Debounce rapid wheel events
-        const now = Date.now();
-        if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
-        lastWheelTime.current = now;
+        const handleWheel = (e: WheelEvent) => {
+            if (disabled) return;
+            e.stopPropagation();
+            e.preventDefault();
 
-        const delta = e.deltaY > 0 ? -step : step;
-        const newVal = Math.max(min, Math.min(max, value + delta));
-        // Round to avoid floating point issues (2 decimal places)
-        const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
-        if (rounded !== value) onChange(rounded);
+            // Debounce rapid wheel events
+            const now = Date.now();
+            if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
+            lastWheelTime.current = now;
+
+            const delta = e.deltaY > 0 ? -step : step;
+            const newVal = Math.max(min, Math.min(max, value + delta));
+            // Round to avoid floating point issues (2 decimal places)
+            const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
+            if (rounded !== value) onChange(rounded);
+        };
+
+        element.addEventListener('wheel', handleWheel, { passive: false });
+        return () => element.removeEventListener('wheel', handleWheel);
     }, [value, onChange, min, max, step, disabled]);
 
     const startEdit = useCallback(() => {
@@ -131,8 +123,8 @@ const EditableValue = memo(function EditableValue({
 
     return (
         <span
+            ref={spanRef}
             className="editable-value"
-            onWheel={handleWheel}
             onClick={() => !editing && startEdit()}
             title={`Scroll or click to edit ${label}`}
         >

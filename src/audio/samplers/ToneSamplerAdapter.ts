@@ -37,7 +37,7 @@ async function ensureToneContext(ctx: AudioContext): Promise<void> {
   }
 }
 
-export class ToneSamplerInstrument extends SampledInstrument {
+export class ToneSamplerInstrument extends SampledInstrument<boolean> {
   private sampler: Tone.Sampler | null = null;
   private config: ToneSamplerConfig;
 
@@ -57,6 +57,15 @@ export class ToneSamplerInstrument extends SampledInstrument {
     return new Promise((resolve, reject) => {
       try {
         let loadResolved = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        // Cleanup function to clear timeout and prevent leaks
+        const cleanup = () => {
+          if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+        };
 
         this.sampler = new Tone.Sampler({
           urls: this.config.urls,
@@ -65,6 +74,7 @@ export class ToneSamplerInstrument extends SampledInstrument {
           onload: () => {
             if (loadResolved) return;
             loadResolved = true;
+            cleanup();
 
             // Connect to our output node using Tone.connect() for native nodes
             if (this.outputNode && this.sampler) {
@@ -76,14 +86,16 @@ export class ToneSamplerInstrument extends SampledInstrument {
           onerror: (err) => {
             if (loadResolved) return;
             loadResolved = true;
+            cleanup();
             reject(err);
           }
         });
 
         // Add timeout to prevent hanging forever
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           if (!loadResolved) {
             loadResolved = true;
+            timeoutId = null; // Already fired, no need to clear
             reject(new Error('Sampler loading timeout (30s)'));
           }
         }, 30000);
