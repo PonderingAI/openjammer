@@ -78,18 +78,15 @@ class MIDIPresetRegistry {
   /**
    * Check if a device should use a specific port
    * (Some devices like MiniLab 3 have multiple ports, we only want the main one)
+   *
+   * Logic: Only reject ports that match ignorePorts patterns.
+   * This is more lenient than requiring an exact preferredPort match,
+   * since device names can vary across OSes and drivers.
    */
   shouldUsePort(deviceName: string, preset: MIDIDevicePreset): boolean {
-    // If no preferred port specified, use all ports
-    if (!preset.preferredPort) return true;
-
-    // Check if device name matches preferred port pattern
     const normalizedName = deviceName.toLowerCase();
-    if (normalizedName.includes(preset.preferredPort.toLowerCase())) {
-      return true;
-    }
 
-    // Check if port should be ignored
+    // Check if port should be ignored (MCU, DIN, ALV, etc.)
     if (preset.ignorePorts) {
       for (const ignorePattern of preset.ignorePorts) {
         if (normalizedName.includes(ignorePattern.toLowerCase())) {
@@ -98,9 +95,8 @@ class MIDIPresetRegistry {
       }
     }
 
-    // If preferredPort is specified but device name doesn't match, reject
-    // This ensures multi-port devices only use the intended port
-    return false;
+    // If not explicitly ignored, allow the port
+    return true;
   }
 
   /**

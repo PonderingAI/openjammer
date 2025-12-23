@@ -10,12 +10,12 @@
  * - Opening the MIDI device browser
  */
 
-import { useEffect, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useMIDIStore } from '../../store/midiStore';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
-import { MIDIAutoDetectToast } from './MIDIAutoDetectToast';
+import { useMIDIConnectionToast } from './useMIDIConnectionToast';
 import { MIDIDeviceBrowser } from './MIDIDeviceBrowser';
 import { getPresetRegistry } from '../../midi';
 import type { NodeType, MIDIInputNodeData, MIDIDeviceSignature } from '../../engine/types';
@@ -57,8 +57,7 @@ export function MIDIIntegration() {
     const isSupported = useMIDIStore((s) => s.isSupported);
     const isInitialized = useMIDIStore((s) => s.isInitialized);
     const initialize = useMIDIStore((s) => s.initialize);
-    const pendingDevice = useMIDIStore((s) => s.pendingDevice);
-    const dismissPendingDevice = useMIDIStore((s) => s.dismissPendingDevice);
+    const pendingDevices = useMIDIStore((s) => s.pendingDevices);
     const browserTargetNodeId = useMIDIStore((s) => s.browserTargetNodeId);
     const inputs = useMIDIStore((s) => s.inputs);
     const generateDeviceName = useMIDIStore((s) => s.generateDeviceName);
@@ -154,16 +153,20 @@ export function MIDIIntegration() {
         return null;
     }, [nodes]);
 
-    // Check if pending device already has a node
-    const pendingDeviceHasNode = useMemo(() => {
-        if (!pendingDevice) return false;
-        return deviceHasNode(pendingDevice.id);
-    }, [pendingDevice, deviceHasNode]);
+    // Check if any pending device already has a node - auto-dismiss handled in hook
+    // Filter out devices that already have nodes by dismissing them
+    useEffect(() => {
+        pendingDevices.forEach((_, deviceId) => {
+            if (deviceHasNode(deviceId)) {
+                useMIDIStore.getState().dismissPendingDevice(deviceId);
+            }
+        });
+    }, [pendingDevices, deviceHasNode]);
 
     // Lock to prevent duplicate node creation from rapid clicks
     const isCreatingNodeRef = useRef(false);
 
-    // Handle adding a device from the auto-detect toast
+    // Handle adding a device from the auto-detect toast or browser
     // Returns true if node was created, false if duplicate was detected
     const handleAddDevice = useCallback((deviceId: string, presetId: string): boolean => {
         // Prevent rapid double-clicks
@@ -173,7 +176,6 @@ export function MIDIIntegration() {
         const existingByDeviceId = findNodeByDeviceId(deviceId);
         if (existingByDeviceId) {
             useUIFeedbackStore.getState().flashNode(existingByDeviceId);
-            dismissPendingDevice();
             return false;
         }
 
@@ -189,7 +191,6 @@ export function MIDIIntegration() {
         const existingBySignature = findNodeBySignature(presetId, deviceName);
         if (existingBySignature) {
             useUIFeedbackStore.getState().flashNode(existingBySignature);
-            dismissPendingDevice();
             return false;
         }
 
@@ -220,7 +221,7 @@ export function MIDIIntegration() {
         } finally {
             isCreatingNodeRef.current = false;
         }
-    }, [addNode, generateDeviceName, findNodeBySignature, findNodeByDeviceId, dismissPendingDevice]);
+    }, [addNode, generateDeviceName, findNodeBySignature, findNodeByDeviceId]);
 
     // Handle selecting a device from the browser
     // Returns true if node was created/updated, false if duplicate was detected
@@ -302,20 +303,11 @@ export function MIDIIntegration() {
         }
     }, [browserTargetNodeId, addNode, updateNodeData, generateDeviceName, findNodeBySignature, findNodeByDeviceId]);
 
-    // Auto-dismiss pending device if it already has a node
-    useEffect(() => {
-        if (pendingDeviceHasNode) {
-            dismissPendingDevice();
-        }
-    }, [pendingDeviceHasNode, dismissPendingDevice]);
+    // Use the MIDI connection toast hook to show Sonner toasts
+    useMIDIConnectionToast(handleAddDevice);
 
     return (
         <>
-            {/* Auto-detect toast - only show if device doesn't already have a node */}
-            {!pendingDeviceHasNode && (
-                <MIDIAutoDetectToast onAddDevice={handleAddDevice} />
-            )}
-
             {/* MIDI Device Browser */}
             <MIDIDeviceBrowser onSelectDevice={handleSelectDevice} />
         </>

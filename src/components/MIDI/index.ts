@@ -4,5 +4,6 @@
 
 export { MIDIDeviceBrowser } from './MIDIDeviceBrowser';
 export { MIDIDeviceCard } from './MIDIDeviceCard';
-export { MIDIAutoDetectToast } from './MIDIAutoDetectToast';
+export { MIDIConnectionToast } from './MIDIConnectionToast';
+export { useMIDIConnectionToast } from './useMIDIConnectionToast';
 export { MIDIIntegration } from './MIDIIntegration';

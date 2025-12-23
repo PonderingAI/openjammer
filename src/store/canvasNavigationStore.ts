@@ -138,8 +138,16 @@ export const useCanvasNavigationStore = create<CanvasNavigationState>((set, get)
         // Get current node
         const currentNode = graphStore.nodes.get(state.currentViewNodeId);
         if (!currentNode) {
-            // Node not found - reset to root
-            get().exitToRoot();
+            // Node not found (deleted?) - gracefully reset to root without calling exitToRoot
+            // (which would try to save viewport to the missing node)
+            console.warn('exitToParent: current node not found, resetting to root');
+            graphStore.clearSelection();
+            set({ currentViewNodeId: null });
+            // Restore root viewport if available
+            if (state.rootViewState) {
+                canvasStore.setPan(state.rootViewState.pan);
+                canvasStore.setZoom(state.rootViewState.zoom);
+            }
             return;
         }
 

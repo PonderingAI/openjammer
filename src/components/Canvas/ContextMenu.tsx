@@ -63,7 +63,11 @@ export function ContextMenu({ position, onClose, onAddNode, onOpenMIDIBrowser }:
             return;
         }
         onAddNode(type, position);
-        onClose();
+        // Use requestAnimationFrame to ensure menu closes after React finishes updating
+        // This prevents timing issues where state updates could interfere with close
+        requestAnimationFrame(() => {
+            onClose();
+        });
     };
 
     const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {

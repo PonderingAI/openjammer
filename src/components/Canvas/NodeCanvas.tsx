@@ -509,6 +509,64 @@ export function NodeCanvas() {
             // Skip if typing in input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
+            // ESC Key - Unified escape behavior (works in all modes)
+            if (e.key === 'Escape') {
+                e.preventDefault();
+
+                // Priority 1: Close MIDI browser
+                if (useMIDIStore.getState().isBrowserOpen) {
+                    useMIDIStore.getState().closeBrowser();
+                    return;
+                }
+
+                // Priority 2: Close waveform editor
+                if (useAudioClipStore.getState().editingClipId) {
+                    useAudioClipStore.getState().closeEditor();
+                    return;
+                }
+
+                // Priority 3: Close context menu
+                if (contextMenu) {
+                    setContextMenu(null);
+                    return;
+                }
+
+                // Priority 4: Cancel box selection
+                if (selectionBox) {
+                    setSelectionBox(null);
+                    return;
+                }
+
+                // Priority 5: Cancel connection in progress
+                if (useCanvasStore.getState().isConnecting) {
+                    stopConnecting();
+                    return;
+                }
+
+                // Priority 6: Clear clip selection
+                const clipStore = useAudioClipStore.getState();
+                if (clipStore.selectedClipIds.size > 0) {
+                    clipStore.clearClipSelection();
+                    return;
+                }
+
+                // Priority 7: Clear node/connection selection
+                const graphState = useGraphStore.getState();
+                if (graphState.selectedNodeIds.size > 0 || graphState.selectedConnectionIds.size > 0) {
+                    clearSelection();
+                    return;
+                }
+
+                // Priority 8: Exit current node level (like Q key)
+                if (currentViewNodeId !== null) {
+                    exitToParent();
+                    return;
+                }
+
+                // At root with nothing to escape - silently do nothing
+                return;
+            }
+
             // Get current mode from audio store
             const currentMode = useAudioStore.getState().currentMode;
 
@@ -533,11 +591,12 @@ export function NodeCanvas() {
             if (currentMode === 1) {
                 // Q key - Go back up one level in hierarchical canvas (only in mode 1)
                 if (e.key === 'q' || e.key === 'Q') {
+                    e.preventDefault();  // Always prevent default for consistency
                     if (currentViewNodeId !== null) {
-                        e.preventDefault();
                         exitToParent();
-                        return;
                     }
+                    // At root level, Q silently does nothing (consistent with navigation being unavailable)
+                    return;
                 }
 
                 if (matchesAction(e, 'view.ghostMode')) {
@@ -694,25 +753,23 @@ export function NodeCanvas() {
 
                 // E key - Dive into selected node's internal canvas
                 if (e.key === 'e' || e.key === 'E') {
+                    e.preventDefault();
                     const selectedIds = Array.from(useGraphStore.getState().selectedNodeIds);
-                    if (selectedIds.length === 1) {
-                        const selectedNode = allNodes.get(selectedIds[0]);
-                        if (selectedNode) {
-                            // Check if node can be entered via definition
-                            const definition = getNodeDefinition(selectedNode.type);
-                            if (definition.canEnter === false) {
-                                // Flash red and reject entry
-                                e.preventDefault();
-                                useUIFeedbackStore.getState().flashNode(selectedNode.id);
-                                return;
-                            }
+                    if (selectedIds.length !== 1) return;
 
-                            // Only enter if node has children (has internal structure)
-                            if (selectedNode.childIds && selectedNode.childIds.length > 0) {
-                                e.preventDefault();
-                                enterNode(selectedNode.id);
-                            }
-                        }
+                    // Use fresh state to avoid stale closure issues
+                    const selectedNode = useGraphStore.getState().nodes.get(selectedIds[0]);
+                    if (!selectedNode) return;
+
+                    const definition = getNodeDefinition(selectedNode.type);
+                    const canEnter = definition.canEnter !== false;
+                    const hasChildren = selectedNode.childIds && selectedNode.childIds.length > 0;
+
+                    if (canEnter && hasChildren) {
+                        enterNode(selectedNode.id);
+                    } else {
+                        // Flash node for ANY failure reason (canEnter=false OR no children)
+                        useUIFeedbackStore.getState().flashNode(selectedNode.id);
                     }
                     return;
                 }

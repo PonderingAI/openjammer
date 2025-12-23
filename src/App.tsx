@@ -359,7 +359,14 @@ function App() {
       <MIDIIntegration />
 
       {/* Toast Notifications */}
-      <Toaster position="bottom-right" richColors />
+      <Toaster
+        position="top-left"
+        richColors
+        expand={true}
+        visibleToasts={5}
+        gap={12}
+        offset="80px"
+      />
     </>
   );
 }

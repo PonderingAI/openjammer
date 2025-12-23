@@ -1604,6 +1604,12 @@ class AudioGraphManager {
 
             // Re-establish any existing connections from this node
             this.reconnectNodeOutputs(nodeId);
+
+            // Also trigger full connection sync to ensure all paths are properly connected
+            // This handles edge cases where connections were made before mic was initialized
+            if (this.getConnectionsRef && this.getNodesRef) {
+                this.syncConnections(this.getConnectionsRef(), this.getNodesRef());
+            }
         }
     }
 

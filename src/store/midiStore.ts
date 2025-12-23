@@ -53,9 +53,11 @@ interface MIDIStoreState extends MIDIPersistedState {
     browserSearchQuery: string;
     browserTargetNodeId: string | null;  // Which node opened the browser (for updating existing nodes)
 
-    // Auto-detect toast state
-    pendingDevice: MIDIDeviceInfo | null;
-    detectedPreset: MIDIDevicePreset | null;
+    // Auto-detect toast state - Map of deviceId -> pending info
+    pendingDevices: Map<string, {
+        device: MIDIDeviceInfo;
+        preset: MIDIDevicePreset | null;
+    }>;
 }
 
 interface MIDIStoreActions {
@@ -81,8 +83,9 @@ interface MIDIStoreActions {
     getBrowserTargetNodeId: () => string | null;
 
     // Auto-detect
-    dismissPendingDevice: () => void;
-    acceptPendingDevice: () => void;
+    dismissPendingDevice: (deviceId: string) => void;
+    addPendingDevice: (device: MIDIDeviceInfo, preset: MIDIDevicePreset | null) => void;
+    removePendingDevice: (deviceId: string) => void;
 
     // Internal handlers
     handleDeviceConnected: (device: MIDIDeviceInfo) => void;
@@ -123,8 +126,7 @@ export const useMIDIStore = create<MIDIStore>()(
                 browserSearchQuery: '',
                 browserTargetNodeId: null,
 
-                pendingDevice: null,
-                detectedPreset: null,
+                pendingDevices: new Map(),
 
         // ================================================================
         // Initialization
@@ -195,8 +197,8 @@ export const useMIDIStore = create<MIDIStore>()(
                 setTimeout(() => {
                     const currentState = get();
                     currentState.inputs.forEach((device) => {
-                        // Only process if no pending device is set (avoid duplicates)
-                        if (!currentState.pendingDevice) {
+                        // Only process if this device isn't already pending (avoid duplicates)
+                        if (!currentState.pendingDevices.has(device.id)) {
                             currentState.handleDeviceConnected(device);
                         }
                     });
@@ -416,14 +418,22 @@ export const useMIDIStore = create<MIDIStore>()(
         // Auto-detect
         // ================================================================
 
-        dismissPendingDevice: () => {
-            set({ pendingDevice: null, detectedPreset: null });
+        dismissPendingDevice: (deviceId: string) => {
+            const pendingDevices = new Map(get().pendingDevices);
+            pendingDevices.delete(deviceId);
+            set({ pendingDevices });
         },
 
-        acceptPendingDevice: () => {
-            // This would typically trigger adding the MIDI node to the canvas
-            // For now, just dismiss
-            set({ pendingDevice: null, detectedPreset: null });
+        addPendingDevice: (device: MIDIDeviceInfo, preset: MIDIDevicePreset | null) => {
+            const pendingDevices = new Map(get().pendingDevices);
+            pendingDevices.set(device.id, { device, preset });
+            set({ pendingDevices });
+        },
+
+        removePendingDevice: (deviceId: string) => {
+            const pendingDevices = new Map(get().pendingDevices);
+            pendingDevices.delete(deviceId);
+            set({ pendingDevices });
         },
 
         // ================================================================
@@ -448,13 +458,11 @@ export const useMIDIStore = create<MIDIStore>()(
                 return; // Don't show toast for non-preferred ports
             }
 
-            // Show auto-detect toast
-            // Note: Auto-dismiss is handled by the MIDIAutoDetectToast component
-            // to avoid duplicate timers and race conditions
-            set({
-                pendingDevice: device,
-                detectedPreset: preset
-            });
+            // Add to pending devices Map (enables stacking of multiple toasts)
+            // Toast display is handled by useMIDIConnectionToast hook
+            const pendingDevices = new Map(get().pendingDevices);
+            pendingDevices.set(device.id, { device, preset });
+            set({ pendingDevices });
         },
 
         handleDeviceDisconnected: (device) => {
@@ -463,12 +471,12 @@ export const useMIDIStore = create<MIDIStore>()(
             // Update inputs map
             const inputs = new Map(get().inputs);
             inputs.delete(device.id);
-            set({ inputs });
 
-            // Clear pending if it was this device
-            if (get().pendingDevice?.id === device.id) {
-                set({ pendingDevice: null, detectedPreset: null });
-            }
+            // Remove from pending devices if present (triggers toast dismissal in hook)
+            const pendingDevices = new Map(get().pendingDevices);
+            pendingDevices.delete(device.id);
+
+            set({ inputs, pendingDevices });
 
             // Clean up subscriptions
             get().unsubscribeFromDevice(device.id);

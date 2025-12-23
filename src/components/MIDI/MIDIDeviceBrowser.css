@@ -1,5 +1,6 @@
 /**
  * MIDI Device Browser - Full-screen modal styles
+ * Theme-aware modal for browsing and selecting MIDI devices
  */
 
 .midi-browser-overlay {
@@ -8,16 +9,16 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    animation: fadeIn 0.2s ease;
+    animation: browserFadeIn 0.2s ease;
 }
 
-@keyframes fadeIn {
+@keyframes browserFadeIn {
     from {
         opacity: 0;
     }
@@ -30,16 +31,17 @@
     width: 90%;
     max-width: 1200px;
     max-height: 90vh;
-    background: var(--sketch-paper, #fafafa);
-    border: 3px solid var(--sketch-black, #1a1a1a);
-    border-radius: 12px;
+    background: var(--bg-secondary);
+    border: var(--border-sketch-width, 2px) solid var(--border-sketch);
+    border-radius: var(--radius-lg, 12px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    animation: slideUp 0.3s ease;
+    animation: browserSlideUp 0.3s ease;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
 
-@keyframes slideUp {
+@keyframes browserSlideUp {
     from {
         transform: translateY(20px);
         opacity: 0;
@@ -50,13 +52,13 @@
     }
 }
 
-/* Header - uses theme variables */
+/* Header */
 .midi-browser-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: var(--border-sketch-width, 2px) solid var(--sketch-black);
+    padding: var(--space-md, 16px) var(--space-lg, 24px);
+    border-bottom: var(--border-sketch-width, 2px) solid var(--border-sketch);
     background: var(--bg-node-header);
 }
 
@@ -69,82 +71,93 @@
 }
 
 .midi-browser-close {
+    width: 32px;
+    height: 32px;
+    padding: 0;
     background: transparent;
     border: none;
-    color: var(--text-primary);
+    color: var(--text-secondary);
     font-size: 28px;
     cursor: pointer;
-    padding: 4px 8px;
     line-height: 1;
-    opacity: 0.7;
-    transition: opacity 0.2s;
+    border-radius: var(--radius-sm, 4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast, 0.15s);
 }
 
 .midi-browser-close:hover {
-    opacity: 1;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
 }
 
 /* Search bar */
 .midi-browser-search {
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--sketch-gray, #ccc);
+    padding: var(--space-md, 16px) var(--space-lg, 24px);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
 }
 
 .midi-browser-search input {
     width: 100%;
-    padding: 12px 16px;
-    font-size: 16px;
-    border: 2px solid var(--sketch-black, #1a1a1a);
-    border-radius: 8px;
-    background: white;
+    padding: var(--space-sm, 12px) var(--space-md, 16px);
+    font-family: var(--font-sketch);
+    font-size: var(--text-md, 16px);
+    border: var(--border-sketch-width, 2px) solid var(--border-sketch);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-node);
+    color: var(--text-primary);
     outline: none;
-    transition: border-color 0.2s;
+    transition: border-color var(--transition-fast, 0.15s);
 }
 
 .midi-browser-search input:focus {
-    border-color: var(--accent-primary, #3b82f6);
+    border-color: var(--accent-primary);
 }
 
 .midi-browser-search input::placeholder {
-    color: var(--sketch-gray, #888);
+    color: var(--text-muted);
 }
 
 /* Sections */
 .midi-browser-section {
-    padding: 16px 24px;
+    padding: var(--space-md, 16px) var(--space-lg, 24px);
     overflow-y: auto;
     flex: 1;
 }
 
 .midi-browser-section h3 {
-    margin: 0 0 16px;
-    font-size: 14px;
+    margin: 0 0 var(--space-md, 16px);
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm, 14px);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--sketch-gray, #666);
+    color: var(--text-muted);
 }
 
 /* Device grid */
 .midi-device-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 16px;
+    gap: var(--space-md, 16px);
 }
 
 /* Empty state */
 .midi-browser-empty {
     text-align: center;
-    padding: 40px;
-    color: var(--sketch-gray, #888);
+    padding: var(--space-xl, 40px);
+    color: var(--text-muted);
     font-style: italic;
 }
 
 /* Footer */
 .midi-browser-footer {
-    padding: 12px 24px;
-    border-top: 1px solid var(--sketch-gray, #ccc);
+    padding: var(--space-sm, 12px) var(--space-lg, 24px);
+    border-top: 1px solid var(--border-subtle);
     text-align: center;
-    font-size: 12px;
-    color: var(--sketch-gray, #888);
+    font-size: var(--text-xs, 12px);
+    color: var(--text-muted);
+    background: var(--bg-primary);
 }
