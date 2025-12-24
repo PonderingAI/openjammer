@@ -3,7 +3,7 @@
  * Connected to the real Recorder audio class via AudioGraphManager
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, memo } from 'react';
 import { toast } from 'sonner';
 import type { GraphNode } from '../../engine/types';
 import { useAudioStore } from '../../store/audioStore';
@@ -26,7 +26,7 @@ interface RecordingState {
     libraryItemId?: string;  // Reference to saved library item
 }
 
-export function RecorderNode({ node }: RecorderNodeProps) {
+export const RecorderNode = memo(function RecorderNode({ node }: RecorderNodeProps) {
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
     const projectName = useProjectStore((s) => s.name);
     const getProjectHandle = useProjectStore((s) => s.getProjectHandle);
@@ -326,4 +326,4 @@ export function RecorderNode({ node }: RecorderNodeProps) {
       `}</style>
         </div>
     );
-}
+});

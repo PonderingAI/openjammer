@@ -18,7 +18,6 @@ import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData
 import { isInstrumentNodeData, isSamplerNodeData } from '../engine/typeGuards';
 import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
 import type { MIDIEvent } from '../midi/types';
-import { useMIDIStore } from '../store/midiStore';
 import { toast } from 'sonner';
 import { useGraphStore } from '../store/graphStore';
 import { getKeyboardControlPortId } from '../utils/connectionActivity';
@@ -124,6 +123,13 @@ class AudioGraphManager {
      */
     private connectionsBySource: Map<string, Connection[]> = new Map();
 
+    /**
+     * MIDI connection cache for O(1) lookup by MIDI node ID
+     * Key: midiNodeId -> array of control connections from that MIDI node
+     * Updated whenever connections change (in rebuildConnectionIndex)
+     */
+    private midiConnectionCache: Map<string, Connection[]> = new Map();
+
     // Signal level visualization (audio connections)
     private connectionAnalysers: Map<string, AnalyserNode> = new Map(); // connectionKey -> AnalyserNode
     private signalLevels: Map<string, number> = new Map(); // connectionKey -> 0-1 RMS level
@@ -147,6 +153,12 @@ class AudioGraphManager {
     // MIDI device subscriptions (nodeId -> unsubscribe function)
     private midiSubscriptions: Map<string, () => void> = new Map();
 
+    // Pending promises for nodes being created (for waitForAudioNode)
+    private pendingNodePromises: Map<string, {
+        resolve: (instance: AudioNodeInstance) => void;
+        timeoutId: ReturnType<typeof setTimeout>;
+    }[]> = new Map();
+
     /**
      * Safety buffer (ms) added to ramp time delays.
      * Ensures the gain ramp completes before disconnecting nodes.
@@ -156,7 +168,7 @@ class AudioGraphManager {
      * Set to 50ms (5x ramp time) to prevent clicks on slower systems
      * or under heavy CPU load where setTimeout may fire late.
      */
-    private readonly RAMP_SAFETY_BUFFER_MS = 50;
+    private readonly RAMP_SAFETY_BUFFER_MS = 20;
 
     /**
      * Initialize the manager and subscribe to graph changes
@@ -524,6 +536,8 @@ class AudioGraphManager {
                 const audioNode = this.createAudioNode(graphNode);
                 if (audioNode) {
                     this.audioNodes.set(nodeId, audioNode);
+                    // Resolve any pending promises waiting for this node
+                    this.resolvePendingNodePromises(nodeId, audioNode);
                 }
             } else if (INSTRUMENT_NODE_TYPES.includes(graphNode.type as typeof INSTRUMENT_NODE_TYPES[number])) {
                 // Check if instrument has changed using metadata map (type-safe)
@@ -538,6 +552,8 @@ class AudioGraphManager {
                     const newAudioNode = this.createAudioNode(graphNode);
                     if (newAudioNode) {
                         this.audioNodes.set(nodeId, newAudioNode);
+                        // Resolve any pending promises waiting for this node
+                        this.resolvePendingNodePromises(nodeId, newAudioNode);
 
                         // CRITICAL: Re-sync connections after instrument recreation
                         // Without this, the new instrument won't be connected to the audio graph
@@ -607,6 +623,11 @@ class AudioGraphManager {
             case 'instrument': {
                 const instrumentId = this.getInstrumentIdForNode(graphNode);
                 const instrument = InstrumentLoader.create(instrumentId);
+
+                // Fire-and-forget preload - starts loading immediately to reduce first-note latency
+                instrument.load().catch(() => {
+                    // Silently ignore preload failures - instrument will retry when triggered
+                });
 
                 // Connect instrument output to our routing chain
                 const connectInstrumentOutput = () => {
@@ -813,16 +834,10 @@ class AudioGraphManager {
                 const samplerData = graphNode.data as SamplerNodeData;
                 const sampler = new SamplerAdapter({
                     rootNote: samplerData.rootNote ?? 60,
+                    gain: samplerData.gain ?? 1.0,
                     attack: samplerData.attack ?? 0.01,
-                    decay: samplerData.decay ?? 0.1,
-                    sustain: samplerData.sustain ?? 0.8,
-                    release: samplerData.release ?? 0.3,
-                    velocityCurve: samplerData.velocityCurve ?? 'exponential',
-                    maxVoices: samplerData.maxVoices ?? 16,
-                    loopEnabled: samplerData.loopEnabled ?? false,
-                    loopStart: samplerData.loopStart ?? 0,
-                    loopEnd: samplerData.loopEnd ?? 0,
-                    triggerMode: samplerData.triggerMode ?? 'gate',
+                    release: samplerData.release ?? 0.1,
+                    maxVoices: 16,
                 });
 
                 // Connect sampler output to routing chain
@@ -850,6 +865,9 @@ class AudioGraphManager {
 
                 baseInstance.instance = sampler;
                 baseInstance.outputNode = gainEnvelope;
+                // Store a stable instrumentId for samplers to prevent unnecessary recreation
+                // Samplers don't have an instrumentId like regular instruments, so use the node type
+                this.audioNodeMetadata.set(graphNode.id, { instrumentId: 'sampler' });
                 break;
             }
 
@@ -980,6 +998,11 @@ class AudioGraphManager {
      * Get instrument ID for a node, supporting both new instrumentId field and legacy type mapping
      */
     private getInstrumentIdForNode(node: GraphNode): string {
+        // Samplers use their own identity - they don't switch instruments like regular nodes
+        // This must match the instrumentId stored in metadata during creation ('sampler')
+        if (node.type === 'sampler') {
+            return 'sampler';
+        }
         // Check if node has explicit instrumentId in data
         const nodeData = node.data as InstrumentNodeData;
         if (nodeData.instrumentId) {
@@ -1046,6 +1069,10 @@ class AudioGraphManager {
      */
     private rebuildConnectionIndex(graphConnections: Map<string, Connection>): void {
         this.connectionsBySource.clear();
+        this.midiConnectionCache.clear();
+
+        // Get the set of MIDI node IDs for cache population
+        const midiNodeIds = new Set(this.midiSubscriptions.keys());
 
         for (const connection of graphConnections.values()) {
             const key = `${connection.sourceNodeId}:${connection.sourcePortId}`;
@@ -1054,6 +1081,16 @@ class AudioGraphManager {
                 existing.push(connection);
             } else {
                 this.connectionsBySource.set(key, [connection]);
+            }
+
+            // Also populate MIDI connection cache for control connections from MIDI nodes
+            if (connection.type === 'control' && midiNodeIds.has(connection.sourceNodeId)) {
+                const midiConns = this.midiConnectionCache.get(connection.sourceNodeId);
+                if (midiConns) {
+                    midiConns.push(connection);
+                } else {
+                    this.midiConnectionCache.set(connection.sourceNodeId, [connection]);
+                }
             }
         }
     }
@@ -1427,6 +1464,67 @@ class AudioGraphManager {
     }
 
     /**
+     * Wait for a sampler adapter to be created.
+     * Resolves immediately if it already exists, otherwise waits for syncNodes to create it.
+     * @param nodeId - The node ID to wait for
+     * @param timeoutMs - Maximum wait time (default 5000ms)
+     * @returns The SamplerAdapter or null if timeout/not found
+     */
+    waitForSamplerAdapter(nodeId: string, timeoutMs: number = 5000): Promise<SamplerAdapter | null> {
+        // Check if already exists
+        const existing = this.getSamplerAdapter(nodeId);
+        if (existing) {
+            return Promise.resolve(existing);
+        }
+
+        // Create promise that will be resolved when node is created
+        return new Promise((resolve) => {
+            const timeoutId = setTimeout(() => {
+                // Cleanup pending promise on timeout
+                const pending = this.pendingNodePromises.get(nodeId);
+                if (pending) {
+                    const filtered = pending.filter(p => p.timeoutId !== timeoutId);
+                    if (filtered.length === 0) {
+                        this.pendingNodePromises.delete(nodeId);
+                    } else {
+                        this.pendingNodePromises.set(nodeId, filtered);
+                    }
+                }
+                resolve(null);
+            }, timeoutMs);
+
+            const pending = this.pendingNodePromises.get(nodeId) || [];
+            pending.push({
+                resolve: (instance: AudioNodeInstance) => {
+                    clearTimeout(timeoutId);
+                    if (instance.instance instanceof SamplerAdapter) {
+                        resolve(instance.instance);
+                    } else {
+                        resolve(null);
+                    }
+                },
+                timeoutId
+            });
+            this.pendingNodePromises.set(nodeId, pending);
+        });
+    }
+
+    /**
+     * Resolve any pending promises waiting for a node to be created
+     * Called internally when a new audio node is created
+     */
+    private resolvePendingNodePromises(nodeId: string, audioNode: AudioNodeInstance): void {
+        const pending = this.pendingNodePromises.get(nodeId);
+        if (pending && pending.length > 0) {
+            pending.forEach(p => {
+                clearTimeout(p.timeoutId);
+                p.resolve(audioNode);
+            });
+            this.pendingNodePromises.delete(nodeId);
+        }
+    }
+
+    /**
      * Pause all continuous audio sources (Loopers).
      * Does NOT affect live instruments - they can still be played.
      */
@@ -1490,7 +1588,6 @@ class AudioGraphManager {
                     const sampler = this.getSamplerAdapter(connection.targetNodeId);
                     if (sampler) {
                         sampler.setBuffer(buffer);
-                        console.log(`[AudioGraphManager] Sent sample buffer to sampler ${connection.targetNodeId}`);
                     }
                 }
             }
@@ -1720,11 +1817,30 @@ class AudioGraphManager {
 
                 // Find the sampler row for this keyboard connection
                 const samplerRow = this.findSamplerRow(samplerData, keyboardId, sourcePortId);
-                if (!samplerRow) continue;
 
-                // Calculate pitch: rootNote + baseOffset + (keyIndex * spread)
+                // Get the sampler adapter
+                const sampler = this.getSamplerAdapter(targetNodeId);
+                if (!sampler) {
+                    console.warn('[AudioGraphManager] Sampler adapter not found for node:', targetNodeId);
+                    continue;
+                }
+
+                // Calculate pitch: rootNote + (keyIndex * spread)
                 const rootNote = samplerData.rootNote ?? 60; // Middle C
-                const pitchOffset = samplerRow.baseOffset + (keyIndex * samplerRow.spread);
+
+                let pitchOffset: number;
+                let rowGain: number;
+
+                if (samplerRow) {
+                    // Row-based system: use row configuration
+                    pitchOffset = keyIndex * (samplerRow.spread ?? 1);
+                    rowGain = samplerRow.gain ?? 1;
+                } else {
+                    // Legacy fallback: 1 semitone per key, default gain
+                    pitchOffset = keyIndex;
+                    rowGain = samplerData.gain ?? 1;
+                }
+
                 const finalMidiNote = rootNote + pitchOffset;
 
                 // Convert MIDI note to note name
@@ -1732,16 +1848,10 @@ class AudioGraphManager {
                 const noteIndex = finalMidiNote % 12;
                 const noteName = getNoteName(noteIndex, octave);
 
-                // Apply per-key gain and row gain
-                const keyGain = samplerRow.keyGains?.[keyIndex] ?? 1;
-                const rowGain = samplerRow.gain ?? 1;
-                const finalVelocity = Math.max(0, Math.min(1, clampedVelocity * keyGain * rowGain));
+                // Apply row/default gain
+                const finalVelocity = Math.max(0, Math.min(1, clampedVelocity * rowGain));
 
-                // Get the sampler adapter and play the note
-                const sampler = this.getSamplerAdapter(targetNodeId);
-                if (sampler) {
-                    sampler.playNote(noteName, finalVelocity);
-                }
+                sampler.playNote(noteName, finalVelocity);
                 continue;
             }
 
@@ -1893,11 +2003,23 @@ class AudioGraphManager {
 
                 // Find the sampler row for this keyboard connection
                 const samplerRow = this.findSamplerRow(samplerData, keyboardId, sourcePortId);
-                if (!samplerRow) continue;
 
-                // Calculate pitch: rootNote + baseOffset + (keyIndex * spread)
+                // Get the sampler adapter
+                const sampler = this.getSamplerAdapter(targetNodeId);
+                if (!sampler) continue;
+
+                // Calculate pitch: rootNote + (keyIndex * spread)
                 const rootNote = samplerData.rootNote ?? 60; // Middle C
-                const pitchOffset = samplerRow.baseOffset + (keyIndex * samplerRow.spread);
+                let pitchOffset: number;
+
+                if (samplerRow) {
+                    // Row-based system: use row configuration
+                    pitchOffset = keyIndex * (samplerRow.spread ?? 1);
+                } else {
+                    // Legacy fallback: 1 semitone per key
+                    pitchOffset = keyIndex;
+                }
+
                 const finalMidiNote = rootNote + pitchOffset;
 
                 // Convert MIDI note to note name
@@ -1905,11 +2027,7 @@ class AudioGraphManager {
                 const noteIndex = finalMidiNote % 12;
                 const noteName = getNoteName(noteIndex, octave);
 
-                // Get the sampler adapter and stop the note
-                const sampler = this.getSamplerAdapter(targetNodeId);
-                if (sampler) {
-                    sampler.stopNote(noteName);
-                }
+                sampler.stopNote(noteName);
                 continue;
             }
 
@@ -2034,9 +2152,8 @@ class AudioGraphManager {
 
         // MIDIManager already returns parsed events
         const subscription = manager.subscribe(deviceId, (event) => {
-            // Update the store's lastMessage for visual components
-            useMIDIStore.getState().handleMIDIMessage(event);
             // Route the parsed message to connected instruments
+            // Note: Visual components subscribe separately via midiStore
             this.routeMIDIMessage(midiNodeId, event);
         });
 
@@ -2063,16 +2180,19 @@ class AudioGraphManager {
     ): void {
 
         const graphNodes = useGraphStore.getState().nodes;
-        const graphConnections = useGraphStore.getState().connections;
 
         // Get the MIDI node
         const midiNode = graphNodes.get(midiNodeId);
-        if (!midiNode) return;
+        if (!midiNode) {
+            return;
+        }
 
-        // Find all connections from this MIDI node's output ports
-        const midiConnections = Array.from(graphConnections.values()).filter(
-            conn => conn.sourceNodeId === midiNodeId && conn.type === 'control'
-        );
+        // Use cached connections for O(1) lookup instead of scanning all connections
+        const midiConnections = this.midiConnectionCache.get(midiNodeId) ?? [];
+
+        // Determine which source port this MIDI message corresponds to
+        // For MiniLab 3: keys (48-72) → bundle-keys, pads (36-43 ch9) → pads bundle
+        const matchingPortId = this.getMIDISourcePortId(midiNode, message);
 
         for (const connection of midiConnections) {
             const targetNodeId = connection.targetNodeId;
@@ -2087,18 +2207,33 @@ class AudioGraphManager {
             const instrument = this.getInstrument(targetNodeId);
             if (!instrument) continue;
 
+            // Check if this connection matches the MIDI message's source port
+            // If we can determine the port, only activate matching connections
+            const connectionMatchesPort = !matchingPortId ||
+                connection.sourcePortId.includes('bundle-keys') && matchingPortId === 'keys' ||
+                connection.sourcePortId.includes('bundle-pads') && matchingPortId === 'pads' ||
+                connection.sourcePortId === matchingPortId;
+
             // Route based on message type
             switch (message.type) {
                 case 'noteOn': {
                     const noteName = midiNoteToName(message.note);
                     const velocity = normalizeMIDIValue(message.velocity);
                     instrument.playNote(noteName, velocity);
+                    // Only activate visual feedback if this connection matches the source port
+                    if (connectionMatchesPort) {
+                        this.activateControlSignal(connection.id);
+                    }
                     break;
                 }
 
                 case 'noteOff': {
                     const noteName = midiNoteToName(message.note);
                     instrument.stopNote(noteName);
+                    // Only release visual feedback if this connection matches the source port
+                    if (connectionMatchesPort) {
+                        this.releaseControlSignal(connection.id);
+                    }
                     break;
                 }
 
@@ -2108,6 +2243,14 @@ class AudioGraphManager {
                         // Sustain pedal - use duck-typing for any instrument with setPedal
                         if ('setPedal' in instrument) {
                             (instrument as { setPedal: (down: boolean) => void }).setPedal(message.value >= 64);
+                        }
+                        // Activate/release visual feedback for pedal (if connection matches)
+                        if (connectionMatchesPort) {
+                            if (message.value >= 64) {
+                                this.activateControlSignal(connection.id);
+                            } else {
+                                this.releaseControlSignal(connection.id);
+                            }
                         }
                     }
                     // Future: Handle other CC messages (mod wheel, expression, etc.)
@@ -2121,6 +2264,43 @@ class AudioGraphManager {
                 }
             }
         }
+    }
+
+    /**
+     * Determine which source port a MIDI message corresponds to
+     * Returns a port identifier string or null if unknown
+     */
+    private getMIDISourcePortId(
+        midiNode: GraphNode,
+        message: MIDIEvent
+    ): string | null {
+        // MiniLab 3 specific mapping
+        if (midiNode.type === 'minilab-3') {
+            if (message.type === 'noteOn' || message.type === 'noteOff') {
+                const note = message.note;
+                const channel = message.channel;
+
+                // Pads: notes 36-43 on channel 9 (channel 10 in human terms)
+                if (channel === 9 && note >= 36 && note <= 43) {
+                    return 'pads';
+                }
+
+                // Keys: notes 48-72 (C3-C5)
+                if (note >= 48 && note <= 72) {
+                    return 'keys';
+                }
+            }
+
+            // CC messages map to specific controls
+            if (message.type === 'cc') {
+                // Could map specific CC numbers to knobs/faders here
+                // For now, return null to activate all connections
+                return null;
+            }
+        }
+
+        // Generic MIDI node or unknown mapping - activate all connections
+        return null;
     }
 
     /**

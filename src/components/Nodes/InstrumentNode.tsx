@@ -5,12 +5,14 @@
  * Shows row-based note grid with spread control - each bundle connection creates a row
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
 import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
 import { nodeDefinitions } from '../../engine/registry';
 import { InstrumentLoader } from '../../audio/Instruments';
+import { useScrollCapture, type ScrollData } from '../../hooks/useScrollCapture';
+import { ScrollContainer } from '../common/ScrollContainer';
 
 interface InstrumentNodeProps {
     node: GraphNode;
@@ -97,6 +99,55 @@ const INSTRUMENT_NODE_TYPES = ['strings', 'keys', 'winds'] as const;
 // Type guard imported from shared typeGuards module
 const isInstrumentNodeData = isBasicInstrumentNodeData;
 
+/**
+ * ScrollableRowValue - Value display with scroll capture for row parameter adjustment
+ * Uses useScrollCapture hook to properly prevent canvas scrolling
+ */
+interface ScrollableRowValueProps {
+    value: number;
+    onChange: (newValue: number) => void;
+    min: number;
+    max: number;
+    step?: number;
+    format: (v: number) => string;
+    title: string;
+    className: string;
+}
+
+const ScrollableRowValue = memo(function ScrollableRowValue({
+    value,
+    onChange,
+    min,
+    max,
+    step = 1,
+    format,
+    title,
+    className
+}: ScrollableRowValueProps) {
+    const handleScroll = useCallback((data: ScrollData) => {
+        const delta = data.scrollingUp ? 1 : -1;
+        const newValue = Math.max(min, Math.min(max, value + delta * step));
+        if (newValue !== value) {
+            onChange(newValue);
+        }
+    }, [value, onChange, min, max, step]);
+
+    const { ref } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleScroll,
+        capture: true,
+    });
+
+    return (
+        <span
+            ref={ref}
+            className={className}
+            title={title}
+        >
+            {format(value)}
+        </span>
+    );
+});
+
 // SVG Icons - keeping the icon definitions (abbreviated for brevity)
 const InstrumentIcons: Record<string, React.ReactNode> = {
     piano: (
@@ -167,7 +218,7 @@ function getInstrumentIcon(instrumentId: string): React.ReactNode {
     return InstrumentIcons.piano;
 }
 
-export function InstrumentNode({
+export const InstrumentNode = memo(function InstrumentNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -460,20 +511,6 @@ export function InstrumentNode({
         updateNodeData(node.id, { rows: updatedRows });
     }, [data.rows, node.id, updateNodeData]);
 
-    // Handle wheel on row control - memoized to prevent unnecessary re-renders
-    const handleRowWheel = useCallback((rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
-        e.stopPropagation();
-        // Note: preventDefault() removed - React wheel events are passive by default
-        const row = rows.find(r => r.rowId === rowId);
-        if (!row) return;
-
-        const currentValue = row[field] as number;
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const step = field === 'spread' ? 0.1 : 1;
-        const newValue = Math.max(min, Math.min(max, currentValue + delta * step));
-        updateRowField(rowId, field, newValue);
-    }, [rows, updateRowField]);
-
     return (
         <div
             ref={nodeRef}
@@ -540,29 +577,35 @@ export function InstrumentNode({
                                             /* Pedal row - just show label (Note/Octave/Offset don't apply) */
                                             <span className="pedal-label">Pedal</span>
                                         ) : (
-                                            /* Key row - show Note, Octave, Offset */
+                                            /* Key row - show Note, Octave, Offset with scroll capture */
                                             <>
-                                                <span
+                                                <ScrollableRowValue
+                                                    value={row.baseNote}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseNote', v)}
+                                                    min={ROW_PARAM_RANGES.NOTE.min}
+                                                    max={ROW_PARAM_RANGES.NOTE.max}
+                                                    format={(v) => NOTE_NAMES[v] || 'C'}
+                                                    title="Note (chromatic) - scroll to change"
                                                     className="row-value note-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, ROW_PARAM_RANGES.NOTE.min, ROW_PARAM_RANGES.NOTE.max)}
-                                                    title={`Note (chromatic) - scroll to change`}
-                                                >
-                                                    {NOTE_NAMES[row.baseNote] || 'C'}
-                                                </span>
-                                                <span
-                                                    className="row-value octave-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOctave', e, ROW_PARAM_RANGES.OCTAVE.min, ROW_PARAM_RANGES.OCTAVE.max)}
+                                                />
+                                                <ScrollableRowValue
+                                                    value={row.baseOctave}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseOctave', v)}
+                                                    min={ROW_PARAM_RANGES.OCTAVE.min}
+                                                    max={ROW_PARAM_RANGES.OCTAVE.max}
+                                                    format={(v) => String(v)}
                                                     title={`Octave (${ROW_PARAM_RANGES.OCTAVE.min}-${ROW_PARAM_RANGES.OCTAVE.max}) - scroll to change`}
-                                                >
-                                                    {row.baseOctave}
-                                                </span>
-                                                <span
-                                                    className="row-value offset-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOffset', e, ROW_PARAM_RANGES.OFFSET.min, ROW_PARAM_RANGES.OFFSET.max)}
+                                                    className="row-value octave-value editable-value"
+                                                />
+                                                <ScrollableRowValue
+                                                    value={row.baseOffset}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseOffset', v)}
+                                                    min={ROW_PARAM_RANGES.OFFSET.min}
+                                                    max={ROW_PARAM_RANGES.OFFSET.max}
+                                                    format={(v) => v >= 0 ? `+${v}` : String(v)}
                                                     title={`Offset (${ROW_PARAM_RANGES.OFFSET.min} to +${ROW_PARAM_RANGES.OFFSET.max}) - scroll to change`}
-                                                >
-                                                    {row.baseOffset >= 0 ? `+${row.baseOffset}` : row.baseOffset}
-                                                </span>
+                                                    className="row-value offset-value editable-value"
+                                                />
                                             </>
                                         )}
                                     </div>
@@ -608,7 +651,6 @@ export function InstrumentNode({
                     className="instrument-selector-dropdown"
                     style={dropdownStyle}
                     onClick={(e) => e.stopPropagation()}
-                    onWheel={(e) => e.stopPropagation()}
                 >
                     <input
                         className="instrument-search"
@@ -618,10 +660,7 @@ export function InstrumentNode({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
                     />
-                    <div
-                        className="instrument-grid-container"
-                        onWheel={(e) => e.stopPropagation()}
-                    >
+                    <ScrollContainer mode="dropdown" className="instrument-grid-container">
                         <div className="instrument-grid-grouped">
                             {groupedInstruments.map((group, groupIndex) => (
                                 <div key={group.baseName} className="instrument-group">
@@ -654,7 +693,7 @@ export function InstrumentNode({
                         {filteredInstruments.length === 0 && (
                             <div className="no-results">No instruments found</div>
                         )}
-                    </div>
+                    </ScrollContainer>
                     <div className="category-nav-hint">
                         {node.type.charAt(0).toUpperCase() + node.type.slice(1)} | Ctrl + ← → to switch type
                     </div>
@@ -662,4 +701,4 @@ export function InstrumentNode({
             )}
         </div>
     );
-}
+});

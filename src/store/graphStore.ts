@@ -135,6 +135,9 @@ interface GraphStore {
     selectedNodeIds: Set<string>;
     selectedConnectionIds: Set<string>;
 
+    // Connection indices for O(1) lookup by node
+    connectionsByNode: Map<string, Set<string>>;  // nodeId -> connectionIds
+
     // Version counter for efficient change detection (autosave)
     version: number;
 
@@ -207,6 +210,9 @@ interface GraphStore {
     getNodeParent: (nodeId: string) => GraphNode | null;
     getNodeDepth: (nodeId: string) => number;
     getRootNodes: () => GraphNode[];
+
+    // Internal helper
+    _rebuildConnectionIndex: (connections: Map<string, Connection>) => Map<string, Set<string>>;
     getNodesAtLevel: (parentId: string | null) => GraphNode[];  // null = root level
     getConnectionsAtLevel: (parentId: string | null) => Connection[];  // Connections between nodes at this level
 }
@@ -215,12 +221,33 @@ interface GraphStore {
 // Store Implementation
 // ============================================================================
 
+/**
+ * Rebuild connection index from connections Map
+ * Called whenever connections change for O(1) lookup by node
+ */
+function rebuildConnectionIndex(connections: Map<string, Connection>): Map<string, Set<string>> {
+    const index = new Map<string, Set<string>>();
+    for (const [connId, conn] of connections) {
+        // Add to source node's set
+        const sourceSet = index.get(conn.sourceNodeId) ?? new Set();
+        sourceSet.add(connId);
+        index.set(conn.sourceNodeId, sourceSet);
+
+        // Add to target node's set
+        const targetSet = index.get(conn.targetNodeId) ?? new Set();
+        targetSet.add(connId);
+        index.set(conn.targetNodeId, targetSet);
+    }
+    return index;
+}
+
 export const useGraphStore = create<GraphStore>()(
     persist(
         (set, get) => ({
             // Initial State (flat normalized structure)
             nodes: new Map(),
             connections: new Map(),
+            connectionsByNode: new Map(),  // Connection index for O(1) lookup
             rootNodeIds: [],  // IDs of top-level nodes
             selectedNodeIds: new Set(),
             selectedConnectionIds: new Set(),
@@ -228,6 +255,9 @@ export const useGraphStore = create<GraphStore>()(
             clipboard: null,
             history: [],
             historyIndex: -1,
+
+            // Helper: Rebuild connection index from connections Map
+            _rebuildConnectionIndex: rebuildConnectionIndex,
 
             // Push current state to history (called before mutations)
             pushHistory: () => {
@@ -270,9 +300,11 @@ export const useGraphStore = create<GraphStore>()(
                 const prevState = state.history[state.historyIndex];
                 if (!prevState) return;
 
+                const restoredConnections = new Map(prevState.connections);
                 set((s) => ({
                     nodes: new Map(prevState.nodes),
-                    connections: new Map(prevState.connections),
+                    connections: restoredConnections,
+                    connectionsByNode: rebuildConnectionIndex(restoredConnections),
                     historyIndex: state.historyIndex - 1,
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set(),
@@ -289,9 +321,11 @@ export const useGraphStore = create<GraphStore>()(
                 const nextState = state.history[nextIndex];
                 if (!nextState) return;
 
+                const restoredConnections = new Map(nextState.connections);
                 set((s) => ({
                     nodes: new Map(nextState.nodes),
-                    connections: new Map(nextState.connections),
+                    connections: restoredConnections,
+                    connectionsByNode: rebuildConnectionIndex(restoredConnections),
                     historyIndex: nextIndex - 1,
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set(),
@@ -871,29 +905,63 @@ export const useGraphStore = create<GraphStore>()(
                                     // Handle sampler nodes differently - use SamplerRow
                                     if (targetNodeForExpansion.type === 'sampler') {
                                         const samplerData = targetNodeForExpansion.data as SamplerNodeData;
+                                        const existingRows = samplerData.rows || [];
 
-                                        // Use pre-configured defaults if set by user, otherwise use standard defaults
-                                        const defaultGain = samplerData.defaultGain ?? 1.0;
-                                        const defaultSpread = samplerData.defaultSpread ?? 1.0;
+                                        // Check if a row from this source already exists - override it
+                                        const existingRowIndex = existingRows.findIndex(r => r.sourceNodeId === sourceNodeId);
+                                        const existingRow = existingRowIndex >= 0 ? existingRows[existingRowIndex] : null;
+                                        const actualRowId = existingRow ? existingRow.rowId : rowId;
+
+                                        // Use pre-configured defaults from node data, but preserve existing row's gain/spread if overriding
+                                        const defaultGain = existingRow?.gain ?? samplerData.gain ?? 1.0;
+                                        const defaultSpread = existingRow?.spread ?? samplerData.spread ?? 1.0;
 
                                         const newSamplerRow: SamplerRow = {
-                                            rowId,
+                                            rowId: actualRowId,
                                             sourceNodeId,
                                             sourcePortId,
                                             targetPortId: bundleTargetPortId,
                                             label: bundleInfo.bundleLabel,
-                                            spread: defaultSpread,
-                                            baseOffset: 0,
-                                            gain: defaultGain,
                                             portCount: bundleSize,
-                                            keyGains: Array.from({ length: bundleSize }, () => 1)
+                                            gain: defaultGain,
+                                            spread: defaultSpread,
                                         };
-                                        const existingRows = samplerData.rows || [];
+
+                                        // If overriding, clean up old internal connections and ports
+                                        if (existingRow) {
+                                            // Find sampler-visual to clean up old ports
+                                            const samplerVisual = targetNodeForExpansion.childIds
+                                                .map(cid => newNodes.get(cid))
+                                                .find(n => n?.type === 'sampler-visual');
+
+                                            if (samplerVisual) {
+                                                // Remove old key ports for the existing row
+                                                const oldPortPrefix = `${existingRow.rowId}-key-`;
+                                                const cleanedPorts = samplerVisual.ports.filter(p => !p.id.startsWith(oldPortPrefix));
+                                                newNodes.set(samplerVisual.id, {
+                                                    ...samplerVisual,
+                                                    ports: cleanedPorts
+                                                });
+
+                                                // Remove old internal connections for this row
+                                                for (const [connId, conn] of newConnections) {
+                                                    if (conn.targetNodeId === samplerVisual.id && conn.targetPortId.startsWith(oldPortPrefix)) {
+                                                        newConnections.delete(connId);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Build updated rows array (replace existing or add new)
+                                        const updatedRows = existingRow
+                                            ? existingRows.map((r, i) => i === existingRowIndex ? newSamplerRow : r)
+                                            : [...existingRows, newSamplerRow];
+
                                         newNodes.set(targetNodeId, {
                                             ...targetNodeForExpansion,
                                             data: {
                                                 ...targetNodeForExpansion.data,
-                                                rows: [...existingRows, newSamplerRow]
+                                                rows: updatedRows
                                             }
                                         });
 
@@ -1074,7 +1142,7 @@ export const useGraphStore = create<GraphStore>()(
                                 }
                             }
 
-                            return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
+                            return { connections: newConnections, nodes: newNodes, connectionsByNode: rebuildConnectionIndex(newConnections), version: state.version + 1 };
                         }
 
                         // Handle adding a new canvas-output node (legacy)
@@ -1112,7 +1180,7 @@ export const useGraphStore = create<GraphStore>()(
                                 }
                             }
 
-                            return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
+                            return { connections: newConnections, nodes: newNodes, connectionsByNode: rebuildConnectionIndex(newConnections), version: state.version + 1 };
                         }
                     }
 
@@ -1147,7 +1215,7 @@ export const useGraphStore = create<GraphStore>()(
                         }
                     }
 
-                    return { connections: newConnections, nodes: newNodes, version: state.version + 1 };
+                    return { connections: newConnections, nodes: newNodes, connectionsByNode: rebuildConnectionIndex(newConnections), version: state.version + 1 };
                 });
 
                 return id;
@@ -1187,16 +1255,61 @@ export const useGraphStore = create<GraphStore>()(
                             }
                         }
 
+                        // Check if we need to remove a sampler row when disconnecting from a sampler
+                        const targetNode = newNodes.get(connection.targetNodeId);
+                        if (targetNode?.type === 'sampler') {
+                            const samplerData = targetNode.data as SamplerNodeData;
+                            const existingRows = samplerData.rows || [];
+                            const sourceNodeId = connection.sourceNodeId;
+
+                            // Find the row that matches this source
+                            const rowToRemove = existingRows.find(r => r.sourceNodeId === sourceNodeId);
+                            if (rowToRemove) {
+                                // Remove the row from sampler data
+                                const filteredRows = existingRows.filter(r => r.rowId !== rowToRemove.rowId);
+                                newNodes.set(connection.targetNodeId, {
+                                    ...targetNode,
+                                    data: {
+                                        ...targetNode.data,
+                                        rows: filteredRows
+                                    }
+                                });
+                                nodesUpdated = true;
+
+                                // Also clean up the internal key ports and connections in sampler-visual
+                                const samplerVisual = targetNode.childIds
+                                    .map(cid => newNodes.get(cid))
+                                    .find(n => n?.type === 'sampler-visual');
+
+                                if (samplerVisual) {
+                                    // Remove old key ports for this row
+                                    const oldPortPrefix = `${rowToRemove.rowId}-key-`;
+                                    const cleanedPorts = samplerVisual.ports.filter(p => !p.id.startsWith(oldPortPrefix));
+                                    newNodes.set(samplerVisual.id, {
+                                        ...samplerVisual,
+                                        ports: cleanedPorts
+                                    });
+
+                                    // Remove old internal connections for this row
+                                    for (const [connId, conn] of newConnections) {
+                                        if (conn.targetNodeId === samplerVisual.id && conn.targetPortId.startsWith(oldPortPrefix)) {
+                                            newConnections.delete(connId);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Check for dynamic port removal in parent panels
                         const parentsToCheck = new Set<string>();
-                        const targetNode = newNodes.get(connection.targetNodeId);
-                        const sourceNode = newNodes.get(connection.sourceNodeId);
+                        const connTargetNode = newNodes.get(connection.targetNodeId);
+                        const connSourceNode = newNodes.get(connection.sourceNodeId);
 
-                        if (targetNode?.parentId) {
-                            parentsToCheck.add(targetNode.parentId);
+                        if (connTargetNode?.parentId) {
+                            parentsToCheck.add(connTargetNode.parentId);
                         }
-                        if (sourceNode?.parentId) {
-                            parentsToCheck.add(sourceNode.parentId);
+                        if (connSourceNode?.parentId) {
+                            parentsToCheck.add(connSourceNode.parentId);
                         }
 
                         for (const parentId of parentsToCheck) {
@@ -1237,6 +1350,7 @@ export const useGraphStore = create<GraphStore>()(
                         if (nodesUpdated) {
                             return {
                                 connections: newConnections,
+                                connectionsByNode: rebuildConnectionIndex(newConnections),
                                 selectedConnectionIds: newSelectedConnections,
                                 nodes: newNodes,
                                 version: state.version + 1
@@ -1246,6 +1360,7 @@ export const useGraphStore = create<GraphStore>()(
 
                     return {
                         connections: newConnections,
+                        connectionsByNode: rebuildConnectionIndex(newConnections),
                         selectedConnectionIds: newSelectedConnections,
                         version: state.version + 1
                     };
@@ -1254,9 +1369,12 @@ export const useGraphStore = create<GraphStore>()(
 
             getConnectionsForNode: (nodeId) => {
                 const state = get();
-                return Array.from(state.connections.values()).filter(
-                    conn => conn.sourceNodeId === nodeId || conn.targetNodeId === nodeId
-                );
+                // Use connection index for O(1) lookup
+                const connectionIds = state.connectionsByNode.get(nodeId);
+                if (!connectionIds || connectionIds.size === 0) return [];
+                return Array.from(connectionIds)
+                    .map(id => state.connections.get(id))
+                    .filter((conn): conn is Connection => conn !== undefined);
             },
 
             getConnectionsForPort: (nodeId, portId) => {
@@ -1412,6 +1530,7 @@ export const useGraphStore = create<GraphStore>()(
                 set((state) => ({
                     nodes: new Map(),
                     connections: new Map(),
+                    connectionsByNode: new Map(),
                     rootNodeIds: [],
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set(),
@@ -1437,6 +1556,7 @@ export const useGraphStore = create<GraphStore>()(
                 set((state) => ({
                     nodes: newNodes,
                     connections: newConnections,
+                    connectionsByNode: rebuildConnectionIndex(newConnections),
                     rootNodeIds: newRootNodeIds,
                     selectedNodeIds: new Set(),
                     selectedConnectionIds: new Set(),
@@ -1535,6 +1655,7 @@ export const useGraphStore = create<GraphStore>()(
                 set((state) => ({
                     nodes: newNodes,
                     connections: newConnections,
+                    connectionsByNode: rebuildConnectionIndex(newConnections),
                     selectedNodeIds: newSelectedIds,
                     version: state.version + 1
                 }));
@@ -1697,11 +1818,13 @@ export const useGraphStore = create<GraphStore>()(
                                 .map((n: GraphNode) => n.id);
                         }
 
+                        const connections = new Map<string, Connection>(migratedConnections);
                         return {
                             state: {
                                 ...parsed.state,
                                 nodes,
-                                connections: new Map(migratedConnections),
+                                connections,
+                                connectionsByNode: rebuildConnectionIndex(connections),
                                 rootNodeIds,
                                 selectedNodeIds: new Set(Array.isArray(parsed.state.selectedNodeIds) ? parsed.state.selectedNodeIds : []),
                                 selectedConnectionIds: new Set(Array.isArray(parsed.state.selectedConnectionIds) ? parsed.state.selectedConnectionIds : []),

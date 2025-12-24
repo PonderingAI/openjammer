@@ -9,7 +9,7 @@
  * Press E to dive into internal canvas and see key routing
  */
 
-import { useEffect } from 'react';
+import { useEffect, memo } from 'react';
 import { useAudioStore } from '../../store/audioStore';
 import type { GraphNode, KeyboardNodeData } from '../../engine/types';
 
@@ -30,7 +30,7 @@ interface KeyboardNodeProps {
     style?: React.CSSProperties;
 }
 
-export function KeyboardNode({
+export const KeyboardNode = memo(function KeyboardNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -116,4 +116,4 @@ export function KeyboardNode({
             )}
         </div>
     );
-}
+});

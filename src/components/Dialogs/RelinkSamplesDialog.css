@@ -35,6 +35,7 @@
   flex-direction: column;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
   animation: slideUp 0.2s ease-out;
+  will-change: transform, opacity;
 }
 
 @keyframes slideUp {
@@ -75,7 +76,7 @@
   line-height: 1;
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .relink-close-btn:hover {
@@ -102,7 +103,7 @@
 .relink-error {
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
   border: 1px solid var(--accent-danger);
   border-radius: var(--radius-sm);
   color: var(--accent-danger);
@@ -183,7 +184,7 @@
   font-family: var(--font-sketch);
   font-size: var(--text-xs);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
 }
 
@@ -208,12 +209,12 @@
   border: var(--border-sketch-width) solid var(--sketch-black);
   border-radius: var(--radius-md);
   background: var(--accent-primary);
-  color: white;
+  color: var(--text-on-accent, #ffffff);
   font-family: var(--font-sketch);
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .relink-folder-btn:hover:not(:disabled) {
@@ -243,7 +244,7 @@
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast);
 }
 
 .relink-done-btn:hover {

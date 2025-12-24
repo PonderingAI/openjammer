@@ -196,7 +196,7 @@ export interface InstrumentRow {
 
 /**
  * Sampler row configuration - represents a connected bundle from keyboard
- * Similar to InstrumentRow but for sampler pitch-shifting behavior
+ * Simplified structure: each row has gain and spread controls
  */
 export interface SamplerRow {
     rowId: string;           // Unique row identifier
@@ -204,11 +204,9 @@ export interface SamplerRow {
     sourcePortId: string;    // Which keyboard port this came from (composite ID)
     targetPortId: string;    // Which sampler input port receives this bundle
     label: string;           // Auto-pulled from source ("Row 1", "Keys", etc.)
-    spread: number;          // Semitones between keys (default 1.0 = chromatic)
-    baseOffset: number;      // Base pitch offset in semitones (-24 to +24)
-    gain: number;            // Overall row gain (0-2, default 1.0)
     portCount: number;       // Number of ports in this row
-    keyGains: number[];      // Per-key gain multipliers (length = portCount)
+    gain: number;            // Per-row gain (0-2, default 1.0)
+    spread: number;          // Per-row spread in semitones (default 1.0 = chromatic)
 }
 
 export interface InstrumentNodeData extends NodeData {
@@ -328,34 +326,23 @@ export interface LibraryNodeData extends NodeData {
 }
 
 export interface SamplerNodeData extends NodeData {
-    // Sample reference (single sample shared by all rows)
+    // Sample reference
     sampleId: string | null;
     sampleName: string | null;
 
+    // Visual data for waveform display
+    waveformData?: number[];       // 50-point waveform peaks
+    duration?: number;             // Sample duration in seconds
+
     // Core audio parameters
     rootNote: number;              // MIDI note (default: 60 = C4)
-    attack: number;                // seconds
-    decay: number;                 // seconds
-    sustain: number;               // 0-1
-    release: number;               // seconds
+    gain: number;                  // Overall gain (0-2, default 1.0)
+    spread: number;                // Semitones between keys (0-12, default 1.0)
+    attack: number;                // Attack time in seconds (0.001-1, default 0.01)
+    release: number;               // Release time in seconds (0.01-2, default 0.1)
 
-    // NEW: Row-based structure for bundle connections (like InstrumentNode)
+    // Row-based structure for bundle connections
     rows?: SamplerRow[];
-
-    // Default values for new rows (editable before keyboard connected)
-    defaultGain?: number;          // 0-2, default 1.0
-    defaultSpread?: number;        // semitones between keys, default 1.0
-
-    // Internal parameters
-    velocityCurve: 'linear' | 'exponential' | 'logarithmic';
-    triggerMode: 'gate' | 'oneshot' | 'toggle';
-    loopEnabled: boolean;
-    loopStart: number;
-    loopEnd: number;
-    maxVoices: number;
-
-    // Preset
-    activePreset?: string;
 }
 
 export interface MIDILearnedMapping {

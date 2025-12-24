@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useEffect, memo } from 'react';
 import type { BundlePortDefinition } from '../engine/types';
+import { ScrollContainer } from './common/ScrollContainer';
 import './BundlePortGroup.css';
 
 interface BundlePortGroupProps {
@@ -195,7 +196,7 @@ export const BundlePortGroup = memo(function BundlePortGroup({
             </div>
 
             {/* Individual channel rows */}
-            <div className="bundle-channels">
+            <ScrollContainer mode="dropdown" className="bundle-channels">
                 {bundleInfo.channels.map((channel, index) => (
                     <div
                         key={channel.id}
@@ -235,7 +236,7 @@ export const BundlePortGroup = memo(function BundlePortGroup({
                         )}
                     </div>
                 ))}
-            </div>
+            </ScrollContainer>
         </div>
     );
 });

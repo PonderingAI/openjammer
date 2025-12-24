@@ -1,14 +1,16 @@
 /**
  * Microphone Node - Live audio input (Schematic Style)
+ * Supports professional audio interfaces with low-latency detection
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import type { GraphNode, MicrophoneNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { ScrollContainer } from '../common/ScrollContainer';
+import { detectLowLatencyDevice } from '../../utils/audioDeviceDetection';
 
 interface MicrophoneNodeProps {
     node: GraphNode;
@@ -37,7 +39,7 @@ const NUM_WAVEFORM_BARS = 16;
 const TARGET_FPS = 30;
 const FRAME_INTERVAL = 1000 / TARGET_FPS;
 
-export function MicrophoneNode({
+export const MicrophoneNode = memo(function MicrophoneNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -61,7 +63,7 @@ export function MicrophoneNode({
     const lowLatencyMode = data.lowLatencyMode ?? audioConfig.lowLatencyMode;
 
     const [stream, setStream] = useState<MediaStream | null>(null);
-    const [, setSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
+    const [_sourceNode, setSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
     const [gainNode, setGainNode] = useState<GainNode | null>(null);
     const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
     const [waveformBars, setWaveformBars] = useState<number[]>(Array(NUM_WAVEFORM_BARS).fill(0));
@@ -81,38 +83,52 @@ export function MicrophoneNode({
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
     const outputPortId = outputPort?.id || 'audio-out';
 
-    // Detect if device is a USB audio interface
-    const detectUSBAudioInterface = useCallback((device: MediaDeviceInfo): boolean => {
-        const label = device.label.toLowerCase();
-        const usbKeywords = ['usb', 'motu', 'focusrite', 'presonus', 'behringer',
-                             'rme', 'audio interface', 'scarlett', 'audiobox', 'babyface'];
-        return usbKeywords.some(keyword => label.includes(keyword));
-    }, []);
-
-    // Fetch input devices
+    // Fetch input devices with low-latency detection
     useEffect(() => {
         if (!navigator.mediaDevices?.enumerateDevices) return;
 
-        navigator.mediaDevices.enumerateDevices().then(devs => {
-            const inputs = devs
-                .filter(d => d.kind === 'audioinput')
-                .map(d => ({
-                    deviceId: d.deviceId,
-                    label: d.label || `Microphone ${d.deviceId.slice(0, 4)}`,
-                    isUSB: detectUSBAudioInterface(d)
-                }));
-            setDevices(inputs);
+        const updateDevices = () => {
+            navigator.mediaDevices.enumerateDevices().then(devs => {
+                const inputs = devs
+                    .filter(d => d.kind === 'audioinput')
+                    .map(d => ({
+                        deviceId: d.deviceId,
+                        label: d.label || `Microphone ${d.deviceId.slice(0, 4)}`,
+                        isUSB: detectLowLatencyDevice(d.label)
+                    }));
+                setDevices(inputs);
 
-            // Update store with USB detection
-            const usbDevice = inputs.find(d => d.isUSB);
-            if (usbDevice) {
-                setDeviceInfo({
-                    isUSBAudioInterface: true,
-                    deviceLabel: usbDevice.label
-                });
-            }
-        });
-    }, [detectUSBAudioInterface, setDeviceInfo]);
+                // Update store with USB/low-latency device detection
+                const lowLatencyDevice = inputs.find(d => d.isUSB);
+                if (lowLatencyDevice) {
+                    setDeviceInfo({
+                        isUSBAudioInterface: true,
+                        deviceLabel: lowLatencyDevice.label
+                    });
+                }
+
+                // Check if currently selected device still exists
+                if (selectedDeviceId !== 'default') {
+                    const deviceStillExists = inputs.some(d => d.deviceId === selectedDeviceId);
+                    if (!deviceStillExists) {
+                        // Device was unplugged, fall back to default
+                        setSelectedDeviceId('default');
+                        updateNodeData<MicrophoneNodeData>(node.id, { deviceId: 'default' });
+                    }
+                }
+            });
+        };
+
+        // Initial fetch
+        updateDevices();
+
+        // Listen for device changes (plug/unplug)
+        navigator.mediaDevices.addEventListener('devicechange', updateDevices);
+
+        return () => {
+            navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
+        };
+    }, [setDeviceInfo, selectedDeviceId, node.id, updateNodeData]);
 
     // Click outside to close device dropdown
     useEffect(() => {
@@ -158,14 +174,15 @@ export function MicrophoneNode({
 
         try {
             // Use low-latency constraints if enabled
+            // Note: Use 'ideal' for latency/channels since 'exact' values cause OverconstrainedError
             const constraints = lowLatencyMode ? {
                 audio: {
                     deviceId: deviceId && deviceId !== 'default' ? { exact: deviceId } : undefined,
                     echoCancellation: false,
                     noiseSuppression: false,
                     autoGainControl: false,
-                    latency: 0,
-                    channelCount: 2
+                    latency: { ideal: 0 },
+                    channelCount: { ideal: 2 }
                 }
             } : {
                 audio: {
@@ -214,15 +231,44 @@ export function MicrophoneNode({
         }
     }, [isAudioContextReady, node.id, data.isMuted, lowLatencyMode]);
 
-    // Initialize on mount
+    // Initialize microphone when audio context is ready
+    // This effect handles both initial mount and audio context reinitialization
     useEffect(() => {
-        if (isAudioContextReady && !streamRef.current) {
+        if (isAudioContextReady) {
+            // Initialize (or reinitialize) the microphone
+            // initMicrophone already handles cleanup of existing resources
             initMicrophone(selectedDeviceId);
+        } else {
+            // Audio context is not ready - clean up resources
+            // This happens when audio settings are changed and context is reinitialized
+            if (animationRef.current) {
+                cancelAnimationFrame(animationRef.current);
+                animationRef.current = null;
+            }
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+                streamRef.current = null;
+            }
+            if (sourceNodeRef.current) {
+                sourceNodeRef.current.disconnect();
+                sourceNodeRef.current = null;
+            }
+            if (gainNodeRef.current) {
+                gainNodeRef.current.disconnect();
+                gainNodeRef.current = null;
+            }
+            if (analyserNodeRef.current) {
+                analyserNodeRef.current.disconnect();
+                analyserNodeRef.current = null;
+            }
+            // Clear state
+            setStream(null);
+            setSourceNode(null);
+            setGainNode(null);
+            setAnalyserNode(null);
         }
-    }, [isAudioContextReady, initMicrophone, selectedDeviceId]);
 
-    // Cleanup on unmount (separate effect with refs to avoid stale closures)
-    useEffect(() => {
+        // Cleanup on unmount or when deps change
         return () => {
             if (animationRef.current) {
                 cancelAnimationFrame(animationRef.current);
@@ -240,7 +286,7 @@ export function MicrophoneNode({
                 analyserNodeRef.current.disconnect();
             }
         };
-    }, []);
+    }, [isAudioContextReady, initMicrophone, selectedDeviceId]);
 
     // Update waveform with FPS throttling for performance
     useEffect(() => {
@@ -439,4 +485,4 @@ export function MicrophoneNode({
             </div>
         </div>
     );
-}
+});

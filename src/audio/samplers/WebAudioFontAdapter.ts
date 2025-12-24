@@ -10,8 +10,8 @@ import type { EnvelopeConfig } from './types';
 // Constants
 // ============================================================================
 
-/** Timeout for preset loading (30 seconds) */
-const PRESET_LOAD_TIMEOUT_MS = 30000;
+/** Timeout for preset loading (10 seconds) */
+const PRESET_LOAD_TIMEOUT_MS = 10000;
 
 /** Maximum concurrent notes to prevent resource exhaustion */
 const MAX_CONCURRENT_NOTES = 64;

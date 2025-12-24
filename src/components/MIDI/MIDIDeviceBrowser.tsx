@@ -12,6 +12,7 @@ import { useCallback, useMemo } from 'react';
 import { useMIDIStore } from '../../store/midiStore';
 import { getPresetRegistry } from '../../midi';
 import { MIDIDeviceCard } from './MIDIDeviceCard';
+import { ScrollContainer } from '../common/ScrollContainer';
 import './MIDIDeviceBrowser.css';
 
 interface MIDIDeviceBrowserProps {
@@ -214,7 +215,7 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
 
                 {/* Connected Devices Section */}
                 {connectedDevices.length > 0 && (
-                    <div className="midi-browser-section">
+                    <ScrollContainer mode="dropdown" className="midi-browser-section">
                         <h3>Connected Devices</h3>
                         <div className="midi-device-grid">
                             {connectedDevices.map((device) => (
@@ -229,11 +230,11 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
                                 />
                             ))}
                         </div>
-                    </div>
+                    </ScrollContainer>
                 )}
 
                 {/* All Presets Section */}
-                <div className="midi-browser-section">
+                <ScrollContainer mode="dropdown" className="midi-browser-section">
                     <h3>Device Presets</h3>
                     <div className="midi-device-grid">
                         {filteredPresets.map((preset) => (
@@ -252,7 +253,7 @@ export function MIDIDeviceBrowser({ onSelectDevice }: MIDIDeviceBrowserProps) {
                             No presets match your search
                         </div>
                     )}
-                </div>
+                </ScrollContainer>
 
                 {/* Footer hint */}
                 <div className="midi-browser-footer">

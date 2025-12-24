@@ -9,6 +9,9 @@ import type { AudioClip } from '../engine/types';
 import type { Loop } from '../audio/Looper';
 import { useLibraryStore, getSampleFile, type LibraryItem } from '../store/libraryStore';
 
+// Re-export async waveform generation for non-blocking execution
+export { generateWaveformPeaksAsync } from '../workers/waveformWorkerClient';
+
 // ============================================================================
 // Clip Creation
 // ============================================================================

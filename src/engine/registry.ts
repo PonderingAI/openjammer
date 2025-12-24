@@ -698,55 +698,54 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         type: 'sampler',
         category: 'instruments',
         name: 'Sampler',
-        description: 'Play a sample chromatically via keyboard bundles',
+        description: 'Play audio samples chromatically via keyboard',
         defaultPorts: [
             // Bundled control input on left (accepts keyboard bundles)
-            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
+            { id: 'bundle-in', name: 'Keys', type: 'control', direction: 'input', isBundled: true },
             // Audio output on right
             { id: 'audio-out', name: 'Out', type: 'audio', direction: 'output' }
         ],
         defaultData: {
-            // Sample reference (single sample shared by all rows)
+            // Sample reference
             sampleId: null,
             sampleName: null,
+            waveformData: null,
+            duration: null,
             // Row-based structure (populated when bundles connect)
             rows: [],
             // Core audio parameters
             rootNote: 60,       // MIDI note (C4)
-            attack: 0.01,
-            decay: 0.1,
-            sustain: 0.8,
-            release: 0.3,
-            velocityCurve: 'exponential',
-            triggerMode: 'gate',
-            loopEnabled: false,
-            loopStart: 0,
-            loopEnd: 0,
-            maxVoices: 16
+            gain: 1.0,          // Overall gain
+            spread: 1.0,        // Semitones per key
+            attack: 0.01,       // Attack time
+            release: 0.1        // Release time
         },
         portLayout: {
             direction: 'vertical',
             inputArea: { x: 0, startY: 0.2, endY: 0.8 },
             outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         },
-        dimensions: { width: 180, height: 100 },
+        dimensions: { width: 200, height: 140 },
         canEnter: true  // Allows E key to view internal structure
     },
 
-    // Sampler Visual - compact inside view with waveform
+    // Sampler Visual - compact inside view with row-based layout
     'sampler-visual': {
         type: 'sampler-visual',
         category: 'instruments',
         name: 'Sampler Visual',
-        description: 'Internal view with waveform and controls',
-        defaultPorts: [],  // Ports handled by input-panel and output-panel children
+        description: 'Internal view with row-based key mapping',
+        defaultPorts: [
+            // Placeholder port for new connections (bundles or single)
+            { id: 'placeholder-in', name: '', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } }
+        ],
         defaultData: {},
         portLayout: {
             direction: 'horizontal',
             inputArea: { x: 0, startY: 0.3, endY: 0.7 },
             outputArea: { x: 1, startY: 0.3, endY: 0.7 }
         },
-        dimensions: { width: 280, height: 100 },
+        dimensions: { width: 180, height: 80 },
         canEnter: false  // This IS the internal view
     }
 };

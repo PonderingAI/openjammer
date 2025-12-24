@@ -15,7 +15,7 @@
  * and can be renamed by double-clicking the title
  */
 
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState, memo } from 'react';
 import type { GraphNode, MIDIInputNodeData } from '../../engine/types';
 import { useMIDIStore } from '../../store/midiStore';
 import { useGraphStore } from '../../store/graphStore';
@@ -39,7 +39,7 @@ interface MIDINodeProps {
     style?: React.CSSProperties;
 }
 
-export function MIDINode({
+export const MIDINode = memo(function MIDINode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -253,4 +253,4 @@ export function MIDINode({
             </div>
         </div>
     );
-}
+});

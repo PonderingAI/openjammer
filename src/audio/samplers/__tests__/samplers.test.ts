@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Constants (mirrored from adapters for testing)
 // ============================================================================
 
-const PRESET_LOAD_TIMEOUT_MS = 30000;
+const PRESET_LOAD_TIMEOUT_MS = 10000;
 const MAX_CONCURRENT_NOTES = 64;
 const SAMPLE_LOAD_TIMEOUT_MS = 30000;
 
@@ -31,7 +31,7 @@ interface MockNoteHandle {
 describe('WebAudioFontAdapter', () => {
     describe('constants', () => {
         it('should have reasonable timeout for preset loading', () => {
-            expect(PRESET_LOAD_TIMEOUT_MS).toBe(30000); // 30 seconds
+            expect(PRESET_LOAD_TIMEOUT_MS).toBe(10000); // 10 seconds
         });
 
         it('should have max concurrent notes limit', () => {

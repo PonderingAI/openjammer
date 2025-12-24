@@ -1,5 +1,5 @@
 /**
- * SamplerAdapter - Pitch-shifting sampler instrument
+ * SamplerAdapter - Simplified pitch-shifting sampler instrument
  *
  * Takes an audio sample and plays it at different pitches based on
  * keyboard/MIDI input. Each key triggers the sample at a different pitch,
@@ -7,39 +7,24 @@
  *
  * Features:
  * - Pitch shifting via playbackRate
- * - ADSR envelope with smooth automation
+ * - Simple attack/release envelope
  * - Polyphonic playback with voice stealing
- * - Loop points support
- * - Velocity curve options
  */
 
 import { getAudioContext } from '../AudioEngine';
 import { SampledInstrument } from './SampledInstrument';
-import type { VelocityCurve } from './types';
 
 export interface SamplerConfig {
   /** Root note (MIDI number) - the pitch at which sample plays at original speed */
   rootNote: number;
-  /** Attack time in seconds */
+  /** Overall gain multiplier (0-2) */
+  gain: number;
+  /** Attack time in seconds (0.001-1) */
   attack: number;
-  /** Decay time in seconds */
-  decay: number;
-  /** Sustain level (0-1) */
-  sustain: number;
-  /** Release time in seconds */
+  /** Release time in seconds (0.01-2) */
   release: number;
-  /** Velocity response curve */
-  velocityCurve: VelocityCurve;
   /** Maximum simultaneous voices */
   maxVoices: number;
-  /** Enable sample looping */
-  loopEnabled: boolean;
-  /** Loop start point in seconds */
-  loopStart: number;
-  /** Loop end point in seconds (0 = end of sample) */
-  loopEnd: number;
-  /** Trigger mode */
-  triggerMode: 'gate' | 'oneshot' | 'toggle';
 }
 
 interface Voice {
@@ -53,16 +38,10 @@ interface Voice {
 
 const DEFAULT_CONFIG: SamplerConfig = {
   rootNote: 60, // C4
+  gain: 1.0,
   attack: 0.01,
-  decay: 0.1,
-  sustain: 0.8,
-  release: 0.3,
-  velocityCurve: 'exponential',
+  release: 0.1,
   maxVoices: 16,
-  loopEnabled: false,
-  loopStart: 0,
-  loopEnd: 0,
-  triggerMode: 'gate',
 };
 
 export class SamplerAdapter extends SampledInstrument<Voice> {
@@ -81,14 +60,16 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
   // ============================================================
 
   /**
-   * Set the audio buffer to use for playback
+   * Set the audio buffer to use for playback.
+   * Pass null to clear the buffer.
    */
-  setBuffer(buffer: AudioBuffer): void {
-    this.buffer = buffer;
-    // Mark as loaded if we have a buffer
-    if (buffer) {
-      this.setLoadingState('loaded');
+  setBuffer(buffer: AudioBuffer | null): void {
+    // Stop all playing voices before changing buffer (fixes memory leak I5)
+    if (this.buffer !== buffer) {
+      this.stopAllNotes();
     }
+    this.buffer = buffer;
+    this.setLoadingState(buffer ? 'loaded' : 'idle');
   }
 
   /**
@@ -103,6 +84,13 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
    */
   hasSample(): boolean {
     return this.buffer !== null;
+  }
+
+  /**
+   * Get buffer duration in seconds
+   */
+  getDuration(): number {
+    return this.buffer?.duration ?? 0;
   }
 
   // ============================================================
@@ -121,44 +109,36 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
   }
 
   /**
-   * Set ADSR envelope parameters
+   * Set overall gain
    */
-  setADSR(attack: number, decay: number, sustain: number, release: number): void {
-    this.config.attack = Math.max(0.001, attack);
-    this.config.decay = Math.max(0.001, decay);
-    this.config.sustain = Math.max(0, Math.min(1, sustain));
-    this.config.release = Math.max(0.001, release);
+  setGain(gain: number): void {
+    this.config.gain = Math.max(0, Math.min(2, gain));
   }
 
-  getADSR(): { attack: number; decay: number; sustain: number; release: number } {
-    return {
-      attack: this.config.attack,
-      decay: this.config.decay,
-      sustain: this.config.sustain,
-      release: this.config.release,
-    };
+  getGain(): number {
+    return this.config.gain;
   }
 
   /**
-   * Set velocity curve
+   * Set attack time
    */
-  setVelocityCurve(curve: VelocityCurve): void {
-    this.config.velocityCurve = curve;
+  setAttack(attack: number): void {
+    this.config.attack = Math.max(0.001, Math.min(1, attack));
+  }
+
+  getAttack(): number {
+    return this.config.attack;
   }
 
   /**
-   * Set loop points
+   * Set release time
    */
-  setLoopPoints(start: number, end: number): void {
-    this.config.loopStart = Math.max(0, start);
-    this.config.loopEnd = Math.max(0, end);
+  setRelease(release: number): void {
+    this.config.release = Math.max(0.01, Math.min(2, release));
   }
 
-  /**
-   * Enable/disable looping
-   */
-  setLoopEnabled(enabled: boolean): void {
-    this.config.loopEnabled = enabled;
+  getRelease(): number {
+    return this.config.release;
   }
 
   /**
@@ -166,13 +146,6 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
    */
   setPolyphony(maxVoices: number): void {
     this.config.maxVoices = Math.max(1, Math.min(64, maxVoices));
-  }
-
-  /**
-   * Set trigger mode
-   */
-  setTriggerMode(mode: 'gate' | 'oneshot' | 'toggle'): void {
-    this.config.triggerMode = mode;
   }
 
   /**
@@ -195,25 +168,25 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
 
   protected async loadSamples(): Promise<void> {
     // SamplerAdapter loads samples externally via setBuffer()
-    // This method is called by the base class but we handle loading differently
     if (this.buffer) {
       return Promise.resolve();
     }
-    // If no buffer, we just resolve - the sampler will be silent until a buffer is set
     return Promise.resolve();
   }
 
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
-    if (!this.buffer || !this.outputNode) {
+    if (!this.buffer) {
+      console.warn('[SamplerAdapter] playNote called but no buffer loaded - drop a sample first');
+      return;
+    }
+    if (!this.outputNode) {
+      console.warn('[SamplerAdapter] playNote called but outputNode not initialized');
       return;
     }
 
     const ctx = getAudioContext();
-    if (!ctx) return;
-
-    // Handle toggle mode
-    if (this.config.triggerMode === 'toggle' && this.voices.has(note)) {
-      this.stopNoteImpl(note);
+    if (!ctx) {
+      console.warn('[SamplerAdapter] playNote called but AudioContext not available');
       return;
     }
 
@@ -226,20 +199,10 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
     const midiNote = this.noteToMidi(note);
     const playbackRate = this.calculatePlaybackRate(midiNote);
 
-    // Apply velocity curve
-    const adjustedVelocity = this.applyVelocityCurve(velocity, this.config.velocityCurve);
-
     // Create audio nodes
     const source = ctx.createBufferSource();
     source.buffer = this.buffer;
     source.playbackRate.value = playbackRate;
-
-    // Configure looping
-    if (this.config.loopEnabled) {
-      source.loop = true;
-      source.loopStart = this.config.loopStart;
-      source.loopEnd = this.config.loopEnd > 0 ? this.config.loopEnd : this.buffer.duration;
-    }
 
     // Create gain node for envelope
     const gainNode = ctx.createGain();
@@ -250,15 +213,11 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
     gainNode.connect(this.outputNode);
 
     const now = ctx.currentTime;
-    const { attack, decay, sustain } = this.config;
+    const targetGain = velocity * this.config.gain;
 
-    // ADSR Attack phase
-    gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(adjustedVelocity, now + attack);
-
-    // ADSR Decay phase (using setTargetAtTime for exponential decay)
-    const sustainLevel = sustain * adjustedVelocity;
-    gainNode.gain.setTargetAtTime(sustainLevel, now + attack, decay / 3);
+    // Attack: ramp from near-zero to target (avoid click from true zero start)
+    gainNode.gain.setValueAtTime(0.001, now);
+    gainNode.gain.linearRampToValueAtTime(targetGain, now + this.config.attack);
 
     // Create voice record
     const voice: Voice = {
@@ -270,29 +229,24 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
       isReleasing: false,
     };
 
+    // Register voice BEFORE starting playback to prevent race condition
+    // where playNoteImpl could be called again before registration
     this.voices.set(note, voice);
     this.voiceOrder.push(note);
     this.activeNotes.set(note, voice);
 
-    // Start playback
-    source.start();
+    // Auto-stop when sample ends (set before start)
+    source.onended = () => {
+      this.cleanupVoice(note);
+    };
 
-    // Handle oneshot mode - auto-stop when sample ends
-    if (this.config.triggerMode === 'oneshot' && !this.config.loopEnabled) {
-      source.onended = () => {
-        this.cleanupVoice(note);
-      };
-    }
+    // Start playback (after registration)
+    source.start();
   }
 
   protected stopNoteImpl(note: string): void {
     const voice = this.voices.get(note);
     if (!voice || voice.isReleasing) return;
-
-    // In oneshot mode, don't respond to stop
-    if (this.config.triggerMode === 'oneshot') {
-      return;
-    }
 
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -302,13 +256,13 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
     const now = ctx.currentTime;
     const { release } = this.config;
 
-    // ADSR Release phase
+    // Release: exponential decay to 0
     voice.gainNode.gain.cancelScheduledValues(now);
     voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
     voice.gainNode.gain.setTargetAtTime(0, now, release / 3);
 
-    // Schedule cleanup after release
-    const cleanupDelay = release * 5 * 1000; // 5 time constants in ms
+    // Schedule cleanup after release (5 time constants)
+    const cleanupDelay = release * 5 * 1000;
     this.scheduleCleanup(() => {
       this.cleanupVoice(note);
     }, cleanupDelay);
@@ -361,7 +315,7 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
       // Already stopped
     }
 
-    // Schedule cleanup after stop completes (30ms > 20ms stop time)
+    // Schedule cleanup
     this.scheduleCleanup(() => {
       this.cleanupVoice(note);
     }, 30);
@@ -387,7 +341,7 @@ export class SamplerAdapter extends SampledInstrument<Voice> {
   }
 
   // ============================================================
-  // Public Overrides
+  // Public Methods
   // ============================================================
 
   /**

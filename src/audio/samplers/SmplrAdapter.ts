@@ -81,7 +81,7 @@ export class SmplrInstrument extends SampledInstrument<boolean> {
 
     // Schedule stop with small delay to allow natural release
     // smplr's Versilian instruments have built-in release samples
-    const releaseDelay = 100; // ms - short delay to trigger release sample
+    const releaseDelay = 50; // ms - short delay to trigger release sample
     handle.stopTimeout = window.setTimeout(() => {
       // Guard against operations after disconnect
       if (this.isDisconnected) return;

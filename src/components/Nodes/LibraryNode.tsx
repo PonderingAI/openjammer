@@ -13,7 +13,7 @@
  * - Resizable node
  */
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, memo } from 'react';
 import { toast } from 'sonner';
 import type { GraphNode, LibraryNodeData, LibraryItemRef, NodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
@@ -47,12 +47,20 @@ interface LibraryNodeProps {
 const MIN_WIDTH = 400;
 const MIN_HEIGHT = 300;
 
-// Type guard for LibraryNodeData
+// Type guard for LibraryNodeData - validates expected shape
 function isLibraryNodeData(data: NodeData | undefined): data is LibraryNodeData {
-  return data !== null && data !== undefined && typeof data === 'object';
+  if (data === null || data === undefined || typeof data !== 'object') return false;
+  const d = data as Record<string, unknown>;
+
+  // Validate field types if present (allow partial data being initialized)
+  if ('itemRefs' in d && !Array.isArray(d.itemRefs)) return false;
+  if ('playbackMode' in d && !['oneshot', 'loop', 'hold'].includes(d.playbackMode as string)) return false;
+  if ('volume' in d && (typeof d.volume !== 'number' || !Number.isFinite(d.volume))) return false;
+
+  return true;
 }
 
-export function LibraryNode({
+export const LibraryNode = memo(function LibraryNode({
   node,
   handleHeaderMouseDown,
   handleNodeMouseEnter,
@@ -73,7 +81,6 @@ export function LibraryNode({
 
   // Library store
   const libraries = useLibraryStore(s => s.libraries);
-  const items = useLibraryStore(s => s.items);
   const scanProgress = useLibraryStore(s => s.scanProgress);
   const addLibrary = useLibraryStore(s => s.addLibrary);
   const scanLibrary = useLibraryStore(s => s.scanLibrary);
@@ -86,11 +93,16 @@ export function LibraryNode({
   const createTag = useLibraryStore(s => s.createTag);
   const pinTag = useLibraryStore(s => s.pinTag);
   const unpinTag = useLibraryStore(s => s.unpinTag);
+  const deleteTag = useLibraryStore(s => s.deleteTag);
   const addTagToItem = useLibraryStore(s => s.addTagToItem);
+  const removeTagFromItem = useLibraryStore(s => s.removeTagFromItem);
+  const reorderPinnedTags = useLibraryStore(s => s.reorderPinnedTags);
   const activeFilterTag = useLibraryStore(s => s.activeFilterTag);
   const setActiveFilterTag = useLibraryStore(s => s.setActiveFilterTag);
   const trashItem = useLibraryStore(s => s.trashItem);
   const restoreItem = useLibraryStore(s => s.restoreItem);
+  const emptyTrash = useLibraryStore(s => s.emptyTrash);
+  const permanentlyDeleteItem = useLibraryStore(s => s.permanentlyDeleteItem);
 
   // Auto-connect to project library if available
   // Priority: node's own libraryId > projectLibraryId
@@ -125,7 +137,10 @@ export function LibraryNode({
   const [newTagName, setNewTagName] = useState('');
   const [dragOverTag, setDragOverTag] = useState<string | null>(null);
   const [dragOverPinnedSection, setDragOverPinnedSection] = useState(false);
+  const [dragOverOtherSection, setDragOverOtherSection] = useState(false);
   const [draggingTag, setDraggingTag] = useState<string | null>(null);
+  const [draggingPinnedTag, setDraggingPinnedTag] = useState<string | null>(null);
+  const [pinnedDropIndex, setPinnedDropIndex] = useState<number | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
@@ -146,6 +161,7 @@ export function LibraryNode({
   const filesContainerRef = useRef<HTMLDivElement>(null);
   const fileRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isMountedRef = useRef(true); // Track mount state for async safety
 
   // Get updateItem from store
   const updateItem = useLibraryStore(s => s.updateItem);
@@ -253,22 +269,28 @@ export function LibraryNode({
   }, [node.id, addLibrary, scanLibrary, updateNodeData]);
 
   // Handle item selection (I5: with loading state, C5: with toast errors)
+  // Uses getState() to avoid stale closure issues with items and data.itemRefs
   const handleSelectItem = useCallback(
     async (itemId: string) => {
-      const item = items[itemId];
-      if (!item) return;
+      // Get fresh state at execution time to avoid stale closures
+      const freshItem = useLibraryStore.getState().items[itemId];
+      if (!freshItem) return;
 
       setLoadingItemId(itemId);
+
+      // Get fresh itemRefs from current node data (nodes is a Map)
+      const currentNode = useGraphStore.getState().nodes.get(node.id);
+      const currentItemRefs = (currentNode?.data as LibraryNodeData | undefined)?.itemRefs || [];
 
       updateNodeData<LibraryNodeData>(node.id, {
         currentItemId: itemId,
         itemRefs: [
-          ...(data.itemRefs || []).filter((r: LibraryItemRef) => r.id !== itemId),
+          ...currentItemRefs.filter((r: LibraryItemRef) => r.id !== itemId),
           {
             id: itemId,
-            relativePath: item.relativePath,
-            displayName: item.fileName,
-            libraryId: item.libraryId,
+            relativePath: freshItem.relativePath,
+            displayName: freshItem.fileName,
+            libraryId: freshItem.libraryId,
           },
         ],
       });
@@ -292,13 +314,15 @@ export function LibraryNode({
         console.error('Failed to load item for sampler:', err);
         toast.error('Failed to load audio file');
       } finally {
-        setLoadingItemId(null);
+        // Only clear loading state if this item is still loading (handle rapid clicks)
+        setLoadingItemId(current => current === itemId ? null : current);
       }
     },
-    [node.id, items, data.itemRefs, updateNodeData]
+    [node.id, updateNodeData]
   );
 
   // Handle preview (C1: track active sources, C5: toast errors, I7: proper error logging)
+  // Uses isMountedRef to prevent state updates after unmount
   const handlePreviewItem = useCallback(
     async (itemId: string) => {
       if (audioSourceRef.current) {
@@ -322,6 +346,9 @@ export function LibraryNode({
 
       try {
         const file = await getSampleFile(itemId);
+        // Check if component is still mounted after async operation
+        if (!isMountedRef.current) return;
+
         if (!file) {
           setPreviewingItemId(null);
           toast.error('File not found');
@@ -336,7 +363,12 @@ export function LibraryNode({
         }
 
         const arrayBuffer = await file.arrayBuffer();
+        // Check if component is still mounted after async operation
+        if (!isMountedRef.current) return;
+
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        // Check if component is still mounted after async operation
+        if (!isMountedRef.current) return;
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
@@ -346,6 +378,8 @@ export function LibraryNode({
         activeSourcesRef.current.add(source);
 
         source.onended = () => {
+          // Only update state if component is still mounted
+          if (!isMountedRef.current) return;
           // Only clear preview state if this source's item is still the current preview
           // This prevents race conditions where a new preview starts before this one ends
           setPreviewingItemId((current) => current === expectedItemId ? null : current);
@@ -359,16 +393,23 @@ export function LibraryNode({
         audioSourceRef.current = source;
       } catch (err) {
         console.error('Preview failed:', err);
-        setPreviewingItemId(null);
-        toast.error('Preview failed - file may be corrupted');
+        // Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setPreviewingItemId(null);
+          toast.error('Preview failed - file may be corrupted');
+        }
       }
     },
     [previewingItemId]
   );
 
-  // Cleanup on unmount (C1: stop all audio sources, C2: clear refs)
+  // Cleanup on unmount (C1: stop all audio sources, C2: clear refs, C3: mark unmounted)
   useEffect(() => {
+    isMountedRef.current = true; // Ensure mounted on effect run
     return () => {
+      // Mark as unmounted first to prevent state updates from async operations
+      isMountedRef.current = false;
+
       // Stop all active audio sources (C1)
       activeSourcesRef.current.forEach(source => {
         try {
@@ -394,16 +435,18 @@ export function LibraryNode({
   }, []);
 
   // Handle double-click to edit file name
+  // Uses getState() to avoid stale closure with items
   const handleStartEditFileName = useCallback((itemId: string) => {
-    const item = items[itemId];
+    const item = useLibraryStore.getState().items[itemId];
     if (!item) return;
     // Get base name without extension
     const baseName = item.fileName.replace(/\.[^.]+$/, '');
     setEditingItemId(itemId);
     setEditingName(baseName);
-  }, [items]);
+  }, []);
 
   // Handle save file name
+  // Uses getState() to avoid stale closure with items
   const handleSaveFileName = useCallback(() => {
     if (!editingItemId || !editingName.trim()) {
       setEditingItemId(null);
@@ -411,7 +454,7 @@ export function LibraryNode({
       return;
     }
 
-    const item = items[editingItemId];
+    const item = useLibraryStore.getState().items[editingItemId];
     if (!item) {
       setEditingItemId(null);
       setEditingName('');
@@ -430,7 +473,7 @@ export function LibraryNode({
 
     setEditingItemId(null);
     setEditingName('');
-  }, [editingItemId, editingName, items, updateItem]);
+  }, [editingItemId, editingName, updateItem]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -663,27 +706,95 @@ export function LibraryNode({
   // Handle tag drag start (from other tags section)
   const handleTagDragStart = useCallback((e: React.DragEvent, tagName: string) => {
     e.dataTransfer.setData('application/tag-name', tagName);
+    e.dataTransfer.setData('application/tag-source', 'other');
     e.dataTransfer.effectAllowed = 'move';
     setDraggingTag(tagName);
+  }, []);
+
+  // Handle pinned tag drag start (for reordering)
+  const handlePinnedTagDragStart = useCallback((e: React.DragEvent, tagName: string) => {
+    e.dataTransfer.setData('application/tag-name', tagName);
+    e.dataTransfer.setData('application/tag-source', 'pinned');
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingPinnedTag(tagName);
   }, []);
 
   // Handle tag drag end
   const handleTagDragEnd = useCallback(() => {
     setDraggingTag(null);
+    setDraggingPinnedTag(null);
     setDragOverPinnedSection(false);
+    setDragOverOtherSection(false);
+    setPinnedDropIndex(null);
   }, []);
 
-  // Handle drop on pinned tags section (to pin a tag)
+  // Calculate drop index for pinned tags based on mouse position
+  const handlePinnedTagDragOver = useCallback((e: React.DragEvent, tagIndex: number) => {
+    e.preventDefault();
+    if (!draggingPinnedTag && !draggingTag) return;
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const dropIndex = e.clientY < midY ? tagIndex : tagIndex + 1;
+    setPinnedDropIndex(dropIndex);
+  }, [draggingPinnedTag, draggingTag]);
+
+  // Handle drop on pinned tags section (to pin or reorder)
   const handlePinnedSectionDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // Prevent canvas from also handling the drop
+    e.stopPropagation();
     setDragOverPinnedSection(false);
+    setPinnedDropIndex(null);
 
     const tagName = e.dataTransfer.getData('application/tag-name');
-    if (tagName && !pinnedTags.includes(tagName)) {
-      pinTag(tagName);
+    const source = e.dataTransfer.getData('application/tag-source');
+
+    if (!tagName) return;
+
+    if (source === 'pinned') {
+      // Reordering pinned tag
+      const currentIndex = pinnedTags.indexOf(tagName);
+      if (currentIndex === -1) return;
+
+      let targetIndex = pinnedDropIndex ?? pinnedTags.length;
+      // Adjust target if dragging down (account for removal)
+      if (targetIndex > currentIndex) targetIndex--;
+
+      if (targetIndex !== currentIndex && targetIndex >= 0) {
+        const newOrder = [...pinnedTags];
+        newOrder.splice(currentIndex, 1);
+        newOrder.splice(targetIndex, 0, tagName);
+        reorderPinnedTags(newOrder);
+      }
+    } else {
+      // Pinning a new tag from other section
+      if (!pinnedTags.includes(tagName)) {
+        if (pinnedDropIndex !== null && pinnedDropIndex < pinnedTags.length) {
+          // Insert at specific position
+          const newOrder = [...pinnedTags];
+          newOrder.splice(pinnedDropIndex, 0, tagName);
+          reorderPinnedTags(newOrder);
+        } else {
+          pinTag(tagName);
+        }
+      }
     }
-  }, [pinnedTags, pinTag]);
+  }, [pinnedTags, pinnedDropIndex, pinTag, reorderPinnedTags]);
+
+  // Handle drop on other section (to unpin)
+  const handleOtherSectionDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverOtherSection(false);
+
+    const tagName = e.dataTransfer.getData('application/tag-name');
+    const source = e.dataTransfer.getData('application/tag-source');
+
+    // Only unpin if dragging from pinned section
+    if (tagName && source === 'pinned' && pinnedTags.includes(tagName)) {
+      unpinTag(tagName);
+    }
+  }, [pinnedTags, unpinTag]);
 
   // Focus input when creating tag
   useEffect(() => {
@@ -694,32 +805,54 @@ export function LibraryNode({
 
 
   // Render tag item
-  const renderTag = (tagName: string, isPinned: boolean) => {
+  const renderTag = (tagName: string, isPinned: boolean, index?: number) => {
     const isActive = activeFilterTag === tagName;
     const color = getTagColor(tagName);
-    const isDragging = draggingTag === tagName;
+    const isDragging = isPinned ? draggingPinnedTag === tagName : draggingTag === tagName;
+    const showDropBefore = isPinned && pinnedDropIndex === index && (draggingPinnedTag || draggingTag);
+    const showDropAfter = isPinned && pinnedDropIndex === (index ?? 0) + 1 && index === pinnedTags.length - 1 && (draggingPinnedTag || draggingTag);
 
     return (
       <div
         key={tagName}
-        className={`library-tag ${isActive ? 'active' : ''} ${dragOverTag === tagName ? 'drag-over' : ''} ${isDragging ? 'dragging' : ''}`}
+        className={`library-tag ${isActive ? 'active' : ''} ${dragOverTag === tagName ? 'drag-over' : ''} ${isDragging ? 'dragging' : ''} ${showDropBefore ? 'drop-before' : ''} ${showDropAfter ? 'drop-after' : ''}`}
         style={{ '--tag-color': color } as React.CSSProperties}
         onClick={() => handleTagClick(tagName)}
-        draggable={!isPinned}
-        onDragStart={(e) => !isPinned && handleTagDragStart(e, tagName)}
+        draggable
+        onDragStart={(e) => isPinned ? handlePinnedTagDragStart(e, tagName) : handleTagDragStart(e, tagName)}
         onDragEnd={handleTagDragEnd}
-        onDragOver={(e) => { e.preventDefault(); setDragOverTag(tagName); }}
-        onDragLeave={() => setDragOverTag(null)}
-        onDrop={(e) => handleTagDrop(e, tagName)}
-        title={isPinned ? 'Click to filter, drop file to tag' : 'Drag up to pin, click to filter'}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (isPinned && index !== undefined) {
+            handlePinnedTagDragOver(e, index);
+          } else {
+            setDragOverTag(tagName);
+          }
+        }}
+        onDragLeave={() => { setDragOverTag(null); }}
+        onDrop={(e) => isPinned ? handlePinnedSectionDrop(e) : handleTagDrop(e, tagName)}
+        title={isPinned ? 'Drag to reorder, drag to Other to unpin' : 'Drag to Pinned to pin, click to filter'}
       >
         <span className="tag-indicator" style={{ backgroundColor: color }} />
         <span className="tag-name">{tagName}</span>
-        {isPinned && (
+        {isPinned ? (
           <button
             className="tag-unpin-btn"
             onClick={(e) => { e.stopPropagation(); unpinTag(tagName); }}
             title="Unpin tag"
+          >
+            ×
+          </button>
+        ) : (
+          <button
+            className="tag-delete-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm(`Delete tag "${tagName}"? This will remove it from all files.`)) {
+                deleteTag(tagName);
+              }
+            }}
+            title="Delete tag"
           >
             ×
           </button>
@@ -747,6 +880,16 @@ export function LibraryNode({
         }}
         className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''} ${isLoading ? 'loading' : ''}`}
         onClick={(e) => !isEditing && handleFileRowClick(item.id, e)}
+        onKeyDown={(e) => {
+          if (isEditing) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleFileRowClick(item.id, e as unknown as React.MouseEvent);
+          }
+        }}
+        tabIndex={0}
+        role="listitem"
+        aria-selected={isActive || isMultiSelected}
         draggable={!isTrashed && !isEditing}
         onDragStart={(e) => !isTrashed && !isEditing && handleFileDragStart(e, item)}
       >
@@ -803,9 +946,36 @@ export function LibraryNode({
                 '--tag-text': getTagColorDark(tag),
               } as React.CSSProperties}
               onClick={(e) => { e.stopPropagation(); handleTagClick(tag); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleTagClick(tag);
+                }
+              }}
+              tabIndex={0}
+              role="button"
               title={`Filter by ${tag}`}
             >
               {tag}
+              <button
+                className="tag-remove-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeTagFromItem(item.id, tag);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    removeTagFromItem(item.id, tag);
+                  }
+                }}
+                title={`Remove ${tag} tag`}
+                aria-label={`Remove ${tag} tag`}
+              >
+                ×
+              </button>
             </span>
           ))}
           {item.tags.filter(t => t !== 'trash').length > 2 && (
@@ -816,18 +986,51 @@ export function LibraryNode({
         {/* Trash/Restore button */}
         <button
           className={`file-trash-btn ${isTrashed ? 'restore' : ''}`}
+          disabled={isPreviewing || isLoading}
           onClick={(e) => {
             e.stopPropagation();
             if (isTrashed) {
               restoreItem(item.id);
+              // Only clear filter if we're viewing trash, so restored item appears in main list
+              if (activeFilterTag === 'trash') {
+                setActiveFilterTag(null);
+              }
+              toast.success('Item restored');
             } else {
               trashItem(item.id);
+              toast.info('Item moved to trash');
             }
           }}
           title={isTrashed ? 'Restore' : 'Move to trash'}
         >
           {isTrashed ? '↩' : '×'}
         </button>
+
+        {/* Permanent delete button (only for trashed items) */}
+        {isTrashed && (
+          <button
+            className="file-delete-btn"
+            disabled={isPreviewing || isLoading}
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (confirm(`Permanently delete "${item.fileName}"? This cannot be undone.`)) {
+                setLoadingItemId(item.id);
+                try {
+                  await permanentlyDeleteItem(item.id);
+                  toast.success('Item permanently deleted');
+                } catch (error) {
+                  console.error('Failed to delete item:', error);
+                  toast.error('Failed to delete item');
+                } finally {
+                  setLoadingItemId(null);
+                }
+              }
+            }}
+            title="Permanently delete"
+          >
+            🗑
+          </button>
+        )}
       </div>
     );
   };
@@ -907,7 +1110,7 @@ export function LibraryNode({
                   <span>pinned Tags</span>
                 </div>
                 <ScrollContainer mode="dropdown" className="tags-list">
-                  {pinnedTags.map(tag => renderTag(tag, true))}
+                  {pinnedTags.map((tag, index) => renderTag(tag, true, index))}
                   {pinnedTags.length === 0 && (
                     <div className="no-tags-hint">Drag tags here to pin</div>
                   )}
@@ -922,8 +1125,19 @@ export function LibraryNode({
                 className="library-separator"
               />
 
-              {/* Other Tags Section */}
-              <div className="library-tags-section other" style={{ height: `${(1 - separatorPos) * 100}%` }}>
+              {/* Other Tags Section - drop zone for unpinning */}
+              <div
+                className={`library-tags-section other ${dragOverOtherSection ? 'drag-over' : ''}`}
+                style={{ height: `${(1 - separatorPos) * 100}%` }}
+                onDragOver={(e) => {
+                  if (draggingPinnedTag) {
+                    e.preventDefault();
+                    setDragOverOtherSection(true);
+                  }
+                }}
+                onDragLeave={() => setDragOverOtherSection(false)}
+                onDrop={handleOtherSectionDrop}
+              >
                 <div className="tags-section-header">
                   <span>other Tags</span>
                   <button
@@ -980,6 +1194,30 @@ export function LibraryNode({
                     × {activeFilterTag}
                   </button>
                 )}
+                {activeFilterTag === 'trash' && libraryItems.length > 0 && (
+                  <button
+                    className="empty-trash-btn"
+                    disabled={loadingItemId !== null}
+                    onClick={async () => {
+                      if (confirm(`Permanently delete ${libraryItems.length} trashed item${libraryItems.length !== 1 ? 's' : ''}? This cannot be undone.`)) {
+                        setLoadingItemId('empty-trash');
+                        try {
+                          await emptyTrash();
+                          setActiveFilterTag(null);
+                          toast.success('Trash emptied');
+                        } catch (error) {
+                          console.error('[Library] Failed to empty trash:', error);
+                          toast.error('Failed to empty trash');
+                        } finally {
+                          setLoadingItemId(null);
+                        }
+                      }
+                    }}
+                    title="Permanently delete all trashed items"
+                  >
+                    Empty Trash
+                  </button>
+                )}
               </div>
 
               {/* File list with selection box support */}
@@ -1030,4 +1268,4 @@ export function LibraryNode({
       />
     </div>
   );
-}
+});

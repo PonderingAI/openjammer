@@ -118,14 +118,20 @@ export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps)
         }
     }, [isConnecting, setHoverTarget]);
 
-    // Check if a port has connections
-    const hasConnection = useCallback((portId: string) => {
-        return Array.from(connections.values()).some(
-            conn =>
-                (conn.sourceNodeId === node.id && conn.sourcePortId === portId) ||
-                (conn.targetNodeId === node.id && conn.targetPortId === portId)
-        );
+    // Precompute connected ports Set for O(1) lookup instead of O(n) per port check
+    const connectedPorts = useMemo(() => {
+        const set = new Set<string>();
+        connections.forEach(conn => {
+            if (conn.sourceNodeId === node.id) set.add(conn.sourcePortId);
+            if (conn.targetNodeId === node.id) set.add(conn.targetPortId);
+        });
+        return set;
     }, [connections, node.id]);
+
+    // Check if a port has connections - O(1) lookup
+    const hasConnection = useCallback((portId: string) => {
+        return connectedPorts.has(portId);
+    }, [connectedPorts]);
 
     // Handle node header drag
     const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {

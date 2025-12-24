@@ -2,7 +2,7 @@
  * Node Canvas - Main canvas with pan/zoom, box selection, and node rendering
  */
 
-import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo, memo } from 'react';
 import type { Position, NodeType, Connection } from '../../engine/types';
 import { useGraphStore, getNodeDimensions, type NodeBounds } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -15,12 +15,13 @@ import { getNodeDefinition } from '../../engine/registry';
 import { getPortPosition as calculatePortPosition } from '../../utils/portPositions';
 import { getConnectionBundleCount } from '../../utils/portSync';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { useScrollCapture, type ScrollData } from '../../hooks/useScrollCapture';
 import { ContextMenu } from './ContextMenu';
 import { NodeWrapper } from '../Nodes/NodeWrapper';
 import { useMIDIStore } from '../../store/midiStore';
 import { useAudioClipStore } from '../../store/audioClipStore';
 import { useLibraryStore, getSampleFile } from '../../store/libraryStore';
-import { createClipFromSample, generateWaveformPeaks } from '../../utils/clipUtils';
+import { createClipFromSample, generateWaveformPeaksAsync } from '../../utils/clipUtils';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { AudioClipVisual } from '../Clips/AudioClipVisual';
 import { ClipDragLayer } from '../Clips/ClipDragLayer';
@@ -33,6 +34,61 @@ interface SelectionBox {
     currentX: number;
     currentY: number;
 }
+
+/** Props for the memoized ConnectionPath component */
+interface ConnectionPathProps {
+    conn: Connection;
+    path: string;
+    isSelected: boolean;
+    isBundled: boolean;
+    bundleCount: number;
+    signalLevel: number;
+    onSelect: (connId: string) => void;
+}
+
+/**
+ * Memoized connection path component - only re-renders when connection changes
+ * or signal level changes by more than 1%
+ */
+const ConnectionPath = memo(function ConnectionPath({
+    conn,
+    path,
+    isSelected,
+    isBundled,
+    bundleCount,
+    signalLevel,
+    onSelect
+}: ConnectionPathProps) {
+    const signalStyle = {
+        '--signal-level': signalLevel.toFixed(3)
+    } as React.CSSProperties;
+
+    return (
+        <g>
+            <path
+                d={path}
+                data-connection-id={conn.id}
+                className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''} ${isBundled ? 'bundled' : ''}`}
+                style={signalStyle}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect(conn.id);
+                }}
+            />
+            {isBundled && (
+                <title>{`Bundle (${bundleCount} connections)`}</title>
+            )}
+        </g>
+    );
+}, (prev, next) => {
+    // Custom comparison: skip re-render if signal level changed by less than 1%
+    return prev.conn.id === next.conn.id &&
+           prev.path === next.path &&
+           prev.isSelected === next.isSelected &&
+           prev.isBundled === next.isBundled &&
+           prev.bundleCount === next.bundleCount &&
+           Math.abs(prev.signalLevel - next.signalLevel) < 0.01;
+});
 
 export function NodeCanvas() {
     const canvasRef = useRef<HTMLDivElement>(null);
@@ -146,6 +202,8 @@ export function NodeCanvas() {
     // Audio store for mode switching
     const setCurrentMode = useAudioStore((s) => s.setCurrentMode);
 
+    // Mouse position: ref for zoom (always updated), state for temp connection (only when connecting)
+    const mousePosRef = useRef<Position>({ x: 0, y: 0 });
     const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 });
     const lastPanPos = useRef<Position>({ x: 0, y: 0 });
 
@@ -249,7 +307,13 @@ export function NodeCanvas() {
 
     // Handle mouse move
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        setMousePos({ x: e.clientX, y: e.clientY });
+        // Always update ref for zoom operations
+        mousePosRef.current = { x: e.clientX, y: e.clientY };
+
+        // Only update state when connecting (for temp connection line)
+        if (isConnecting) {
+            setMousePos({ x: e.clientX, y: e.clientY });
+        }
 
         // Update clip drag position if dragging a clip
         if (clipDragState.isDragging) {
@@ -298,7 +362,7 @@ export function NodeCanvas() {
                 });
             }
         }
-    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect, clipDragState.isDragging, updateClipDrag]);
+    }, [isPanning, panBy, selectionBox, screenToCanvas, rightClickStart, selectNodesInRect, clipDragState.isDragging, updateClipDrag, isConnecting]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
@@ -439,7 +503,9 @@ export function NodeCanvas() {
 
             const arrayBuffer = await file.arrayBuffer();
             const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-            const waveformPeaks = generateWaveformPeaks(audioBuffer, 64);
+            // Use async worker for non-blocking waveform generation
+            const waveformPeaksF32 = await generateWaveformPeaksAsync(audioBuffer, 64);
+            const waveformPeaks = Array.from(waveformPeaksF32);
             const clipData = createClipFromSample(item, waveformPeaks, itemData.sourceNodeId);
 
             // Calculate canvas position from drop coordinates
@@ -460,35 +526,27 @@ export function NodeCanvas() {
     }, [libraryItems, screenToCanvas, addClip, selectClip]);
 
     // Handle wheel for zoom and two-finger trackpad pan
-    // Note: This uses a native event listener with { passive: false } to allow preventDefault()
-    // React's onWheel uses passive listeners by default which prevents preventDefault()
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+    // Uses standardized scroll capture to prevent propagation and handle touchpad/mouse correctly
+    const handleCanvasScroll = useCallback((data: ScrollData) => {
+        // Pinch-to-zoom gesture (ctrlKey/metaKey set by browser for pinch gestures)
+        if (data.isPinch) {
+            const delta = data.scrollingDown ? 0.9 : 1.1;
+            const newZoom = zoom * delta;
+            // Use tracked mouse position ref for zoom-toward-cursor (avoids re-render dependency)
+            zoomTo(newZoom, mousePosRef.current);
+            return;
+        }
 
-        const handleWheel = (e: WheelEvent) => {
-            e.preventDefault();
-
-            // Pinch-to-zoom gesture (ctrlKey is set by browser for pinch gestures)
-            if (e.ctrlKey) {
-                const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                const newZoom = zoom * delta;
-                zoomTo(newZoom, { x: e.clientX, y: e.clientY });
-                return;
-            }
-
-            // Two-finger trackpad pan - pans in all directions (horizontal, vertical, diagonal)
-            // This allows natural panning with two fingers on laptop trackpads
-            panBy({ x: -e.deltaX, y: -e.deltaY });
-        };
-
-        // Add with { passive: false } to allow preventDefault()
-        canvas.addEventListener('wheel', handleWheel, { passive: false });
-
-        return () => {
-            canvas.removeEventListener('wheel', handleWheel);
-        };
+        // Two-finger trackpad pan - pans in all directions (horizontal, vertical, diagonal)
+        // This allows natural panning with two fingers on laptop trackpads
+        panBy({ x: -data.deltaX, y: -data.deltaY });
     }, [zoom, zoomTo, panBy]);
+
+    // Attach scroll capture to canvas
+    const { ref: scrollCaptureRef } = useScrollCapture<HTMLDivElement>({
+        onScroll: handleCanvasScroll,
+        capture: true, // Block all scrolling, handle custom zoom/pan
+    });
 
     // Keyboard row key mappings
     const ROW_KEYS: Record<number, string[]> = {
@@ -918,7 +976,7 @@ export function NodeCanvas() {
         return position;
     }, [allNodes, pan, zoom]);
 
-    // Render connection path
+    // Render connection path using memoized component
     const renderConnection = useCallback((conn: Connection) => {
         const startPos = getPortPosition(conn.sourceNodeId, conn.sourcePortId);
         const endPos = getPortPosition(conn.targetNodeId, conn.targetPortId);
@@ -945,27 +1003,17 @@ export function NodeCanvas() {
         const audioConnectionKey = `${conn.sourceNodeId}->${conn.targetNodeId}`;
         const signalLevel = signalLevels.get(audioConnectionKey) ?? signalLevels.get(conn.id) ?? 0;
 
-        // Apply unified signal-based styling for all connection types
-        const signalStyle = {
-            '--signal-level': signalLevel.toFixed(3)
-        } as React.CSSProperties;
-
         return (
-            <g key={conn.id}>
-                <path
-                    d={path}
-                    data-connection-id={conn.id}
-                    className={`connection-line ${conn.type} ${isSelected ? 'selected' : ''} ${isBundled ? 'bundled' : ''}`}
-                    style={signalStyle}
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        selectConnection(conn.id);
-                    }}
-                />
-                {isBundled && (
-                    <title>{`Bundle (${bundleCount} connections)`}</title>
-                )}
-            </g>
+            <ConnectionPath
+                key={conn.id}
+                conn={conn}
+                path={path}
+                isSelected={isSelected}
+                isBundled={isBundled}
+                bundleCount={bundleCount}
+                signalLevel={signalLevel}
+                onSelect={selectConnection}
+            />
         );
     }, [getPortPosition, selectedConnectionIds, selectConnection, allNodes, allConnections, signalLevels]);
 
@@ -1108,9 +1156,17 @@ export function NodeCanvas() {
         );
     };
 
+    // Merge canvas ref with scroll capture ref
+    const mergedCanvasRef = useCallback((node: HTMLDivElement | null) => {
+        // Update our internal ref
+        (canvasRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        // Also pass to scroll capture
+        scrollCaptureRef(node);
+    }, [scrollCaptureRef]);
+
     return (
         <div
-            ref={canvasRef}
+            ref={mergedCanvasRef}
             className={`node-canvas ${ghostMode ? 'ghost-mode' : ''} ${isConnecting ? 'is-connecting' : ''}`}
             onContextMenu={handleContextMenu}
             onMouseDown={handleMouseDown}

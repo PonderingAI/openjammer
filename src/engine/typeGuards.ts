@@ -86,34 +86,24 @@ export function isValidSamplerRow(row: unknown): row is SamplerRow {
     if (typeof row !== 'object' || row === null) return false;
     const r = row as Record<string, unknown>;
 
-    // Type checks
-    if (typeof r.rowId !== 'string') return false;
+    // Required string field checks
+    if (typeof r.rowId !== 'string' || r.rowId.length === 0) return false;
+    if (typeof r.sourceNodeId !== 'string' || r.sourceNodeId.length === 0) return false;
+    if (typeof r.sourcePortId !== 'string' || r.sourcePortId.length === 0) return false;
+    if (typeof r.targetPortId !== 'string' || r.targetPortId.length === 0) return false;
+    if (typeof r.label !== 'string') return false; // label can be empty
+
+    // Required number field checks
     if (typeof r.portCount !== 'number' || !Number.isFinite(r.portCount)) return false;
-    if (typeof r.baseOffset !== 'number' || !Number.isFinite(r.baseOffset)) return false;
     if (typeof r.spread !== 'number' || !Number.isFinite(r.spread)) return false;
     if (typeof r.gain !== 'number' || !Number.isFinite(r.gain)) return false;
 
     // Range validation
     if (r.portCount < VALIDATION_BOUNDS.MIN_PORT_COUNT ||
         r.portCount > VALIDATION_BOUNDS.MAX_PORT_COUNT) return false;
-    if (r.baseOffset < VALIDATION_BOUNDS.MIN_OFFSET ||
-        r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
     if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
         r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
     if (r.gain < 0 || r.gain > 2) return false;  // 0-2 gain range
-
-    // Validate keyGains if present (optional field)
-    if ('keyGains' in r && r.keyGains !== undefined) {
-        if (!Array.isArray(r.keyGains)) return false;
-        const gains = r.keyGains as unknown[];
-        const validGains = gains.every((g): g is number =>
-            typeof g === 'number' &&
-            Number.isFinite(g) &&
-            g >= VALIDATION_BOUNDS.MIN_KEY_GAIN &&
-            g <= VALIDATION_BOUNDS.MAX_KEY_GAIN
-        );
-        if (!validGains) return false;
-    }
 
     return true;
 }

@@ -6,6 +6,8 @@ import { useState, useEffect } from 'react';
 import { useAudioStore } from '../../store/audioStore';
 import { reinitAudioContext, getLatencyMetrics, startLatencyMonitoring } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { LowLatencyGuide } from '../Guides';
+import { useLowLatencyGuide } from '../../store/guideStore';
 import './AudioSettingsPanel.css';
 
 export function AudioSettingsPanel() {
@@ -15,9 +17,13 @@ export function AudioSettingsPanel() {
     const setAudioConfig = useAudioStore((s) => s.setAudioConfig);
     const updateAudioMetrics = useAudioStore((s) => s.updateAudioMetrics);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+    const setAudioContextReady = useAudioStore((s) => s.setAudioContextReady);
 
     const [pendingConfig, setPendingConfig] = useState(audioConfig);
     const [isRestarting, setIsRestarting] = useState(false);
+
+    // Low latency guide
+    const lowLatencyGuide = useLowLatencyGuide();
 
     // Sync pendingConfig with audioConfig when it changes externally
     useEffect(() => {
@@ -43,18 +49,25 @@ export function AudioSettingsPanel() {
         setIsRestarting(true);
 
         try {
-            // Update store
+            // Update store config first
             setAudioConfig(pendingConfig);
 
-            // Reinitialize audio context
+            // Mark audio context as not ready - this triggers App.tsx to dispose audioGraphManager
+            setAudioContextReady(false);
+
+            // Dispose the audio graph (clears all audio nodes)
+            audioGraphManager.dispose();
+
+            // Reinitialize audio context with new settings
             await reinitAudioContext({
                 sampleRate: pendingConfig.sampleRate,
                 latencyHint: pendingConfig.latencyHint
             });
 
-            // Reinitialize audio graph manager
-            audioGraphManager.dispose();
-            // Re-initialization happens in App.tsx via useEffect
+            // Mark audio context as ready again - this triggers App.tsx to reinitialize
+            // the audioGraphManager, which will rebuild all audio connections.
+            // MicrophoneNode and other components will reinitialize with new settings.
+            setAudioContextReady(true);
 
             // Update metrics
             const metrics = getLatencyMetrics();
@@ -67,6 +80,8 @@ export function AudioSettingsPanel() {
         } catch (err) {
             console.error('Failed to apply audio config:', err);
             alert('Failed to apply audio settings. Please try again.');
+            // Try to restore audio context ready state on error
+            setAudioContextReady(true);
         } finally {
             setIsRestarting(false);
         }
@@ -76,6 +91,24 @@ export function AudioSettingsPanel() {
 
     return (
         <div className="audio-settings-panel">
+            {/* Low Latency Setup Guide Button */}
+            <button
+                className="guide-launch-btn"
+                onClick={lowLatencyGuide.open}
+            >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+                </svg>
+                Low Latency Setup Guide
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="arrow-icon">
+                    <polyline points="9 18 15 12 9 6" />
+                </svg>
+            </button>
+
+            {/* Low Latency Guide Modal */}
+            <LowLatencyGuide />
+
             {/* USB Audio Interface Detection */}
             {deviceInfo.isUSBAudioInterface && (
                 <div className="audio-info-banner usb-detected">

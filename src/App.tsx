@@ -12,6 +12,7 @@ import { SettingsPanel } from './components/Settings/SettingsPanel';
 import { MIDIIntegration } from './components/MIDI';
 import { initAudioContext, isAudioReady, getLatencyMetrics } from './audio/AudioEngine';
 import { audioGraphManager } from './audio/AudioGraphManager';
+import { InstrumentLoader } from './audio/samplers/InstrumentLoader';
 import { useAudioStore } from './store/audioStore';
 import { useGraphStore } from './store/graphStore';
 import { useProjectStore } from './store/projectStore';
@@ -85,6 +86,25 @@ function App() {
       getNodes,
       getConnections
     );
+
+    // Preload common instruments during browser idle time
+    // This reduces first-note latency when users create instrument nodes
+    const preloadInstruments = () => {
+      // Preload the most commonly used instruments
+      const commonInstruments = ['salamander-piano', 'tonejs-piano'];
+      commonInstruments.forEach(id => {
+        InstrumentLoader.preload(id).catch(err => {
+          console.warn(`[App] Failed to preload ${id}:`, err);
+        });
+      });
+    };
+
+    // Use requestIdleCallback if available, otherwise setTimeout
+    if ('requestIdleCallback' in window) {
+      (window as Window & { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(preloadInstruments);
+    } else {
+      setTimeout(preloadInstruments, 1000);
+    }
 
     return () => {
       audioGraphManager.dispose();

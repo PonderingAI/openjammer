@@ -13,7 +13,7 @@
  * - Pitch Bend: position (-1 to 1, center = 0)
  */
 
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useState, useRef, useCallback } from 'react';
 import { subscribeMIDIMessages } from '../../store/midiStore';
 import type { MIDIEvent } from '../../midi/types';
 import './MiniLab3Visual.css';
@@ -104,8 +104,9 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
     onPitchBend,
     onModWheel,
 }: MiniLab3VisualProps) {
-    // Control state for visualization
-    const [state, setState] = useState<ControlState>({
+    // Use ref for state to avoid re-renders on every MIDI event
+    // Only trigger re-render via RAF batching
+    const stateRef = useRef<ControlState>({
         keys: new Map(),
         pads: new Map(),
         knobs: new Map(), // Empty - don't show position until first MIDI value received
@@ -113,6 +114,31 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
         pitchBend: 0,
         modWheel: 0,
     });
+
+    // RAF batching: only re-render once per frame even with many MIDI events
+    const rafIdRef = useRef<number | null>(null);
+    const [, forceUpdate] = useState({});
+
+    const scheduleUpdate = useCallback(() => {
+        if (rafIdRef.current === null) {
+            rafIdRef.current = requestAnimationFrame(() => {
+                rafIdRef.current = null;
+                forceUpdate({});
+            });
+        }
+    }, []);
+
+    // Cleanup RAF on unmount
+    useEffect(() => {
+        return () => {
+            if (rafIdRef.current !== null) {
+                cancelAnimationFrame(rafIdRef.current);
+            }
+        };
+    }, []);
+
+    // Expose state for render (read from ref)
+    const state = stateRef.current;
 
     // Subscribe to MIDI messages
     useEffect(() => {
@@ -122,96 +148,95 @@ export const MiniLab3Visual = memo(function MiniLab3Visual({
             // Only process messages from our device
             if (event.deviceId !== deviceId) return;
 
-            setState(prev => {
-                const next = { ...prev };
+            const current = stateRef.current;
 
-                switch (event.type) {
-                    case 'noteOn': {
-                        // Check if it's a pad (channel 10, notes 36-43)
-                        const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
-                        if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
-                            next.pads = new Map(prev.pads);
-                            next.pads.set(pad.note, { velocity: event.velocity, pressure: 0, active: true });
-                            onPadOutput?.(pad.id, event.velocity / 127, 0);
-                        } else {
-                            // Any other note is treated as a key (regardless of channel)
-                            next.keys = new Map(prev.keys);
-                            next.keys.set(event.note, { velocity: event.velocity, active: true });
-                            onNoteOutput?.(event.note, event.velocity / 127, event.channel);
-                        }
-                        break;
+            switch (event.type) {
+                case 'noteOn': {
+                    // Check if it's a pad (channel 10, notes 36-43)
+                    const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
+                    if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
+                        current.pads = new Map(current.pads);
+                        current.pads.set(pad.note, { velocity: event.velocity, pressure: 0, active: true });
+                        onPadOutput?.(pad.id, event.velocity / 127, 0);
+                    } else {
+                        // Any other note is treated as a key (regardless of channel)
+                        current.keys = new Map(current.keys);
+                        current.keys.set(event.note, { velocity: event.velocity, active: true });
+                        onNoteOutput?.(event.note, event.velocity / 127, event.channel);
                     }
-
-                    case 'noteOff': {
-                        const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
-                        if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
-                            next.pads = new Map(prev.pads);
-                            next.pads.set(pad.note, { velocity: 0, pressure: 0, active: false });
-                            onPadOutput?.(pad.id, 0, 0);
-                        } else {
-                            // Any other note is treated as a key
-                            next.keys = new Map(prev.keys);
-                            next.keys.set(event.note, { velocity: 0, active: false });
-                            onNoteOutput?.(event.note, 0, event.channel);
-                        }
-                        break;
-                    }
-
-                    case 'cc': {
-                        // Check if it's a knob
-                        const knob = MINILAB3_CONFIG.knobs.find(k => k.cc === event.controller);
-                        if (knob) {
-                            next.knobs = new Map(prev.knobs);
-                            next.knobs.set(event.controller, event.value);
-                            onKnobOutput?.(knob.id, event.value / 127);
-                            break;
-                        }
-
-                        // Check if it's a fader
-                        const fader = MINILAB3_CONFIG.faders.find(f => f.cc === event.controller);
-                        if (fader) {
-                            next.faders = new Map(prev.faders);
-                            next.faders.set(event.controller, event.value);
-                            onFaderOutput?.(fader.id, event.value / 127);
-                            break;
-                        }
-
-                        // Check if it's mod wheel
-                        if (event.controller === MINILAB3_CONFIG.modWheelCC) {
-                            next.modWheel = event.value;
-                            onModWheel?.(event.value / 127);
-                        }
-                        break;
-                    }
-
-                    case 'pitchBend': {
-                        next.pitchBend = event.value;
-                        // Normalize to -1 to 1
-                        onPitchBend?.(event.value / 8192);
-                        break;
-                    }
-
-                    case 'aftertouch': {
-                        // Channel aftertouch from pads
-                        if (event.channel === MINILAB3_CONFIG.padChannel) {
-                            // Update all active pads with pressure
-                            next.pads = new Map(prev.pads);
-                            prev.pads.forEach((padState, note) => {
-                                if (padState.active) {
-                                    next.pads.set(note, { ...padState, pressure: event.pressure });
-                                }
-                            });
-                        }
-                        break;
-                    }
+                    break;
                 }
 
-                return next;
-            });
+                case 'noteOff': {
+                    const pad = MINILAB3_CONFIG.pads.find(p => p.note === event.note);
+                    if (pad && event.channel === MINILAB3_CONFIG.padChannel) {
+                        current.pads = new Map(current.pads);
+                        current.pads.set(pad.note, { velocity: 0, pressure: 0, active: false });
+                        onPadOutput?.(pad.id, 0, 0);
+                    } else {
+                        // Any other note is treated as a key
+                        current.keys = new Map(current.keys);
+                        current.keys.set(event.note, { velocity: 0, active: false });
+                        onNoteOutput?.(event.note, 0, event.channel);
+                    }
+                    break;
+                }
+
+                case 'cc': {
+                    // Check if it's a knob
+                    const knob = MINILAB3_CONFIG.knobs.find(k => k.cc === event.controller);
+                    if (knob) {
+                        current.knobs = new Map(current.knobs);
+                        current.knobs.set(event.controller, event.value);
+                        onKnobOutput?.(knob.id, event.value / 127);
+                        break;
+                    }
+
+                    // Check if it's a fader
+                    const fader = MINILAB3_CONFIG.faders.find(f => f.cc === event.controller);
+                    if (fader) {
+                        current.faders = new Map(current.faders);
+                        current.faders.set(event.controller, event.value);
+                        onFaderOutput?.(fader.id, event.value / 127);
+                        break;
+                    }
+
+                    // Check if it's mod wheel
+                    if (event.controller === MINILAB3_CONFIG.modWheelCC) {
+                        current.modWheel = event.value;
+                        onModWheel?.(event.value / 127);
+                    }
+                    break;
+                }
+
+                case 'pitchBend': {
+                    current.pitchBend = event.value;
+                    // Normalize to -1 to 1
+                    onPitchBend?.(event.value / 8192);
+                    break;
+                }
+
+                case 'aftertouch': {
+                    // Channel aftertouch from pads
+                    if (event.channel === MINILAB3_CONFIG.padChannel) {
+                        // Update all active pads with pressure
+                        current.pads = new Map(current.pads);
+                        current.pads.forEach((padState, note) => {
+                            if (padState.active) {
+                                current.pads.set(note, { ...padState, pressure: event.pressure });
+                            }
+                        });
+                    }
+                    break;
+                }
+            }
+
+            // Schedule a batched re-render (only one per frame)
+            scheduleUpdate();
         });
 
         return unsubscribe;
-    }, [deviceId, onNoteOutput, onPadOutput, onKnobOutput, onFaderOutput, onPitchBend, onModWheel]);
+    }, [deviceId, onNoteOutput, onPadOutput, onKnobOutput, onFaderOutput, onPitchBend, onModWheel, scheduleUpdate]);
 
     // Generate piano keys (25 keys: 15 white, 10 black)
     const renderKeyboard = () => {

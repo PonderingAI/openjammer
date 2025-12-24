@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { themes, applyTheme, getThemeById, getSavedThemeId, saveThemeId } from '../../styles/themes';
 import { KeybindingsPanel } from './KeybindingsPanel';
 import { AudioSettingsPanel } from './AudioSettingsPanel';
+import { ScrollContainer } from '../common/ScrollContainer';
 import '../Nodes/SchematicNodes.css';
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
@@ -45,7 +46,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                     </div>
 
                     {/* Main Content */}
-                    <div className="minimal-main">
+                    <ScrollContainer mode="dropdown" className="minimal-main">
                         {activeTab === 'graphics' && (
                             <div className="settings-section">
                                 <h3 style={{ marginTop: 0, marginBottom: '24px' }}>Interface Theme</h3>
@@ -86,7 +87,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                                 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} settings coming soon.
                             </div>
                         )}
-                    </div>
+                    </ScrollContainer>
                 </div>
             </div>
         </div>

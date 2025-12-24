@@ -194,6 +194,7 @@ interface LibraryStore {
   restoreItem: (itemId: string) => void;
   emptyTrash: () => Promise<void>;
   getTrashedItems: () => LibraryItem[];
+  permanentlyDeleteItem: (itemId: string) => Promise<void>;
 }
 
 // ============================================================================
@@ -540,10 +541,20 @@ export const useLibraryStore = create<LibraryStore>()(
       },
 
       toggleFavorite: (itemId: string) => {
-        const item = get().items[itemId];
-        if (item) {
-          get().updateItem(itemId, { favorite: !item.favorite });
-        }
+        // Atomic update to avoid stale closure race condition
+        set(state => {
+          const item = state.items[itemId];
+          if (!item) {
+            console.warn(`[Library] toggleFavorite: item ${itemId} not found`);
+            return state;
+          }
+          return {
+            items: {
+              ...state.items,
+              [itemId]: { ...item, favorite: !item.favorite },
+            },
+          };
+        });
       },
 
       setRating: (itemId: string, rating: number) => {
@@ -637,25 +648,49 @@ export const useLibraryStore = create<LibraryStore>()(
       },
 
       addTagToItem: (itemId: string, tag: string) => {
-        const item = get().items[itemId];
-        if (item && !item.tags.includes(tag)) {
-          get().updateItem(itemId, { tags: [...item.tags, tag] });
-
-          // Add to allTags if new
-          set(state => {
-            if (!state.allTags.includes(tag)) {
-              return { allTags: [...state.allTags, tag].sort() };
-            }
+        // Single atomic update for both item and allTags to avoid race conditions
+        set(state => {
+          const item = state.items[itemId];
+          if (!item) {
+            console.warn(`[Library] addTagToItem: item ${itemId} not found`);
             return state;
-          });
-        }
+          }
+          if (item.tags.includes(tag)) {
+            return state; // Tag already exists
+          }
+
+          const newAllTags = state.allTags.includes(tag)
+            ? state.allTags
+            : [...state.allTags, tag].sort();
+
+          return {
+            items: {
+              ...state.items,
+              [itemId]: { ...item, tags: [...item.tags, tag] },
+            },
+            allTags: newAllTags,
+          };
+        });
       },
 
       removeTagFromItem: (itemId: string, tag: string) => {
-        const item = get().items[itemId];
-        if (item) {
-          get().updateItem(itemId, { tags: item.tags.filter(t => t !== tag) });
-        }
+        // Atomic update to avoid stale closure issues
+        set(state => {
+          const item = state.items[itemId];
+          if (!item) {
+            console.warn(`[Library] removeTagFromItem: item ${itemId} not found`);
+            return state;
+          }
+          if (!item.tags.includes(tag)) {
+            return state; // Tag doesn't exist, nothing to remove
+          }
+          return {
+            items: {
+              ...state.items,
+              [itemId]: { ...item, tags: item.tags.filter(t => t !== tag) },
+            },
+          };
+        });
       },
 
       setActiveFilterTag: (tag: string | null) => {
@@ -1057,13 +1092,15 @@ export const useLibraryStore = create<LibraryStore>()(
             },
           }));
 
-          // Add tags to allTags if new
-          for (const tag of tags) {
-            if (!get().allTags.includes(tag)) {
-              set(state => ({
-                allTags: [...state.allTags, tag].sort(),
-              }));
-            }
+          // Add tags to allTags if new - single atomic update
+          if (tags.length > 0) {
+            set(state => {
+              const newTags = tags.filter(tag => !state.allTags.includes(tag));
+              if (newTags.length === 0) return state;
+              return {
+                allTags: [...state.allTags, ...newTags].sort(),
+              };
+            });
           }
 
           return itemId;
@@ -1078,20 +1115,12 @@ export const useLibraryStore = create<LibraryStore>()(
       // ========================================
 
       trashItem: (itemId: string) => {
-        const item = get().items[itemId];
-        if (!item) return;
-
-        // Add 'trash' tag if not already present
-        if (!item.tags.includes('trash')) {
-          get().addTagToItem(itemId, 'trash');
-        }
+        // addTagToItem already handles "tag exists" and "item not found" cases atomically
+        get().addTagToItem(itemId, 'trash');
       },
 
       restoreItem: (itemId: string) => {
-        const item = get().items[itemId];
-        if (!item) return;
-
-        // Remove 'trash' tag
+        // removeTagFromItem already handles "tag doesn't exist" and "item not found" cases atomically
         get().removeTagFromItem(itemId, 'trash');
       },
 
@@ -1111,13 +1140,65 @@ export const useLibraryStore = create<LibraryStore>()(
           ])
         );
 
-        // Remove from store
+        // Remove from store and update library item counts
         set(state => {
           const newItems = { ...state.items };
+          const newLibraries = { ...state.libraries };
+
+          // Track count changes per library
+          const countChanges: Record<string, number> = {};
           for (const item of trashedItems) {
             delete newItems[item.id];
+            countChanges[item.libraryId] = (countChanges[item.libraryId] || 0) + 1;
           }
-          return { items: newItems };
+
+          // Update library item counts
+          for (const [libraryId, count] of Object.entries(countChanges)) {
+            if (newLibraries[libraryId]) {
+              newLibraries[libraryId] = {
+                ...newLibraries[libraryId],
+                itemCount: Math.max(0, newLibraries[libraryId].itemCount - count),
+              };
+            }
+          }
+
+          return { items: newItems, libraries: newLibraries };
+        });
+
+        // Recompute tags
+        get().computeAllTags();
+      },
+
+      permanentlyDeleteItem: async (itemId: string) => {
+        const item = get().items[itemId];
+        if (!item) return;
+
+        // Remove from IndexedDB (waveforms and handles)
+        await Promise.all([
+          idbDel(WAVEFORM_PREFIX + item.id).catch(() => {}),
+          ...(item.handleKey ? [idbDel(item.handleKey).catch(() => {})] : []),
+        ]);
+
+        // Remove from store (re-check item exists to avoid race condition)
+        set(state => {
+          // Item may have been deleted by concurrent operation (e.g., emptyTrash)
+          const currentItem = state.items[itemId];
+          if (!currentItem) return state;
+
+          const newItems = { ...state.items };
+          delete newItems[itemId];
+
+          // Update library item count
+          const libraryId = currentItem.libraryId;
+          const newLibraries = { ...state.libraries };
+          if (newLibraries[libraryId]) {
+            newLibraries[libraryId] = {
+              ...newLibraries[libraryId],
+              itemCount: Math.max(0, newLibraries[libraryId].itemCount - 1),
+            };
+          }
+
+          return { items: newItems, libraries: newLibraries };
         });
 
         // Recompute tags

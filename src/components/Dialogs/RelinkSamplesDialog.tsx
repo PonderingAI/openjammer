@@ -7,12 +7,14 @@
  * - Attempt auto-locate by scanning a directory
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   useLibraryStore,
   type LibraryItem,
 } from '../../store/libraryStore';
 import { isFileSystemAccessSupported } from '../../utils/fileSystemAccess';
+import { ScrollContainer } from '../common/ScrollContainer';
 import './RelinkSamplesDialog.css';
 
 interface RelinkSamplesDialogProps {
@@ -135,17 +137,82 @@ export function RelinkSamplesDialog({
     onClose();
   }, [onClose]);
 
-  return (
-    <div className="relink-dialog-overlay" onClick={handleClose}>
-      <div className="relink-dialog" onClick={e => e.stopPropagation()}>
+  // Dialog ref for focus trap
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Focus trap and keyboard handling
+  useEffect(() => {
+    const container = dialogRef.current;
+    if (!container) return;
+
+    const focusableSelector =
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    // Save previous focus to restore on close
+    const previouslyFocused = document.activeElement as HTMLElement;
+
+    // Focus first focusable element
+    const focusableElements = container.querySelectorAll<HTMLElement>(focusableSelector);
+    focusableElements[0]?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape to close
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      // Focus trap on Tab
+      if (e.key === 'Tab') {
+        const currentFocusable = container.querySelectorAll<HTMLElement>(focusableSelector);
+        const first = currentFocusable[0];
+        const last = currentFocusable[currentFocusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+
+  const dialogContent = (
+    <div
+      className="relink-dialog-overlay"
+      onClick={handleClose}
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        className="relink-dialog"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="relink-dialog-title"
+      >
         <div className="relink-dialog-header">
-          <h2>Missing Samples</h2>
-          <button className="relink-close-btn" onClick={handleClose}>
+          <h2 id="relink-dialog-title">Missing Samples</h2>
+          <button
+            className="relink-close-btn"
+            onClick={handleClose}
+            aria-label="Close dialog"
+          >
             &times;
           </button>
         </div>
 
-        <div className="relink-dialog-body">
+        <ScrollContainer mode="dropdown" className="relink-dialog-body">
           {library && (
             <p className="relink-library-info">
               Library: <strong>{library.name}</strong>
@@ -194,7 +261,7 @@ export function RelinkSamplesDialog({
               </div>
             </>
           )}
-        </div>
+        </ScrollContainer>
 
         <div className="relink-dialog-footer">
           <button className="relink-done-btn" onClick={handleClose}>
@@ -204,6 +271,8 @@ export function RelinkSamplesDialog({
       </div>
     </div>
   );
+
+  return createPortal(dialogContent, document.body);
 }
 
 // Helper: Find a file by name in a directory (recursive with depth limit)

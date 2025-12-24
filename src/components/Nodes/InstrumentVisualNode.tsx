@@ -8,10 +8,11 @@
  * - Pedal section at bottom
  */
 
-import { useState, useCallback, useRef, memo, useEffect } from 'react';
+import { useState, useCallback, useRef, memo } from 'react';
 import type { GraphNode, InstrumentRow } from '../../engine/types';
 import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
+import { useScrollCapture, type ScrollData } from '../../hooks/useScrollCapture';
 import './InstrumentVisualNode.css';
 
 /** Debounce interval for wheel events (ms) */
@@ -70,31 +71,29 @@ const EditableValue = memo(function EditableValue({
 
     const display = displayFn ? displayFn(value) : String(value);
 
-    // Use native wheel listener with { passive: false } to allow preventDefault
-    useEffect(() => {
-        const element = spanRef.current;
-        if (!element) return;
+    // Handle scroll for value adjustment
+    const handleScroll = useCallback((data: ScrollData) => {
+        if (disabled) return;
 
-        const handleWheel = (e: WheelEvent) => {
-            if (disabled) return;
-            e.stopPropagation();
-            e.preventDefault();
+        // Debounce rapid wheel events
+        const now = Date.now();
+        if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
+        lastWheelTime.current = now;
 
-            // Debounce rapid wheel events
-            const now = Date.now();
-            if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
-            lastWheelTime.current = now;
-
-            const delta = e.deltaY > 0 ? -step : step;
-            const newVal = Math.max(min, Math.min(max, value + delta));
-            // Round to avoid floating point issues (2 decimal places)
-            const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
-            if (rounded !== value) onChange(rounded);
-        };
-
-        element.addEventListener('wheel', handleWheel, { passive: false });
-        return () => element.removeEventListener('wheel', handleWheel);
+        // Scroll up increases value, scroll down decreases
+        const delta = data.scrollingUp ? step : -step;
+        const newVal = Math.max(min, Math.min(max, value + delta));
+        // Round to avoid floating point issues (2 decimal places)
+        const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
+        if (rounded !== value) onChange(rounded);
     }, [value, onChange, min, max, step, disabled]);
+
+    // Attach scroll capture to the span
+    const { ref: scrollRef } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleScroll,
+        capture: true, // Block default scroll, handle custom value adjustment
+        enabled: !disabled,
+    });
 
     const startEdit = useCallback(() => {
         if (disabled) return;
@@ -121,9 +120,15 @@ const EditableValue = memo(function EditableValue({
         setEditing(false);
     }, []);
 
+    // Merge refs for both scroll capture and local operations
+    const mergedRef = useCallback((node: HTMLSpanElement | null) => {
+        (spanRef as React.MutableRefObject<HTMLSpanElement | null>).current = node;
+        scrollRef(node);
+    }, [scrollRef]);
+
     return (
         <span
-            ref={spanRef}
+            ref={mergedRef}
             className="editable-value"
             onClick={() => !editing && startEdit()}
             title={`Scroll or click to edit ${label}`}
@@ -165,10 +170,9 @@ export function InstrumentVisualNode({
     isDragging,
     style
 }: InstrumentVisualNodeProps) {
-    const { nodes, updateInstrumentRow } = useGraphStore();
-
-    // Get parent node to access row data with proper validation
-    const parentNode = node.parentId ? nodes.get(node.parentId) : null;
+    // Use selector pattern to subscribe only to specific node - avoids re-render on any node change
+    const parentNode = useGraphStore((s) => node.parentId ? s.nodes.get(node.parentId) : null);
+    const updateInstrumentRow = useGraphStore((s) => s.updateInstrumentRow);
 
     // Validate parent node exists and has valid instrument data
     if (node.parentId && !parentNode) {

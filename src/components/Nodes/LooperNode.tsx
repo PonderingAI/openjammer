@@ -5,7 +5,7 @@
  * and a minimal record button.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import type { GraphNode, LooperNodeData, AudioClip, ClipDropTarget } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
@@ -19,6 +19,10 @@ import { useScrollCapture } from '../../hooks/useScrollCapture';
 import type { ScrollData } from '../../hooks/useScrollCapture';
 import { ScrollContainer } from '../common/ScrollContainer';
 import { toast } from 'sonner';
+
+// Type for library store functions to use in refs
+type SaveAudioToLibraryFn = (buffer: AudioBuffer, name: string, tags?: string[]) => Promise<string | null>;
+type TrashItemFn = (itemId: string) => void;
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -44,7 +48,7 @@ interface LoopState {
     libraryItemId?: string;  // Reference to saved library item
 }
 
-export function LooperNode({
+export const LooperNode = memo(function LooperNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -72,6 +76,21 @@ export function LooperNode({
     // Library store for auto-saving loops and trashing deleted items
     const saveAudioToLibrary = useLibraryStore((s) => s.saveAudioToLibrary);
     const trashItem = useLibraryStore((s) => s.trashItem);
+
+    // Refs for library store functions to avoid re-running effect when store updates
+    // This prevents the effect from re-running when saveAudioToLibrary updates the store,
+    // which could cause stale closures or unnecessary callback re-registrations
+    const saveAudioToLibraryRef = useRef<SaveAudioToLibraryFn>(saveAudioToLibrary);
+    const trashItemRef = useRef<TrashItemFn>(trashItem);
+
+    // Keep refs in sync with latest function references
+    useEffect(() => {
+        saveAudioToLibraryRef.current = saveAudioToLibrary;
+    }, [saveAudioToLibrary]);
+
+    useEffect(() => {
+        trashItemRef.current = trashItem;
+    }, [trashItem]);
 
     // Ref for drop target bounds
     const nodeRef = useRef<HTMLDivElement>(null);
@@ -104,6 +123,7 @@ export function LooperNode({
     }, [node.id]);
 
     // Set up Looper callbacks when component mounts or audio context becomes ready
+    // Uses refs for library store functions to prevent effect re-runs when store updates
     useEffect(() => {
         if (!isAudioContextReady) return;
 
@@ -132,8 +152,9 @@ export function LooperNode({
                     audioGraphManager.sendSampleBuffer(node.id, audioLoop.buffer);
 
                     // Auto-save to project library with "loop" tag
+                    // Use ref to get latest function without causing effect re-runs
                     try {
-                        const itemId = await saveAudioToLibrary(audioLoop.buffer, 'Loop', ['loop']);
+                        const itemId = await saveAudioToLibraryRef.current(audioLoop.buffer, 'Loop', ['loop']);
                         if (itemId) {
                             // Store the library item ID on both the Loop object and React state
                             audioLoop.libraryItemId = itemId;
@@ -152,8 +173,9 @@ export function LooperNode({
 
             l.setOnLoopDeleted((deletedLoop: Loop) => {
                 // Trash the library item if the loop was saved
+                // Use ref to get latest function without causing effect re-runs
                 if (deletedLoop.libraryItemId) {
-                    trashItem(deletedLoop.libraryItemId);
+                    trashItemRef.current(deletedLoop.libraryItemId);
                 }
             });
 
@@ -215,7 +237,11 @@ export function LooperNode({
                 l.setOnWaveformHistoryUpdate(() => {});
             }
         };
-    }, [isAudioContextReady, node.id, duration, getLooper, saveAudioToLibrary, trashItem]);
+    // Note: saveAudioToLibrary and trashItem are accessed via refs to prevent
+    // effect re-runs when the library store updates (which happens during saving).
+    // This fixes a bug where loops were being trashed immediately after recording
+    // due to effect re-runs causing callback re-registration.
+    }, [isAudioContextReady, node.id, duration, getLooper]);
 
     // Auto-scroll to show newest loops when new loop is added
     useEffect(() => {
@@ -615,4 +641,4 @@ export function LooperNode({
             )}
         </div>
     );
-}
+});

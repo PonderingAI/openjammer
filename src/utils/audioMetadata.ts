@@ -166,9 +166,23 @@ export async function detectBPMFromFile(
 // Waveform Generation
 // ============================================================================
 
+// Import and re-export the async worker-based waveform generation
+import {
+  generateWaveformPeaksAsync,
+  generateWaveformFromFileAsync,
+  terminateWaveformWorker,
+} from '../workers/waveformWorkerClient';
+
+export {
+  generateWaveformPeaksAsync,
+  generateWaveformFromFileAsync,
+  terminateWaveformWorker,
+};
+
 /**
- * Generate waveform peaks from an AudioBuffer
+ * Generate waveform peaks from an AudioBuffer (synchronous, main thread)
  *
+ * @deprecated Prefer generateWaveformPeaksAsync for non-blocking execution
  * @param audioBuffer - The decoded audio buffer
  * @param numPoints - Number of peak points to generate (default 100)
  * @returns Float32Array of peak values (0-1 normalized)
@@ -198,21 +212,15 @@ export function generateWaveformPeaks(
 }
 
 /**
- * Generate waveform peaks from a File
+ * Generate waveform peaks from a File (uses Web Worker for non-blocking execution)
  */
 export async function generateWaveformFromFile(
   file: File,
   audioContext: AudioContext,
   numPoints = 100
 ): Promise<Float32Array | null> {
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    return generateWaveformPeaks(audioBuffer, numPoints);
-  } catch (error) {
-    console.warn('Failed to generate waveform:', error);
-    return null;
-  }
+  // Use the async worker version for non-blocking execution
+  return generateWaveformFromFileAsync(file, audioContext, numPoints);
 }
 
 /**
