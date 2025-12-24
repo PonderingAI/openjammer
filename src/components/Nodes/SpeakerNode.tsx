@@ -1,11 +1,21 @@
 /**
  * Speaker Node - Audio output to device
+ * Supports professional audio interfaces with low-latency detection
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import type { GraphNode, SpeakerNodeData } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
+import { useAudioStore } from '../../store/audioStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { reinitAudioContext } from '../../audio/AudioEngine';
+import {
+    type EnhancedAudioDevice,
+    enhanceAudioDevices,
+    sortDevicesByPriority,
+    getBestOutputDevice,
+    detectLowLatencyDevice
+} from '../../utils/audioDeviceDetection';
 
 interface SpeakerNodeProps {
     node: GraphNode;
@@ -23,12 +33,7 @@ interface SpeakerNodeProps {
     style?: React.CSSProperties;
 }
 
-interface AudioDevice {
-    deviceId: string;
-    label: string;
-}
-
-export function SpeakerNode({
+export const SpeakerNode = memo(function SpeakerNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -45,8 +50,11 @@ export function SpeakerNode({
 }: SpeakerNodeProps) {
     const data = node.data as SpeakerNodeData;
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
+    const audioConfig = useAudioStore((s) => s.audioConfig);
+    const setAudioConfig = useAudioStore((s) => s.setAudioConfig);
+    const setAudioContextReady = useAudioStore((s) => s.setAudioContextReady);
 
-    const [devices, setDevices] = useState<AudioDevice[]>([]);
+    const [devices, setDevices] = useState<EnhancedAudioDevice[]>([]);
     const [showDevices, setShowDevices] = useState(false);
     const [supportsSinkId] = useState(() => {
         const audio = document.createElement('audio');
@@ -54,20 +62,85 @@ export function SpeakerNode({
     });
     const isMuted = data.isMuted ?? false;
 
-    // Fetch output devices
+    // Track if we've done auto-selection to avoid re-selecting on every render
+    const hasAutoSelected = useRef(false);
+    // Use refs to access current audio config without triggering re-renders
+    const audioConfigRef = useRef(audioConfig);
+    audioConfigRef.current = audioConfig;
+
+    // Helper to apply low latency mode with proper audio context reinitialization
+    const applyLowLatencyMode = useCallback(async () => {
+        const currentConfig = audioConfigRef.current;
+        if (currentConfig.lowLatencyMode) return; // Already enabled
+
+        // Update config
+        setAudioConfig({
+            lowLatencyMode: true,
+            latencyHint: 'interactive' as AudioContextLatencyCategory
+        });
+
+        // Toggle audio context to trigger full reinitialization
+        setAudioContextReady(false);
+        audioGraphManager.dispose();
+
+        try {
+            await reinitAudioContext({
+                sampleRate: currentConfig.sampleRate,
+                latencyHint: 'interactive'
+            });
+            setAudioContextReady(true);
+        } catch (err) {
+            console.error('Failed to apply low latency mode:', err);
+            setAudioContextReady(true); // Restore on error
+        }
+    }, [setAudioConfig, setAudioContextReady]);
+
+    // Fetch output devices and auto-select best one
     useEffect(() => {
         if (!navigator.mediaDevices?.enumerateDevices) return;
 
-        navigator.mediaDevices.enumerateDevices().then(devs => {
-            const outputs = devs
-                .filter(d => d.kind === 'audiooutput')
-                .map(d => ({
-                    deviceId: d.deviceId,
-                    label: d.label || `Speaker ${d.deviceId.slice(0, 4)}`
-                }));
-            setDevices(outputs);
-        });
-    }, []);
+        const updateDevices = async () => {
+            const devs = await navigator.mediaDevices.enumerateDevices();
+            const outputs = devs.filter(d => d.kind === 'audiooutput');
+            const enhanced = enhanceAudioDevices(outputs);
+            const sorted = sortDevicesByPriority(enhanced);
+            setDevices(sorted);
+
+            // Auto-select best low-latency device if current is default and we haven't already
+            const currentDeviceId = data.deviceId || 'default';
+            if (currentDeviceId === 'default' && !hasAutoSelected.current) {
+                const bestDevice = getBestOutputDevice(sorted);
+                if (bestDevice && bestDevice.isLowLatency) {
+                    hasAutoSelected.current = true;
+                    updateNodeData<SpeakerNodeData>(node.id, { deviceId: bestDevice.deviceId });
+                    audioGraphManager.updateSpeakerDevice(node.id, bestDevice.deviceId);
+
+                    // Also enable low latency mode automatically
+                    await applyLowLatencyMode();
+                }
+            }
+
+            // Check if currently selected device still exists
+            if (currentDeviceId !== 'default') {
+                const deviceStillExists = sorted.some(d => d.deviceId === currentDeviceId);
+                if (!deviceStillExists) {
+                    // Device was unplugged, fall back to default
+                    updateNodeData<SpeakerNodeData>(node.id, { deviceId: 'default' });
+                    audioGraphManager.updateSpeakerDevice(node.id, 'default');
+                }
+            }
+        };
+
+        // Initial fetch
+        updateDevices();
+
+        // Listen for device changes (plug/unplug)
+        navigator.mediaDevices.addEventListener('devicechange', updateDevices);
+
+        return () => {
+            navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
+        };
+    }, [data.deviceId, node.id, updateNodeData, applyLowLatencyMode]);
 
     // Click outside to close device dropdown
     useEffect(() => {
@@ -82,23 +155,35 @@ export function SpeakerNode({
             }
         };
 
-        setTimeout(() => {
+        // Delay adding listener to avoid immediate trigger from the click that opened the dropdown
+        const timeoutId = setTimeout(() => {
             document.addEventListener('mousedown', handleClickOutside);
         }, 0);
 
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        return () => {
+            clearTimeout(timeoutId);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, [showDevices]);
 
     const currentDeviceId = data.deviceId || 'default';
-    const currentLabel = devices.find(d => d.deviceId === currentDeviceId)?.label || 'Default Output';
+    const currentDevice = devices.find(d => d.deviceId === currentDeviceId);
+    const currentLabel = currentDevice?.label || 'Default Output';
+    const isCurrentLowLatency = currentDevice?.isLowLatency || detectLowLatencyDevice(currentLabel);
 
     // Handle device selection
-    const handleDeviceSelect = (deviceId: string) => {
+    const handleDeviceSelect = async (deviceId: string) => {
         updateNodeData<SpeakerNodeData>(node.id, { deviceId });
         setShowDevices(false);
 
         // Apply device change immediately
         audioGraphManager.updateSpeakerDevice(node.id, deviceId);
+
+        // Auto-enable low latency mode when selecting a low-latency device
+        const selectedDevice = devices.find(d => d.deviceId === deviceId);
+        if (selectedDevice?.isLowLatency && !audioConfig.lowLatencyMode) {
+            await applyLowLatencyMode();
+        }
     };
 
     // Handle mute toggle
@@ -170,13 +255,14 @@ export function SpeakerNode({
                 {/* Output Device Selector */}
                 <div className="device-selector-container">
                     <button
-                        className="device-select-trigger"
+                        className={`device-select-trigger ${isCurrentLowLatency ? 'low-latency' : ''}`}
                         onClick={(e) => {
                             e.stopPropagation();
                             setShowDevices(!showDevices);
                         }}
                     >
-                        {currentLabel}
+                        {isCurrentLowLatency && <span className="low-latency-icon" title="Low-latency audio interface">⚡</span>}
+                        <span className="device-label">{currentLabel}</span>
                     </button>
 
                     {showDevices && (
@@ -196,13 +282,14 @@ export function SpeakerNode({
                             {devices.map(d => (
                                 <div
                                     key={d.deviceId}
-                                    className="device-item"
+                                    className={`device-item ${d.isLowLatency ? 'low-latency' : ''}`}
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         handleDeviceSelect(d.deviceId);
                                     }}
                                 >
-                                    {d.label}
+                                    {d.isLowLatency && <span className="low-latency-icon" title="Low-latency audio interface">⚡</span>}
+                                    <span className="device-label">{d.label}</span>
                                 </div>
                             ))}
                         </div>
@@ -211,4 +298,4 @@ export function SpeakerNode({
             </div>
         </div>
     );
-}
+});

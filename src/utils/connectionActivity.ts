@@ -33,9 +33,10 @@ function getKeyboardRowPortId(keyboardNode: GraphNode, row: number): string | un
 }
 
 /**
- * Get the pedal (control) port ID for a keyboard
+ * Get the pedal/control port ID for a keyboard
+ * Exported for use in AudioGraphManager and other modules
  */
-function getKeyboardPedalPortId(keyboardNode: GraphNode): string | undefined {
+export function getKeyboardControlPortId(keyboardNode: GraphNode): string | undefined {
     // Look for pedal or control output port
     const pedalPort = keyboardNode.ports.find(
         p => p.direction === 'output' &&
@@ -43,6 +44,9 @@ function getKeyboardPedalPortId(keyboardNode: GraphNode): string | undefined {
     );
     return pedalPort?.id;
 }
+
+// Alias for backwards compatibility
+const getKeyboardPedalPortId = getKeyboardControlPortId;
 
 /**
  * Get all connection IDs that originate from a keyboard's row output port

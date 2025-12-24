@@ -5,12 +5,14 @@
  * Shows row-based note grid with spread control - each bundle connection creates a row
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import type { GraphNode, InstrumentNodeData, InstrumentRow } from '../../engine/types';
+import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
-import { useAudioStore } from '../../store/audioStore';
 import { nodeDefinitions } from '../../engine/registry';
 import { InstrumentLoader } from '../../audio/Instruments';
+import { useScrollCapture, type ScrollData } from '../../hooks/useScrollCapture';
+import { ScrollContainer } from '../common/ScrollContainer';
 
 interface InstrumentNodeProps {
     node: GraphNode;
@@ -33,8 +35,8 @@ interface InstrumentNodeProps {
 // Constants
 // ============================================================================
 
-/** Musical note names for display */
-const NOTE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+/** Musical note names for display (chromatic scale) */
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /** Minimum mouse movement before treating interaction as drag */
 const DRAG_THRESHOLD_PX = 5;
@@ -53,7 +55,7 @@ const DROPDOWN_LAYOUT = {
 
 /** Row parameter value ranges */
 const ROW_PARAM_RANGES = {
-    NOTE: { min: 0, max: 6 },       // C to B
+    NOTE: { min: 0, max: 11 },      // C to B (chromatic scale)
     OCTAVE: { min: 0, max: 8 },     // Piano range
     OFFSET: { min: -24, max: 24 },  // +/- 2 octaves
 } as const;
@@ -94,33 +96,57 @@ function getAllowedCategories(nodeType: string): string[] {
 // Main instrument node types to cycle through
 const INSTRUMENT_NODE_TYPES = ['strings', 'keys', 'winds'] as const;
 
+// Type guard imported from shared typeGuards module
+const isInstrumentNodeData = isBasicInstrumentNodeData;
+
 /**
- * Type guard to safely validate instrument node data
- * Provides runtime type checking for data from graph store
+ * ScrollableRowValue - Value display with scroll capture for row parameter adjustment
+ * Uses useScrollCapture hook to properly prevent canvas scrolling
  */
-function isInstrumentNodeData(data: unknown): data is InstrumentNodeData {
-    if (typeof data !== 'object' || data === null) return false;
-    const d = data as Record<string, unknown>;
-
-    // Check for row-based system (new format)
-    if ('rows' in d) {
-        if (!Array.isArray(d.rows)) return false;
-        // Validate at least basic structure for rows
-        return d.rows.every((row: unknown) => {
-            if (typeof row !== 'object' || row === null) return false;
-            const r = row as Record<string, unknown>;
-            return typeof r.rowId === 'string';
-        });
-    }
-
-    // Check for legacy offset-based system
-    if ('offsets' in d && typeof d.offsets === 'object' && d.offsets !== null) {
-        return true;
-    }
-
-    // Empty data object is valid (no configuration yet)
-    return Object.keys(d).length === 0;
+interface ScrollableRowValueProps {
+    value: number;
+    onChange: (newValue: number) => void;
+    min: number;
+    max: number;
+    step?: number;
+    format: (v: number) => string;
+    title: string;
+    className: string;
 }
+
+const ScrollableRowValue = memo(function ScrollableRowValue({
+    value,
+    onChange,
+    min,
+    max,
+    step = 1,
+    format,
+    title,
+    className
+}: ScrollableRowValueProps) {
+    const handleScroll = useCallback((data: ScrollData) => {
+        const delta = data.scrollingUp ? 1 : -1;
+        const newValue = Math.max(min, Math.min(max, value + delta * step));
+        if (newValue !== value) {
+            onChange(newValue);
+        }
+    }, [value, onChange, min, max, step]);
+
+    const { ref } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleScroll,
+        capture: true,
+    });
+
+    return (
+        <span
+            ref={ref}
+            className={className}
+            title={title}
+        >
+            {format(value)}
+        </span>
+    );
+});
 
 // SVG Icons - keeping the icon definitions (abbreviated for brevity)
 const InstrumentIcons: Record<string, React.ReactNode> = {
@@ -192,7 +218,7 @@ function getInstrumentIcon(instrumentId: string): React.ReactNode {
     return InstrumentIcons.piano;
 }
 
-export function InstrumentNode({
+export const InstrumentNode = memo(function InstrumentNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -213,7 +239,6 @@ export function InstrumentNode({
         : { rows: [] }; // Default empty data if validation fails
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const updateNodeType = useGraphStore((s) => s.updateNodeType);
-    const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
     // Refs
     const nodeRef = useRef<HTMLDivElement>(null);
@@ -231,11 +256,6 @@ export function InstrumentNode({
     const availableCategories = useMemo(() => {
         return getAllowedCategories(node.type);
     }, [node.type]);
-
-    // Initialize instrument audio - managed by AudioGraphManager
-    useEffect(() => {
-        // AudioGraphManager handles instrument creation
-    }, [isAudioContextReady, node.type]);
 
     // Handle keyboard shortcuts for popup
     useEffect(() => {
@@ -277,11 +297,15 @@ export function InstrumentNode({
             }
         };
 
-        setTimeout(() => {
+        // Delay adding listener to avoid immediate trigger from the click that opened the popup
+        const timeoutId = setTimeout(() => {
             document.addEventListener('mousedown', handleClickOutside);
         }, 0);
 
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        return () => {
+            clearTimeout(timeoutId);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, [showPopup]);
 
     // Dynamic dropdown positioning
@@ -373,9 +397,26 @@ export function InstrumentNode({
     // Get output port from the node
     const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
 
-    // Get display name
-    const instrumentData = node.data as InstrumentNodeData;
-    const instrumentId = instrumentData.instrumentId || node.type;
+    // Memoized port for empty state (first available control input)
+    const emptyStatePort = useMemo(() => {
+        return node.ports.find(p =>
+            p.direction === 'input' &&
+            p.type === 'control'
+        );
+    }, [node.ports]);
+
+    // Memoized port for adding new rows (first available unconnected control input)
+    const availableNewRowPort = useMemo(() => {
+        const connectedPorts = new Set(rows.map(r => r.targetPortId));
+        return node.ports.find(p =>
+            p.direction === 'input' &&
+            p.type === 'control' &&
+            !connectedPorts.has(p.id)
+        );
+    }, [node.ports, rows]);
+
+    // Get display name - use validated 'data' variable instead of unsafe assertion
+    const instrumentId = data.instrumentId || node.type;
     const displayName = INSTRUMENT_LABELS[instrumentId] || nodeDefinitions[node.type]?.name || 'Instrument';
 
     // Filter instruments by node type
@@ -450,9 +491,8 @@ export function InstrumentNode({
 
     // Handle instrument selection
     const handleInstrumentSelect = (instId: string) => {
-        const currentData = node.data as InstrumentNodeData;
         updateNodeData(node.id, {
-            ...currentData,
+            ...data,
             instrumentId: instId
         });
         setShowPopup(false);
@@ -470,20 +510,6 @@ export function InstrumentNode({
         });
         updateNodeData(node.id, { rows: updatedRows });
     }, [data.rows, node.id, updateNodeData]);
-
-    // Handle wheel on row control - memoized to prevent unnecessary re-renders
-    const handleRowWheel = useCallback((rowId: string, field: keyof InstrumentRow, e: React.WheelEvent, min: number, max: number) => {
-        e.stopPropagation();
-        // Note: preventDefault() removed - React wheel events are passive by default
-        const row = rows.find(r => r.rowId === rowId);
-        if (!row) return;
-
-        const currentValue = row[field] as number;
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const step = field === 'spread' ? 0.1 : 1;
-        const newValue = Math.max(min, Math.min(max, currentValue + delta * step));
-        updateRowField(rowId, field, newValue);
-    }, [rows, updateRowField]);
 
     return (
         <div
@@ -511,29 +537,21 @@ export function InstrumentNode({
                 {/* Rows container */}
                 <div className="instrument-rows-simple">
                     {rows.length === 0 ? (
-                        /* Empty state - find first available input port */
-                        (() => {
-                            const availablePort = node.ports.find(p =>
-                                p.direction === 'input' &&
-                                p.type === 'control'
-                            );
-                            if (!availablePort) return null;
-
-                            return (
-                                <div className="instrument-row-simple empty-state">
-                                    <div
-                                        className="bundle-input-port empty"
-                                        data-node-id={node.id}
-                                        data-port-id={availablePort.id}
-                                        onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
-                                        onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
-                                        onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
-                                        onMouseLeave={handlePortMouseLeave}
-                                        title="Connect keyboard bundle"
-                                    />
-                                </div>
-                            );
-                        })()
+                        /* Empty state - use memoized port */
+                        emptyStatePort && (
+                            <div className="instrument-row-simple empty-state">
+                                <div
+                                    className="bundle-input-port empty"
+                                    data-node-id={node.id}
+                                    data-port-id={emptyStatePort.id}
+                                    onMouseDown={(e) => handlePortMouseDown?.(emptyStatePort.id, e)}
+                                    onMouseUp={(e) => handlePortMouseUp?.(emptyStatePort.id, e)}
+                                    onMouseEnter={() => handlePortMouseEnter?.(emptyStatePort.id)}
+                                    onMouseLeave={handlePortMouseLeave}
+                                    title="Connect keyboard bundle"
+                                />
+                            </div>
+                        )
                     ) : (
                         /* Show rows with connections */
                         <>
@@ -559,59 +577,55 @@ export function InstrumentNode({
                                             /* Pedal row - just show label (Note/Octave/Offset don't apply) */
                                             <span className="pedal-label">Pedal</span>
                                         ) : (
-                                            /* Key row - show Note, Octave, Offset */
+                                            /* Key row - show Note, Octave, Offset with scroll capture */
                                             <>
-                                                <span
+                                                <ScrollableRowValue
+                                                    value={row.baseNote}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseNote', v)}
+                                                    min={ROW_PARAM_RANGES.NOTE.min}
+                                                    max={ROW_PARAM_RANGES.NOTE.max}
+                                                    format={(v) => NOTE_NAMES[v] || 'C'}
+                                                    title="Note (chromatic) - scroll to change"
                                                     className="row-value note-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseNote', e, ROW_PARAM_RANGES.NOTE.min, ROW_PARAM_RANGES.NOTE.max)}
-                                                    title={`Note (C-B) - scroll to change`}
-                                                >
-                                                    {NOTE_NAMES[row.baseNote] || 'C'}
-                                                </span>
-                                                <span
-                                                    className="row-value octave-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOctave', e, ROW_PARAM_RANGES.OCTAVE.min, ROW_PARAM_RANGES.OCTAVE.max)}
+                                                />
+                                                <ScrollableRowValue
+                                                    value={row.baseOctave}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseOctave', v)}
+                                                    min={ROW_PARAM_RANGES.OCTAVE.min}
+                                                    max={ROW_PARAM_RANGES.OCTAVE.max}
+                                                    format={(v) => String(v)}
                                                     title={`Octave (${ROW_PARAM_RANGES.OCTAVE.min}-${ROW_PARAM_RANGES.OCTAVE.max}) - scroll to change`}
-                                                >
-                                                    {row.baseOctave}
-                                                </span>
-                                                <span
-                                                    className="row-value offset-value editable-value"
-                                                    onWheel={(e) => handleRowWheel(row.rowId, 'baseOffset', e, ROW_PARAM_RANGES.OFFSET.min, ROW_PARAM_RANGES.OFFSET.max)}
+                                                    className="row-value octave-value editable-value"
+                                                />
+                                                <ScrollableRowValue
+                                                    value={row.baseOffset}
+                                                    onChange={(v) => updateRowField(row.rowId, 'baseOffset', v)}
+                                                    min={ROW_PARAM_RANGES.OFFSET.min}
+                                                    max={ROW_PARAM_RANGES.OFFSET.max}
+                                                    format={(v) => v >= 0 ? `+${v}` : String(v)}
                                                     title={`Offset (${ROW_PARAM_RANGES.OFFSET.min} to +${ROW_PARAM_RANGES.OFFSET.max}) - scroll to change`}
-                                                >
-                                                    {row.baseOffset >= 0 ? `+${row.baseOffset}` : row.baseOffset}
-                                                </span>
+                                                    className="row-value offset-value editable-value"
+                                                />
                                             </>
                                         )}
                                     </div>
                                 );
                             })}
-                            {/* Empty row for adding new connections - find first available input port */}
-                            {(() => {
-                                const connectedPorts = new Set(rows.map(r => r.targetPortId));
-                                const availablePort = node.ports.find(p =>
-                                    p.direction === 'input' &&
-                                    p.type === 'control' &&
-                                    !connectedPorts.has(p.id)
-                                );
-                                if (!availablePort) return null;
-
-                                return (
-                                    <div className="instrument-row-simple empty-row with-divider">
-                                        <div
-                                            className="bundle-input-port empty"
-                                            data-node-id={node.id}
-                                            data-port-id={availablePort.id}
-                                            onMouseDown={(e) => handlePortMouseDown?.(availablePort.id, e)}
-                                            onMouseUp={(e) => handlePortMouseUp?.(availablePort.id, e)}
-                                            onMouseEnter={() => handlePortMouseEnter?.(availablePort.id)}
-                                            onMouseLeave={handlePortMouseLeave}
-                                            title="Connect keyboard bundle"
-                                        />
-                                    </div>
-                                );
-                            })()}
+                            {/* Empty row for adding new connections - use memoized port */}
+                            {availableNewRowPort && (
+                                <div className="instrument-row-simple empty-row with-divider">
+                                    <div
+                                        className="bundle-input-port empty"
+                                        data-node-id={node.id}
+                                        data-port-id={availableNewRowPort.id}
+                                        onMouseDown={(e) => handlePortMouseDown?.(availableNewRowPort.id, e)}
+                                        onMouseUp={(e) => handlePortMouseUp?.(availableNewRowPort.id, e)}
+                                        onMouseEnter={() => handlePortMouseEnter?.(availableNewRowPort.id)}
+                                        onMouseLeave={handlePortMouseLeave}
+                                        title="Connect keyboard bundle"
+                                    />
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -637,7 +651,6 @@ export function InstrumentNode({
                     className="instrument-selector-dropdown"
                     style={dropdownStyle}
                     onClick={(e) => e.stopPropagation()}
-                    onWheel={(e) => e.stopPropagation()}
                 >
                     <input
                         className="instrument-search"
@@ -647,10 +660,7 @@ export function InstrumentNode({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
                     />
-                    <div
-                        className="instrument-grid-container"
-                        onWheel={(e) => e.stopPropagation()}
-                    >
+                    <ScrollContainer mode="dropdown" className="instrument-grid-container">
                         <div className="instrument-grid-grouped">
                             {groupedInstruments.map((group, groupIndex) => (
                                 <div key={group.baseName} className="instrument-group">
@@ -660,7 +670,7 @@ export function InstrumentNode({
                                     )}
                                     <div className="instrument-group-items">
                                         {group.instruments.map(instId => {
-                                            const currentInstrumentId = (node.data as InstrumentNodeData).instrumentId || node.type;
+                                            const currentInstrumentId = data.instrumentId || node.type;
                                             return (
                                                 <div
                                                     key={instId}
@@ -683,7 +693,7 @@ export function InstrumentNode({
                         {filteredInstruments.length === 0 && (
                             <div className="no-results">No instruments found</div>
                         )}
-                    </div>
+                    </ScrollContainer>
                     <div className="category-nav-hint">
                         {node.type.charAt(0).toUpperCase() + node.type.slice(1)} | Ctrl + ← → to switch type
                     </div>
@@ -691,4 +701,4 @@ export function InstrumentNode({
             )}
         </div>
     );
-}
+});

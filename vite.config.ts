@@ -37,7 +37,25 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Allow larger files (audio samples can be big)
+        maximumFileSizeToCacheInBytes: 50 * 1024 * 1024, // 50MB
         runtimeCaching: [
+          // Audio files - CacheFirst with long expiration
+          {
+            urlPattern: /\.(?:mp3|wav|ogg|m4a|flac|webm)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'audio-samples-cache',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
+          // Google Fonts stylesheets
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
@@ -52,6 +70,7 @@ export default defineConfig({
               }
             }
           },
+          // Google Fonts files
           {
             urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
             handler: 'CacheFirst',
@@ -60,6 +79,21 @@ export default defineConfig({
               expiration: {
                 maxEntries: 10,
                 maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
+          // Instrument samples from CDN
+          {
+            urlPattern: /^https:\/\/.*\.(?:githubusercontent|unpkg|jsdelivr|cloudfront)\..*\.(?:mp3|wav|ogg)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'instrument-samples-cache',
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
               },
               cacheableResponse: {
                 statuses: [0, 200]
@@ -78,5 +112,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@tonejs/piano', 'webaudiofont']
+  },
+  // Worker configuration for AudioWorklet modules
+  worker: {
+    format: 'es'
   }
 })

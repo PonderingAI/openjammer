@@ -38,7 +38,7 @@ interface TonePianoConfig {
   envelope?: EnvelopeConfig;
 }
 
-export class TonePianoInstrument extends SampledInstrument {
+export class TonePianoInstrument extends SampledInstrument<boolean> {
   private piano: PianoInstance | null = null;
   private config: TonePianoConfig;
   private toneGain: Tone.Gain | null = null; // Use Tone.Gain instead of native GainNode

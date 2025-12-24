@@ -18,6 +18,7 @@ let initializationPromise: Promise<AudioContext> | null = null;
 export interface AudioContextConfig {
     sampleRate?: number;
     latencyHint?: AudioContextLatencyCategory | number;
+    lowLatencyMode?: boolean; // When true, requests 5ms latency for USB interfaces
 }
 
 export interface LatencyMetrics {
@@ -53,9 +54,16 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
     // Start initialization and store the promise
     initializationPromise = (async () => {
         try {
+            // LOW LATENCY OPTIMIZATION:
+            // When lowLatencyMode is enabled, request 5ms latency (0.005s)
+            // This works better with USB audio interfaces than 'interactive'
+            const latencyHint = config?.lowLatencyMode
+                ? 0.005 // 5ms target for USB interfaces
+                : (config?.latencyHint !== undefined ? config.latencyHint : 'interactive');
+
             audioContext = new AudioContext({
                 sampleRate: config?.sampleRate || 48000,
-                latencyHint: config?.latencyHint !== undefined ? config.latencyHint : 'interactive'
+                latencyHint
             });
             masterGain = audioContext.createGain();
             masterGain.connect(audioContext.destination);
@@ -72,10 +80,9 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
         }
     })();
 
-    const result = await initializationPromise;
-    // Clear the promise after successful initialization
-    initializationPromise = null;
-    return result;
+    // Don't clear the promise - resolved promises can be awaited multiple times
+    // This prevents race conditions where a 3rd caller comes in during resolution
+    return initializationPromise;
 }
 
 /**

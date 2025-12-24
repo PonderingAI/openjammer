@@ -3,10 +3,14 @@
  * Connected to the real Recorder audio class via AudioGraphManager
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, memo } from 'react';
+import { toast } from 'sonner';
 import type { GraphNode } from '../../engine/types';
 import { useAudioStore } from '../../store/audioStore';
+import { useProjectStore } from '../../store/projectStore';
+import { useLibraryStore } from '../../store/libraryStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { getAudioContext } from '../../audio/AudioEngine';
 import type { Recording as AudioRecording } from '../../audio/Recorder';
 
 interface RecorderNodeProps {
@@ -18,14 +22,24 @@ interface RecordingState {
     name: string;
     duration: number;
     timestamp: number;
+    savedToProject?: boolean;
+    libraryItemId?: string;  // Reference to saved library item
 }
 
-export function RecorderNode({ node }: RecorderNodeProps) {
+export const RecorderNode = memo(function RecorderNode({ node }: RecorderNodeProps) {
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
+    const projectName = useProjectStore((s) => s.name);
+    const getProjectHandle = useProjectStore((s) => s.getProjectHandle);
+    const addAudioFile = useProjectStore((s) => s.addAudioFile);
+
+    // Library store for saving recordings and trashing deleted items
+    const saveAudioToLibrary = useLibraryStore((s) => s.saveAudioToLibrary);
+    const trashItem = useLibraryStore((s) => s.trashItem);
 
     const [isRecording, setIsRecording] = useState(false);
     const [recordings, setRecordings] = useState<RecordingState[]>([]);
     const [recordingTime, setRecordingTime] = useState(0);
+    const [isSaving, setIsSaving] = useState<string | null>(null);
 
     // Get the Recorder instance from AudioGraphManager
     const getRecorder = useCallback(() => {
@@ -56,6 +70,13 @@ export function RecorderNode({ node }: RecorderNodeProps) {
             setRecordingTime(time);
         });
 
+        recorder.setOnRecordingDeleted((deletedRecording: AudioRecording) => {
+            // Trash the library item if the recording was saved
+            if (deletedRecording.libraryItemId) {
+                trashItem(deletedRecording.libraryItemId);
+            }
+        });
+
         // Initial sync of recordings from recorder
         const existingRecordings = recorder.getRecordings();
         if (existingRecordings.length > 0) {
@@ -70,9 +91,10 @@ export function RecorderNode({ node }: RecorderNodeProps) {
         return () => {
             // Cleanup callbacks
             recorder.setOnRecordingComplete(() => {});
+            recorder.setOnRecordingDeleted(() => {});
             recorder.setOnTimeUpdate(() => {});
         };
-    }, [isAudioContextReady, node.id, getRecorder]);
+    }, [isAudioContextReady, node.id, getRecorder, trashItem]);
 
     // Start recording
     const handleStartRecording = useCallback(() => {
@@ -108,6 +130,76 @@ export function RecorderNode({ node }: RecorderNodeProps) {
         }
         setRecordings(prev => prev.filter(r => r.id !== recordingId));
     }, [getRecorder]);
+
+    // Save recording to project folder and library
+    const handleSaveToProject = useCallback(async (recordingId: string) => {
+        if (!projectName) {
+            toast.error('No project open. Create or open a project first.');
+            return;
+        }
+
+        const recorder = getRecorder();
+        if (!recorder) return;
+
+        // Get the recording blob for library save
+        const recordingBlob = recorder.getRecordingBlob(recordingId);
+        if (!recordingBlob) {
+            toast.error('Recording not found');
+            return;
+        }
+
+        setIsSaving(recordingId);
+        try {
+            // First, convert the blob to an AudioBuffer for library storage
+            const ctx = getAudioContext();
+            if (!ctx) {
+                toast.error('Audio context not available');
+                return;
+            }
+
+            const arrayBuffer = await recordingBlob.arrayBuffer();
+            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+            // Find the recording name for the library
+            const recordingState = recordings.find(r => r.id === recordingId);
+            const recordingName = recordingState?.name || 'Recording';
+
+            // Save to library store (this creates a library item visible in the library browser)
+            const libraryItemId = await saveAudioToLibrary(audioBuffer, recordingName, ['recording']);
+
+            if (!libraryItemId) {
+                toast.error('Failed to save recording to library');
+                return;
+            }
+
+            // Store the libraryItemId on the Recording object for trash handling
+            const allRecordings = recorder.getRecordings();
+            const recording = allRecordings.find(r => r.id === recordingId);
+            if (recording) {
+                recording.libraryItemId = libraryItemId;
+            }
+
+            // Also save to project manifest (for compatibility with old system)
+            const handle = await getProjectHandle();
+            if (handle) {
+                const result = await recorder.saveRecordingToProject(recordingId, handle);
+                if (result) {
+                    await addAudioFile(recordingId, result);
+                }
+            }
+
+            // Mark as saved in local state with libraryItemId
+            setRecordings(prev => prev.map(r =>
+                r.id === recordingId ? { ...r, savedToProject: true, libraryItemId } : r
+            ));
+            toast.success('Recording saved to project');
+        } catch (err) {
+            console.error('Failed to save recording:', err);
+            toast.error('Failed to save recording');
+        } finally {
+            setIsSaving(null);
+        }
+    }, [projectName, getRecorder, getProjectHandle, addAudioFile, saveAudioToLibrary, recordings]);
 
     // Format time
     const formatTime = (seconds: number) => {
@@ -174,6 +266,25 @@ export function RecorderNode({ node }: RecorderNodeProps) {
                                 Recording {index + 1} ({formatTime(recording.duration)})
                             </span>
                             <div className="loop-actions">
+                                {projectName && !recording.savedToProject && (
+                                    <button
+                                        className="node-btn node-btn-success"
+                                        onClick={() => handleSaveToProject(recording.id)}
+                                        disabled={isSaving === recording.id}
+                                        style={{ padding: '2px 6px', fontSize: '10px' }}
+                                        title="Save to Project"
+                                    >
+                                        {isSaving === recording.id ? '...' : '📁'}
+                                    </button>
+                                )}
+                                {recording.savedToProject && (
+                                    <span
+                                        style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-success)' }}
+                                        title="Saved to project"
+                                    >
+                                        ✓
+                                    </span>
+                                )}
                                 <button
                                     className="node-btn node-btn-primary"
                                     onClick={() => handleDownload(recording.id)}
@@ -215,4 +326,4 @@ export function RecorderNode({ node }: RecorderNodeProps) {
       `}</style>
         </div>
     );
-}
+});

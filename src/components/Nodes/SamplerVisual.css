@@ -1,0 +1,231 @@
+/**
+ * Sampler Visual Node - INSIDE view (row-based layout)
+ *
+ * Layout:
+ * ┌─────────────────────────────────────────────────────────┐
+ * │ SAMPLER CONFIG                                          │
+ * ├─────────────────────────────────────────────────────────┤
+ * │ Row 1: "Keys" (12 ports)                                │
+ * │ ● ● ● ● ● ● ● ● ● ● ● ●   Gain: 1.0   Spread: 1.0      │
+ * ├─────────────────────────────────────────────────────────┤
+ * │ Connect a keyboard bundle...                            │
+ * └─────────────────────────────────────────────────────────┘
+ */
+
+/* ============================================
+ * Main Container
+ * ============================================ */
+
+.sampler-visual-node {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    max-width: 240px;
+    background: var(--bg-node);
+    border: var(--border-sketch-width) solid var(--sketch-black);
+    border-radius: var(--radius-lg);
+    overflow: visible;
+    color: var(--text-primary);
+    font-family: var(--font-sketch);
+}
+
+.sampler-visual-node.selected {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+.sampler-visual-node.dragging {
+    opacity: 0.8;
+}
+
+/* ============================================
+ * Header
+ * ============================================ */
+
+.sampler-visual-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: grab;
+}
+
+.sampler-visual-header:active {
+    cursor: grabbing;
+}
+
+.sampler-visual-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-primary);
+}
+
+/* ============================================
+ * Rows Container
+ * ============================================ */
+
+.sampler-visual-rows {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-sm);
+    min-height: 60px;
+}
+
+/* ============================================
+ * Empty State
+ * ============================================ */
+
+.sampler-row-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-lg) var(--space-md);
+}
+
+.sampler-empty-text {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    font-style: italic;
+    text-align: center;
+}
+
+/* ============================================
+ * Row Styling - Visual representation
+ * ============================================ */
+
+.sampler-row-visual {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+}
+
+.sampler-row-visual.with-divider {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-md);
+}
+
+/* Row header with label and controls */
+.sampler-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+}
+
+.sampler-row-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.sampler-row-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.sampler-row-value {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    padding: 1px 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    cursor: ns-resize;
+    user-select: none;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.sampler-row-value:hover {
+    background: var(--bg-node);
+    border-color: var(--accent-primary);
+}
+
+/* Placeholder row for new connections */
+.sampler-placeholder-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs);
+    border-top: 1px dashed var(--border-subtle);
+}
+
+.sampler-placeholder-row.first-row {
+    border-top: none;
+}
+
+.sampler-placeholder-port {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    border: 1px dashed var(--control-input);
+    cursor: crosshair;
+    transition: background var(--transition-fast), border var(--transition-fast), transform var(--transition-fast);
+}
+
+.sampler-placeholder-port:hover {
+    background: var(--control-input);
+    border-style: solid;
+    transform: scale(1.2);
+}
+
+.sampler-placeholder-port:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+    background: var(--control-input);
+    border-style: solid;
+}
+
+.sampler-placeholder-text {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ============================================
+ * Key Ports Display
+ * ============================================ */
+
+.sampler-row-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: var(--space-xs) 0;
+}
+
+.sampler-key-port {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--control-input);
+    border: 1px solid var(--sketch-black);
+    cursor: crosshair;
+    transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.sampler-key-port:hover {
+    transform: scale(1.3);
+    filter: brightness(1.2);
+}
+
+.sampler-key-port:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+    transform: scale(1.3);
+}
+
+.sampler-key-port.connected {
+    background: var(--control-connected);
+    box-shadow: 0 0 4px var(--control-connected);
+}

@@ -177,3 +177,19 @@ textarea:focus {
     outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
 }
+
+/* Sonner toast container overrides for theme consistency */
+[data-sonner-toaster] {
+    --normal-bg: var(--bg-secondary);
+    --normal-border: var(--border-sketch);
+    --normal-text: var(--text-primary);
+    font-family: var(--font-sketch);
+}
+
+/* Override Sonner's default toast styles when using custom toasts */
+[data-sonner-toast][data-type="custom"] {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}

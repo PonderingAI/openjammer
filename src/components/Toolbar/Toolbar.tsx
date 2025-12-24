@@ -2,14 +2,16 @@
  * Toolbar - Photoshop-style menu bar with dropdown menus
  */
 
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useAudioStore } from '../../store/audioStore';
-import { beatClock } from '../../audio/BeatClock';
-import type { BeatClockState } from '../../audio/BeatClock';
+import { useProjectStore } from '../../store/projectStore';
+import { useTransportStore } from '../../store/transportStore';
 import { exportWorkflow, downloadWorkflow, loadWorkflowFromFile, importWorkflow } from '../../engine/serialization';
 import { DropdownMenu, type MenuItemOrSeparator } from './DropdownMenu';
+import { useOnlineStatus } from '../../hooks/usePWA';
 import './Toolbar.css';
 
 export function Toolbar() {
@@ -33,25 +35,39 @@ export function Toolbar() {
     const currentMode = useAudioStore((s) => s.currentMode);
     const isToolbarFocused = currentMode === 1;
 
-    // Beat clock state for play/stop
-    const [clockState, setClockState] = useState<BeatClockState>(beatClock.getState());
+    // Project state
+    const projectName = useProjectStore((s) => s.name);
+    const projectIsSupported = useProjectStore((s) => s.isSupported);
+    const recentProjects = useProjectStore((s) => s.recentProjects);
+    const isSaving = useProjectStore((s) => s.isSaving);
+    const createProject = useProjectStore((s) => s.createProject);
+    const openProject = useProjectStore((s) => s.openProject);
+    const openRecentProject = useProjectStore((s) => s.openRecentProject);
+    const saveProject = useProjectStore((s) => s.saveProject);
+    const closeProject = useProjectStore((s) => s.closeProject);
 
-    useEffect(() => {
-        const unsubscribe = beatClock.onStateChange((state) => {
-            setClockState(state);
-        });
-        return unsubscribe;
-    }, []);
+    // Online status
+    const isOnline = useOnlineStatus();
+
+    // Global transport state for play/pause (continuous sources like loopers)
+    const isGloballyPaused = useTransportStore((s) => s.isGloballyPaused);
+    const toggleGlobalPause = useTransportStore((s) => s.toggleGlobalPause);
 
     // Transport controls
     const handlePlayStop = useCallback(() => {
-        beatClock.toggle();
-    }, []);
+        toggleGlobalPause();
+    }, [toggleGlobalPause]);
 
     // Export workflow
     const handleExport = useCallback(() => {
-        const workflow = exportWorkflow(nodes, connections, 'OpenJammer Workflow');
-        downloadWorkflow(workflow);
+        try {
+            const workflow = exportWorkflow(nodes, connections, 'OpenJammer Workflow');
+            downloadWorkflow(workflow);
+            toast.success('Workflow exported');
+        } catch (err) {
+            console.error('Failed to export workflow:', err);
+            toast.error(`Failed to export workflow: ${(err as Error).message}`);
+        }
     }, [nodes, connections]);
 
     // Import workflow
@@ -69,13 +85,13 @@ export function Toolbar() {
             loadGraph(importedNodes, importedConnections);
         } catch (err) {
             console.error('Failed to import workflow:', err);
-            alert('Failed to import workflow. Please check the file format.');
+            toast.error('Failed to import workflow. Please check the file format.');
         }
 
         e.target.value = '';
     }, [loadGraph]);
 
-    // New workflow
+    // New workflow (legacy - just clears canvas)
     const handleNew = useCallback(() => {
         if (nodes.size > 0) {
             if (!confirm('Clear current workflow? This cannot be undone.')) {
@@ -85,6 +101,110 @@ export function Toolbar() {
         clearGraph();
         resetView();
     }, [nodes.size, clearGraph, resetView]);
+
+    // Project handlers
+    const handleNewProject = useCallback(async () => {
+        if (!projectIsSupported) {
+            toast.error('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
+            return;
+        }
+
+        try {
+            // Pick folder FIRST (must be in direct response to user gesture)
+            // The name will be prompted inside createProject after folder selection
+            await createProject();
+            clearGraph();
+            resetView();
+        } catch (err) {
+            if ((err as Error).message !== 'Cancelled' &&
+                (err as Error).message !== 'Cancelled - folder already contains a project' &&
+                (err as DOMException).name !== 'AbortError') {
+                console.error('Failed to create project:', err);
+                toast.error(`Failed to create project: ${(err as Error).message}`);
+            }
+        }
+    }, [projectIsSupported, createProject, clearGraph, resetView]);
+
+    const handleOpenProject = useCallback(async () => {
+        if (!projectIsSupported) {
+            toast.error('File System Access API is not supported in this browser. Use Chrome or Edge for local project folders.');
+            return;
+        }
+
+        try {
+            const { manifest } = await openProject();
+            // Load graph from manifest if it exists
+            if (manifest.graph?.nodes && manifest.graph?.edges) {
+                // Convert to expected format
+                const importedNodes = manifest.graph.nodes as Parameters<typeof loadGraph>[0];
+                const importedConnections = manifest.graph.edges as Parameters<typeof loadGraph>[1];
+                loadGraph(importedNodes, importedConnections);
+            } else {
+                clearGraph();
+            }
+            resetView();
+        } catch (err) {
+            if ((err as DOMException).name !== 'AbortError') {
+                const message = (err as Error).message;
+                // Offer to create a new project if folder is empty
+                if (message.includes('No project.openjammer found')) {
+                    const create = confirm(
+                        'This folder doesn\'t contain an OpenJammer project.\n\n' +
+                        'Would you like to create a new project here instead?'
+                    );
+                    if (create) {
+                        handleNewProject();
+                        return;
+                    }
+                } else {
+                    console.error('Failed to open project:', err);
+                    toast.error(`Failed to open project: ${message}`);
+                }
+            }
+        }
+    }, [projectIsSupported, openProject, loadGraph, clearGraph, resetView, handleNewProject]);
+
+    const handleSaveProject = useCallback(async () => {
+        if (!projectName) {
+            // No project open - offer to create one
+            handleNewProject();
+            return;
+        }
+
+        try {
+            const graphData = {
+                nodes: Array.from(nodes.values()),
+                edges: Array.from(connections.values()),
+                viewport: { x: 0, y: 0, zoom },
+            };
+            await saveProject(graphData);
+            toast.success('Project saved');
+        } catch (err) {
+            console.error('Failed to save project:', err);
+            toast.error(`Failed to save project: ${(err as Error).message}`);
+        }
+    }, [projectName, nodes, connections, zoom, saveProject, handleNewProject]);
+
+    const handleCloseProject = useCallback(() => {
+        closeProject();
+    }, [closeProject]);
+
+    const handleOpenRecentProject = useCallback(async (project: typeof recentProjects[0]) => {
+        try {
+            const { manifest } = await openRecentProject(project);
+            if (manifest.graph?.nodes && manifest.graph?.edges) {
+                const importedNodes = manifest.graph.nodes as Parameters<typeof loadGraph>[0];
+                const importedConnections = manifest.graph.edges as Parameters<typeof loadGraph>[1];
+                loadGraph(importedNodes, importedConnections);
+            } else {
+                clearGraph();
+            }
+            resetView();
+        } catch (err) {
+            console.error('Failed to open recent project:', err);
+            toast.error(`Failed to open project: ${(err as Error).message}`);
+        }
+    }, [openRecentProject, loadGraph, clearGraph, resetView]);
 
     // Zoom controls
     const handleZoomIn = useCallback(() => {
@@ -103,24 +223,70 @@ export function Toolbar() {
     const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
     const cmdKey = isMac ? '⌘' : 'Ctrl';
 
+    // Build recent projects submenu
+    const recentProjectsItems: MenuItemOrSeparator[] = recentProjects.length > 0
+        ? recentProjects.map((project) => ({
+            id: `recent-${project.handleKey}`,
+            label: project.name,
+            onClick: () => handleOpenRecentProject(project),
+        }))
+        : [{ id: 'no-recent', label: '(No recent projects)', disabled: true, onClick: () => {} }];
+
     // Menu definitions
     const fileMenuItems: MenuItemOrSeparator[] = [
+        // Project section (Chrome/Edge only)
+        ...(projectIsSupported ? [
+            {
+                id: 'new-project',
+                label: 'New Project...',
+                shortcut: `${cmdKey}+Shift+N`,
+                onClick: handleNewProject,
+            },
+            {
+                id: 'open-project',
+                label: 'Open Project Folder...',
+                shortcut: `${cmdKey}+Shift+O`,
+                onClick: handleOpenProject,
+            },
+            ...(projectName ? [
+                {
+                    id: 'save-project',
+                    label: isSaving ? 'Saving...' : 'Save Project',
+                    shortcut: `${cmdKey}+S`,
+                    disabled: isSaving,
+                    onClick: handleSaveProject,
+                },
+                {
+                    id: 'close-project',
+                    label: 'Close Project',
+                    onClick: handleCloseProject,
+                },
+            ] as MenuItemOrSeparator[] : []),
+            { type: 'separator' as const },
+            {
+                id: 'recent-projects',
+                label: 'Recent Projects',
+                submenu: recentProjectsItems,
+            },
+            { type: 'separator' as const },
+        ] as MenuItemOrSeparator[] : []),
+        // Legacy workflow operations
         {
             id: 'new',
-            label: 'New',
-            shortcut: `${cmdKey}+N`,
+            label: 'New Canvas',
+            shortcut: projectIsSupported ? undefined : `${cmdKey}+N`,
             onClick: handleNew,
         },
         {
             id: 'import',
-            label: 'Import...',
-            shortcut: `${cmdKey}+O`,
+            label: 'Import Workflow...',
+            shortcut: projectIsSupported ? undefined : `${cmdKey}+O`,
             onClick: handleImport,
         },
         {
             id: 'export',
-            label: 'Export...',
-            shortcut: `${cmdKey}+S`,
+            label: 'Export Workflow...',
+            shortcut: projectIsSupported ? undefined : `${cmdKey}+S`,
             onClick: handleExport,
         },
     ];
@@ -133,6 +299,11 @@ export function Toolbar() {
             onClick: deleteSelected,
         },
     ];
+
+    // Help panel toggle
+    const handleToggleHelp = useCallback(() => {
+        window.dispatchEvent(new CustomEvent('openjammer:toggle-help'));
+    }, []);
 
     const viewMenuItems: MenuItemOrSeparator[] = [
         {
@@ -159,6 +330,12 @@ export function Toolbar() {
             label: ghostMode ? '✓ Ghost Mode' : 'Ghost Mode',
             shortcut: 'W',
             onClick: toggleGhostMode,
+        },
+        {
+            id: 'help',
+            label: 'Help',
+            shortcut: '?',
+            onClick: handleToggleHelp,
         },
     ];
 
@@ -191,14 +368,14 @@ export function Toolbar() {
 
             <div className="toolbar-separator" />
 
-            {/* Play/Stop */}
+            {/* Global Play/Pause */}
             <button
-                className={`toolbar-btn toolbar-btn-icon ${clockState.isPlaying ? 'toolbar-btn-active' : ''}`}
+                className="toolbar-btn toolbar-btn-icon"
                 onClick={handlePlayStop}
                 disabled={!isAudioContextReady}
-                title={clockState.isPlaying ? 'Stop Clock' : 'Start Clock'}
+                title={isGloballyPaused ? 'Resume All (Space)' : 'Pause All (Space)'}
             >
-                {clockState.isPlaying ? '⏹' : '▶'}
+                {isGloballyPaused ? '▶' : '⏸'}
             </button>
 
             <div className="toolbar-separator" />
@@ -211,6 +388,27 @@ export function Toolbar() {
             >
                 ⚙️
             </button>
+
+            {/* Spacer to push status to right */}
+            <div style={{ flex: 1 }} />
+
+            {/* Project Status */}
+            {projectName && (
+                <div className="toolbar-status" title={`Project: ${projectName}`}>
+                    <span className="toolbar-status-icon">📁</span>
+                    <span className="toolbar-status-text">
+                        {projectName}
+                    </span>
+                </div>
+            )}
+
+            {/* Online Status */}
+            {!isOnline && (
+                <div className="toolbar-status toolbar-status-offline" title="You are offline">
+                    <span className="toolbar-status-icon">📴</span>
+                    <span className="toolbar-status-text">Offline</span>
+                </div>
+            )}
 
             {/* Hidden File Input */}
             <input

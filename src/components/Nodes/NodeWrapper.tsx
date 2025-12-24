@@ -2,7 +2,7 @@
  * Node Wrapper - Handles node positioning, selection, and dragging
  */
 
-import { useCallback, useRef, useState, useMemo } from 'react';
+import { useCallback, useRef, useState, useMemo, useEffect, memo } from 'react';
 import type { GraphNode, Position } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -22,6 +22,13 @@ import { OutputPanelNode } from './OutputPanelNode';
 import { InputPanelNode } from './InputPanelNode';
 import { ContainerNode } from './ContainerNode';
 import { MathNode } from './MathNode';
+import { LibraryNode } from './LibraryNode';
+import { MIDINode } from './MIDINode';
+import { MIDIVisualNode } from './MIDIVisualNode';
+import { MiniLab3Node } from './MiniLab3Node';
+import { MiniLab3VisualNode } from './MiniLab3VisualNode';
+import { SamplerNode } from './SamplerNode';
+import { SamplerVisualNode } from './SamplerVisualNode';
 import './BaseNode.css';
 
 interface NodeWrapperProps {
@@ -33,6 +40,10 @@ const SCHEMATIC_TYPES = [
     'keyboard',
     'keyboard-visual',
     'instrument-visual',
+    'midi',
+    'midi-visual',
+    'minilab-3',
+    'minilab3-visual',
     'piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds',
     'speaker',
     'looper',
@@ -43,14 +54,30 @@ const SCHEMATIC_TYPES = [
     'input-panel',
     'container',
     'add',
-    'subtract'
+    'subtract',
+    'library',
+    'sampler',
+    'sampler-visual'
 ];
 
-export function NodeWrapper({ node }: NodeWrapperProps) {
+export const NodeWrapper = memo(function NodeWrapper({ node }: NodeWrapperProps) {
     const nodeRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const dragStart = useRef<Position>({ x: 0, y: 0 });
     const nodeStart = useRef<Position>({ x: 0, y: 0 });
+
+    // Store cleanup function for drag handlers to prevent memory leaks on unmount
+    const dragCleanupRef = useRef<(() => void) | null>(null);
+
+    // Cleanup drag handlers on unmount
+    useEffect(() => {
+        return () => {
+            if (dragCleanupRef.current) {
+                dragCleanupRef.current();
+                dragCleanupRef.current = null;
+            }
+        };
+    }, []);
 
     const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
     const selectNode = useGraphStore((s) => s.selectNode);
@@ -91,14 +118,20 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         }
     }, [isConnecting, setHoverTarget]);
 
-    // Check if a port has connections
-    const hasConnection = useCallback((portId: string) => {
-        return Array.from(connections.values()).some(
-            conn =>
-                (conn.sourceNodeId === node.id && conn.sourcePortId === portId) ||
-                (conn.targetNodeId === node.id && conn.targetPortId === portId)
-        );
+    // Precompute connected ports Set for O(1) lookup instead of O(n) per port check
+    const connectedPorts = useMemo(() => {
+        const set = new Set<string>();
+        connections.forEach(conn => {
+            if (conn.sourceNodeId === node.id) set.add(conn.sourcePortId);
+            if (conn.targetNodeId === node.id) set.add(conn.targetPortId);
+        });
+        return set;
     }, [connections, node.id]);
+
+    // Check if a port has connections - O(1) lookup
+    const hasConnection = useCallback((portId: string) => {
+        return connectedPorts.has(portId);
+    }, [connectedPorts]);
 
     // Handle node header drag
     const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
@@ -120,11 +153,19 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             });
         };
 
-        const handleMouseUp = () => {
+        const cleanup = () => {
             setIsDragging(false);
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
+            dragCleanupRef.current = null;
         };
+
+        const handleMouseUp = () => {
+            cleanup();
+        };
+
+        // Store cleanup function so it can be called on unmount
+        dragCleanupRef.current = cleanup;
 
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
@@ -182,7 +223,7 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             }
 
             const updateNodePorts = useGraphStore.getState().updateNodePorts;
-            const isInstrument = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds'].includes(node.type);
+            const isInstrument = ['piano', 'cello', 'electricCello', 'violin', 'saxophone', 'strings', 'keys', 'winds', 'sampler'].includes(node.type);
 
             // Check if clicking on a ghost port (not yet persisted)
             const isGhostPort = portId.startsWith('ghost-input-');
@@ -300,8 +341,8 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
         setHoverTarget(null);
     }, [setHoverTarget]);
 
-    // Common props for schematic nodes
-    const schematicProps = {
+    // Common props for schematic nodes - memoized to prevent unnecessary re-renders
+    const schematicProps = useMemo(() => ({
         node,
         handlePortMouseDown,
         handlePortMouseUp,
@@ -319,7 +360,21 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             left: node.position.x,
             top: node.position.y
         }
-    };
+    }), [
+        node,
+        handlePortMouseDown,
+        handlePortMouseUp,
+        handlePortMouseEnter,
+        handlePortMouseLeave,
+        hasConnection,
+        handleHeaderMouseDown,
+        handleNodeMouseEnter,
+        handleNodeMouseLeave,
+        isSelected,
+        isDragging,
+        isHoveredWithConnections,
+        incomingConnectionCount
+    ]);
 
     // For schematic nodes, render the component directly without wrapper
     if (isSchematic) {
@@ -330,6 +385,14 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
                 return <KeyboardVisualNode {...schematicProps} />;
             case 'instrument-visual':
                 return <InstrumentVisualNode {...schematicProps} />;
+            case 'midi':
+                return <MIDINode {...schematicProps} />;
+            case 'midi-visual':
+                return <MIDIVisualNode {...schematicProps} />;
+            case 'minilab-3':
+                return <MiniLab3Node {...schematicProps} />;
+            case 'minilab3-visual':
+                return <MiniLab3VisualNode {...schematicProps} />;
             case 'piano':
             case 'cello':
             case 'electricCello':
@@ -357,6 +420,12 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             case 'add':
             case 'subtract':
                 return <MathNode {...schematicProps} />;
+            case 'library':
+                return <LibraryNode {...schematicProps} />;
+            case 'sampler':
+                return <SamplerNode {...schematicProps} />;
+            case 'sampler-visual':
+                return <SamplerVisualNode {...schematicProps} />;
         }
     }
 
@@ -444,4 +513,4 @@ export function NodeWrapper({ node }: NodeWrapperProps) {
             </div>
         </div>
     );
-}
+});

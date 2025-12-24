@@ -9,8 +9,10 @@
  */
 
 import { useState, useCallback, useRef, memo } from 'react';
-import type { GraphNode, InstrumentRow, InstrumentNodeData } from '../../engine/types';
+import type { GraphNode, InstrumentRow } from '../../engine/types';
+import { isBasicInstrumentNodeData } from '../../engine/typeGuards';
 import { useGraphStore } from '../../store/graphStore';
+import { useScrollCapture, type ScrollData } from '../../hooks/useScrollCapture';
 import './InstrumentVisualNode.css';
 
 /** Debounce interval for wheel events (ms) */
@@ -21,27 +23,8 @@ const PRECISION_FACTOR = 100;
 
 const NOTE_DISPLAY = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-/**
- * Type guard to validate InstrumentNodeData structure
- */
-function isValidInstrumentData(data: unknown): data is InstrumentNodeData {
-    if (typeof data !== 'object' || data === null) return false;
-    const d = data as Record<string, unknown>;
-    // Must have rows array (new system) or offsets object (legacy)
-    if ('rows' in d && Array.isArray(d.rows)) {
-        // Validate rows structure
-        return d.rows.every((row: unknown) =>
-            typeof row === 'object' && row !== null &&
-            'rowId' in (row as Record<string, unknown>) &&
-            'portCount' in (row as Record<string, unknown>)
-        );
-    }
-    if ('offsets' in d && typeof d.offsets === 'object') {
-        return true;
-    }
-    // Empty data is valid (no rows yet)
-    return true;
-}
+// Alias for the shared type guard
+const isValidInstrumentData = isBasicInstrumentNodeData;
 
 interface InstrumentVisualNodeProps {
     node: GraphNode;
@@ -84,25 +67,33 @@ const EditableValue = memo(function EditableValue({
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
     const lastWheelTime = useRef(0);
+    const spanRef = useRef<HTMLSpanElement>(null);
 
     const display = displayFn ? displayFn(value) : String(value);
 
-    const handleWheel = useCallback((e: React.WheelEvent) => {
+    // Handle scroll for value adjustment
+    const handleScroll = useCallback((data: ScrollData) => {
         if (disabled) return;
-        e.stopPropagation();
-        e.preventDefault();
 
         // Debounce rapid wheel events
         const now = Date.now();
         if (now - lastWheelTime.current < WHEEL_DEBOUNCE_MS) return;
         lastWheelTime.current = now;
 
-        const delta = e.deltaY > 0 ? -step : step;
+        // Scroll up increases value, scroll down decreases
+        const delta = data.scrollingUp ? step : -step;
         const newVal = Math.max(min, Math.min(max, value + delta));
         // Round to avoid floating point issues (2 decimal places)
         const rounded = Math.round(newVal * PRECISION_FACTOR) / PRECISION_FACTOR;
         if (rounded !== value) onChange(rounded);
     }, [value, onChange, min, max, step, disabled]);
+
+    // Attach scroll capture to the span
+    const { ref: scrollRef } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleScroll,
+        capture: true, // Block default scroll, handle custom value adjustment
+        enabled: !disabled,
+    });
 
     const startEdit = useCallback(() => {
         if (disabled) return;
@@ -129,10 +120,16 @@ const EditableValue = memo(function EditableValue({
         setEditing(false);
     }, []);
 
+    // Merge refs for both scroll capture and local operations
+    const mergedRef = useCallback((node: HTMLSpanElement | null) => {
+        (spanRef as React.MutableRefObject<HTMLSpanElement | null>).current = node;
+        scrollRef(node);
+    }, [scrollRef]);
+
     return (
         <span
+            ref={mergedRef}
             className="editable-value"
-            onWheel={handleWheel}
             onClick={() => !editing && startEdit()}
             title={`Scroll or click to edit ${label}`}
         >
@@ -173,10 +170,9 @@ export function InstrumentVisualNode({
     isDragging,
     style
 }: InstrumentVisualNodeProps) {
-    const { nodes, updateInstrumentRow } = useGraphStore();
-
-    // Get parent node to access row data with proper validation
-    const parentNode = node.parentId ? nodes.get(node.parentId) : null;
+    // Use selector pattern to subscribe only to specific node - avoids re-render on any node change
+    const parentNode = useGraphStore((s) => node.parentId ? s.nodes.get(node.parentId) : null);
+    const updateInstrumentRow = useGraphStore((s) => s.updateInstrumentRow);
 
     // Validate parent node exists and has valid instrument data
     if (node.parentId && !parentNode) {

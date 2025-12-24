@@ -1,0 +1,67 @@
+/**
+ * PanelSeparator - Styles for draggable panel separators
+ *
+ * Two orientations:
+ * - horizontal: separates top/bottom panels (cursor: row-resize)
+ * - vertical: separates left/right panels (cursor: col-resize)
+ */
+
+.panel-separator {
+  background: var(--border-subtle, #e5e5e5);
+  flex-shrink: 0;
+  transition: background var(--transition-fast, 0.15s ease);
+  position: relative;
+}
+
+/* Drag indicator in center */
+.panel-separator::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--text-muted, #666);
+  border-radius: 1px;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast, 0.15s ease);
+}
+
+.panel-separator:hover,
+.panel-separator.dragging {
+  background: var(--accent-primary, #3b82f6);
+}
+
+.panel-separator:hover::before,
+.panel-separator.dragging::before {
+  opacity: 1;
+}
+
+/* ============================================
+ * Horizontal separator (top/bottom panels)
+ * ============================================ */
+
+.panel-separator-horizontal {
+  height: 6px;
+  width: 100%;
+  cursor: row-resize;
+}
+
+.panel-separator-horizontal::before {
+  width: 20px;
+  height: 2px;
+}
+
+/* ============================================
+ * Vertical separator (left/right panels)
+ * ============================================ */
+
+.panel-separator-vertical {
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.panel-separator-vertical::before {
+  width: 2px;
+  height: 20px;
+}

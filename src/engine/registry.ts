@@ -3,6 +3,7 @@
  */
 
 import type { NodeDefinition, NodeType, PortDefinition } from './types';
+import { MINILAB3_CONFIG, generatePortsFromConfig } from '../components/controls/MIDIDeviceConfig';
 
 // ============================================================================
 // Port Templates
@@ -151,6 +152,144 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         },
         dimensions: { width: 140, height: 100 },
         canEnter: false  // Atomic node - no internal structure
+    },
+
+    midi: {
+        type: 'midi',
+        category: 'input',
+        name: 'Midi',
+        description: 'Connect MIDI controllers (keyboards, pads, knobs)',
+        defaultPorts: [
+            // Bundle outputs (expanded to per-control inside)
+            { id: 'keys', name: 'Keys', type: 'control', direction: 'output' },
+            { id: 'pads', name: 'Pads', type: 'control', direction: 'output' },
+            { id: 'knobs', name: 'Knobs', type: 'control', direction: 'output' },
+            { id: 'faders', name: 'Faders', type: 'control', direction: 'output' },
+            { id: 'pitch-bend', name: 'Pitch', type: 'control', direction: 'output' },
+            { id: 'mod-wheel', name: 'Mod', type: 'control', direction: 'output' },
+        ],
+        defaultData: {
+            deviceId: null,
+            deviceSignature: null,
+            presetId: 'generic',
+            isConnected: false,
+            activeChannel: 0, // 0 = omni (all channels)
+            midiLearnMode: false,
+            learnTarget: null,
+            learnedMappings: {}
+        },
+        dimensions: { width: 160, height: 200 },
+        canEnter: true,  // Press E to see per-control visual
+        portLayout: {
+            direction: 'vertical',
+            outputArea: { x: 1, startY: 0.2, endY: 0.75 }
+        }
+    },
+
+    'midi-visual': {
+        type: 'midi-visual',
+        category: 'input',
+        name: 'MIDI Device',
+        description: 'Visual MIDI device representation (internal node)',
+        defaultPorts: [
+            // Touch strips (left side) - ports at bottom of strips
+            { id: 'pitch-bend', name: 'Pitch', type: 'control', direction: 'output', position: { x: 0.055, y: 0.45 } },
+            { id: 'mod-wheel', name: 'Mod', type: 'control', direction: 'output', position: { x: 0.095, y: 0.45 } },
+
+            // Knobs - 2 rows of 4 (ports below each knob)
+            { id: 'knob-1', name: 'K1', type: 'control', direction: 'output', position: { x: 0.38, y: 0.18 } },
+            { id: 'knob-2', name: 'K2', type: 'control', direction: 'output', position: { x: 0.44, y: 0.18 } },
+            { id: 'knob-3', name: 'K3', type: 'control', direction: 'output', position: { x: 0.50, y: 0.18 } },
+            { id: 'knob-4', name: 'K4', type: 'control', direction: 'output', position: { x: 0.56, y: 0.18 } },
+            { id: 'knob-5', name: 'K5', type: 'control', direction: 'output', position: { x: 0.38, y: 0.30 } },
+            { id: 'knob-6', name: 'K6', type: 'control', direction: 'output', position: { x: 0.44, y: 0.30 } },
+            { id: 'knob-7', name: 'K7', type: 'control', direction: 'output', position: { x: 0.50, y: 0.30 } },
+            { id: 'knob-8', name: 'K8', type: 'control', direction: 'output', position: { x: 0.56, y: 0.30 } },
+
+            // Faders - 4 vertical sliders (ports below each fader)
+            { id: 'fader-1', name: 'F1', type: 'control', direction: 'output', position: { x: 0.72, y: 0.30 } },
+            { id: 'fader-2', name: 'F2', type: 'control', direction: 'output', position: { x: 0.80, y: 0.30 } },
+            { id: 'fader-3', name: 'F3', type: 'control', direction: 'output', position: { x: 0.88, y: 0.30 } },
+            { id: 'fader-4', name: 'F4', type: 'control', direction: 'output', position: { x: 0.96, y: 0.30 } },
+
+            // Pads - 8 horizontal (ports at bottom right of each pad)
+            { id: 'pad-1', name: 'P1', type: 'control', direction: 'output', position: { x: 0.20, y: 0.55 } },
+            { id: 'pad-2', name: 'P2', type: 'control', direction: 'output', position: { x: 0.30, y: 0.55 } },
+            { id: 'pad-3', name: 'P3', type: 'control', direction: 'output', position: { x: 0.40, y: 0.55 } },
+            { id: 'pad-4', name: 'P4', type: 'control', direction: 'output', position: { x: 0.50, y: 0.55 } },
+            { id: 'pad-5', name: 'P5', type: 'control', direction: 'output', position: { x: 0.60, y: 0.55 } },
+            { id: 'pad-6', name: 'P6', type: 'control', direction: 'output', position: { x: 0.70, y: 0.55 } },
+            { id: 'pad-7', name: 'P7', type: 'control', direction: 'output', position: { x: 0.80, y: 0.55 } },
+            { id: 'pad-8', name: 'P8', type: 'control', direction: 'output', position: { x: 0.90, y: 0.55 } },
+
+            // Keys - 25 keys (C3-C5, notes 48-72) - ports at bottom of each key
+            { id: 'key-48', name: 'C3', type: 'control', direction: 'output', position: { x: 0.04, y: 0.95 } },
+            { id: 'key-49', name: 'C#3', type: 'control', direction: 'output', position: { x: 0.07, y: 0.80 } },
+            { id: 'key-50', name: 'D3', type: 'control', direction: 'output', position: { x: 0.10, y: 0.95 } },
+            { id: 'key-51', name: 'D#3', type: 'control', direction: 'output', position: { x: 0.13, y: 0.80 } },
+            { id: 'key-52', name: 'E3', type: 'control', direction: 'output', position: { x: 0.16, y: 0.95 } },
+            { id: 'key-53', name: 'F3', type: 'control', direction: 'output', position: { x: 0.22, y: 0.95 } },
+            { id: 'key-54', name: 'F#3', type: 'control', direction: 'output', position: { x: 0.25, y: 0.80 } },
+            { id: 'key-55', name: 'G3', type: 'control', direction: 'output', position: { x: 0.28, y: 0.95 } },
+            { id: 'key-56', name: 'G#3', type: 'control', direction: 'output', position: { x: 0.31, y: 0.80 } },
+            { id: 'key-57', name: 'A3', type: 'control', direction: 'output', position: { x: 0.34, y: 0.95 } },
+            { id: 'key-58', name: 'A#3', type: 'control', direction: 'output', position: { x: 0.37, y: 0.80 } },
+            { id: 'key-59', name: 'B3', type: 'control', direction: 'output', position: { x: 0.40, y: 0.95 } },
+            { id: 'key-60', name: 'C4', type: 'control', direction: 'output', position: { x: 0.46, y: 0.95 } },
+            { id: 'key-61', name: 'C#4', type: 'control', direction: 'output', position: { x: 0.49, y: 0.80 } },
+            { id: 'key-62', name: 'D4', type: 'control', direction: 'output', position: { x: 0.52, y: 0.95 } },
+            { id: 'key-63', name: 'D#4', type: 'control', direction: 'output', position: { x: 0.55, y: 0.80 } },
+            { id: 'key-64', name: 'E4', type: 'control', direction: 'output', position: { x: 0.58, y: 0.95 } },
+            { id: 'key-65', name: 'F4', type: 'control', direction: 'output', position: { x: 0.64, y: 0.95 } },
+            { id: 'key-66', name: 'F#4', type: 'control', direction: 'output', position: { x: 0.67, y: 0.80 } },
+            { id: 'key-67', name: 'G4', type: 'control', direction: 'output', position: { x: 0.70, y: 0.95 } },
+            { id: 'key-68', name: 'G#4', type: 'control', direction: 'output', position: { x: 0.73, y: 0.80 } },
+            { id: 'key-69', name: 'A4', type: 'control', direction: 'output', position: { x: 0.76, y: 0.95 } },
+            { id: 'key-70', name: 'A#4', type: 'control', direction: 'output', position: { x: 0.79, y: 0.80 } },
+            { id: 'key-71', name: 'B4', type: 'control', direction: 'output', position: { x: 0.82, y: 0.95 } },
+            { id: 'key-72', name: 'C5', type: 'control', direction: 'output', position: { x: 0.88, y: 0.95 } },
+        ],
+        defaultData: {},
+        dimensions: { width: 650, height: 400 },
+        canEnter: false  // Cannot enter this internal visual node
+    },
+
+    'minilab-3': {
+        type: 'minilab-3',
+        category: 'input',
+        name: MINILAB3_CONFIG.name,
+        description: MINILAB3_CONFIG.description || 'Arturia MiniLab 3 MIDI Controller',
+        defaultPorts: [], // Ports synced from internal output-panel
+        defaultData: {
+            deviceId: null,
+            deviceSignature: null,
+            presetId: 'arturia-minilab-3',
+            isConnected: false,
+            activeChannel: 0,
+            midiLearnMode: false,
+            learnTarget: null,
+            learnedMappings: {}
+        },
+        dimensions: MINILAB3_CONFIG.collapsedDimensions,
+        canEnter: true,  // Press E to see full visual with per-control ports
+        portLayout: {
+            direction: 'vertical',
+            outputArea: { x: 1, startY: 0.15, endY: 0.85 }
+        }
+    },
+
+    'minilab3-visual': {
+        type: 'minilab3-visual',
+        category: 'input',
+        name: 'MiniLab 3',
+        description: 'Visual MiniLab 3 with per-control outputs (internal node)',
+        // Ports generated from device config - positions determined by DOM lookup
+        // The visual component's port markers have data-node-id and data-port-id
+        // attributes that NodeCanvas uses for accurate position lookup
+        defaultPorts: generatePortsFromConfig(MINILAB3_CONFIG),
+        defaultData: {},
+        dimensions: MINILAB3_CONFIG.visualDimensions,
+        canEnter: false  // Cannot enter this internal visual node
     },
 
     // Instruments - all share similar layout: inputs on left, audio out on right
@@ -336,7 +475,8 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         description: 'Record and loop audio with auto-detection',
         defaultPorts: [
             { ...audioInput, position: { x: 0, y: 0.5 } },
-            { ...audioOutput, position: { x: 1, y: 0.5 } }
+            { ...audioOutput, position: { x: 1, y: 0.35 } },
+            { id: 'sample-out', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.65 } }
         ],
         defaultData: {
             duration: 10,
@@ -523,6 +663,90 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         },
         dimensions: { width: 120, height: 80 },
         canEnter: false  // Cannot be entered - flashes red on E key
+    },
+
+    // Library Node - Audio file browser with tags
+    library: {
+        type: 'library',
+        category: 'input',
+        name: 'Library',
+        description: 'Local audio file library with tag management',
+        defaultPorts: [
+            { id: 'trigger', name: 'Trigger', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
+            { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.3 } },
+            { id: 'sample-out', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.7 } }
+        ],
+        defaultData: {
+            libraryId: undefined,
+            currentItemId: undefined,
+            itemRefs: [],
+            playbackMode: 'oneshot',
+            volume: 1,
+            missingItemIds: [],
+            // Tag panel state
+            separatorPosition: 0.5,  // Position of pinned/other tags separator (0-1)
+            // Node resizing
+            width: 500,
+            height: 400
+        },
+        dimensions: { width: 500, height: 400 },
+        canEnter: false  // Library browser is inline, not a sub-canvas
+    },
+
+    // Sampler Instrument Node - Row-based design like instrument nodes
+    sampler: {
+        type: 'sampler',
+        category: 'instruments',
+        name: 'Sampler',
+        description: 'Play audio samples chromatically via keyboard',
+        defaultPorts: [
+            // Bundled control input on left (accepts keyboard bundles)
+            { id: 'bundle-in', name: 'Keys', type: 'control', direction: 'input', isBundled: true },
+            // Audio output on right
+            { id: 'audio-out', name: 'Out', type: 'audio', direction: 'output' }
+        ],
+        defaultData: {
+            // Sample reference
+            sampleId: null,
+            sampleName: null,
+            waveformData: null,
+            duration: null,
+            // Row-based structure (populated when bundles connect)
+            rows: [],
+            // Core audio parameters
+            rootNote: 60,       // MIDI note (C4)
+            gain: 1.0,          // Overall gain
+            spread: 1.0,        // Semitones per key
+            attack: 0.01,       // Attack time
+            release: 0.1        // Release time
+        },
+        portLayout: {
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
+            outputArea: { x: 1, startY: 0.4, endY: 0.6 }
+        },
+        dimensions: { width: 200, height: 140 },
+        canEnter: true  // Allows E key to view internal structure
+    },
+
+    // Sampler Visual - compact inside view with row-based layout
+    'sampler-visual': {
+        type: 'sampler-visual',
+        category: 'instruments',
+        name: 'Sampler Visual',
+        description: 'Internal view with row-based key mapping',
+        defaultPorts: [
+            // Placeholder port for new connections (bundles or single)
+            { id: 'placeholder-in', name: '', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } }
+        ],
+        defaultData: {},
+        portLayout: {
+            direction: 'horizontal',
+            inputArea: { x: 0, startY: 0.3, endY: 0.7 },
+            outputArea: { x: 1, startY: 0.3, endY: 0.7 }
+        },
+        dimensions: { width: 180, height: 80 },
+        canEnter: false  // This IS the internal view
     }
 };
 
@@ -540,12 +764,12 @@ export const menuCategories: MenuCategory[] = [
     {
         name: 'Input',
         icon: '⌨️',
-        items: ['keyboard', 'microphone']
+        items: ['keyboard', 'midi', 'microphone', 'library']
     },
     {
         name: 'Instruments',
         icon: '🎻',
-        items: ['strings', 'keys', 'winds']
+        items: ['strings', 'keys', 'winds', 'sampler']
     },
     {
         name: 'Routing',

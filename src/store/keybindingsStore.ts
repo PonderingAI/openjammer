@@ -50,10 +50,16 @@ export const keybindingActions: KeybindingAction[] = [
         defaultBinding: { key: 'o', ctrl: true },
     },
     {
+        id: 'file.save',
+        label: 'Save Project',
+        category: 'File',
+        defaultBinding: { key: 's', ctrl: true },
+    },
+    {
         id: 'file.export',
         label: 'Export Workflow',
         category: 'File',
-        defaultBinding: { key: 's', ctrl: true },
+        defaultBinding: { key: 's', ctrl: true, shift: true },
     },
 
     // Edit actions

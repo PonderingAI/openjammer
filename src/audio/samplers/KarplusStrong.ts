@@ -17,7 +17,7 @@ interface KarplusNote {
   cleanupTimeout?: ReturnType<typeof setTimeout>;
 }
 
-export class KarplusStrongInstrument extends SampledInstrument {
+export class KarplusStrongInstrument extends SampledInstrument<KarplusNote> {
   private pluckBrightness: number;
   private dampening: number;
 
@@ -121,14 +121,11 @@ export class KarplusStrongInstrument extends SampledInstrument {
   }
 
   async load(): Promise<void> {
-    this.loadingState = 'loaded';
+    this.setLoadingState('loaded');
     return Promise.resolve();
   }
 
-  // Track cleanup timeouts separately since they persist after note deletion
-  private cleanupTimeouts: Set<ReturnType<typeof setTimeout>> = new Set();
-
-  // Override stopNoteImpl to track cleanup timeouts
+  // Override stopNoteImpl to use inherited scheduleCleanup from base class
   protected override stopNoteImpl(note: string): void {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -149,30 +146,26 @@ export class KarplusStrongInstrument extends SampledInstrument {
       noteData.outputGain.gain.setValueAtTime(noteData.outputGain.gain.value, now);
       noteData.outputGain.gain.setTargetAtTime(0, now, timeConstant);
 
-      // Cleanup after 5x time constant - track timeout for cleanup on disconnect
+      // Cleanup after 5x time constant - use inherited scheduleCleanup
       const cleanupTime = timeConstant * 5 * 1000;
-      const cleanupTimeout = setTimeout(() => {
+      this.scheduleCleanup(() => {
         noteData.delayNode.disconnect();
         noteData.filterNode.disconnect();
         noteData.feedbackGain.disconnect();
         noteData.outputGain.disconnect();
-        this.cleanupTimeouts.delete(cleanupTimeout);
       }, cleanupTime);
-      this.cleanupTimeouts.add(cleanupTimeout);
 
       this.activeNotes.delete(note);
     }
   }
 
-  // Override disconnect to clean up all pending timeouts
+  // Override disconnect to clean up decay timeouts (base class handles pendingCleanups)
   override disconnect(): void {
-    // Clear all decay and cleanup timeouts
+    // Clear all decay timeouts
     this.activeNotes.forEach((noteData) => {
       const kNote = noteData as KarplusNote;
       if (kNote.decayTimeout) clearTimeout(kNote.decayTimeout);
     });
-    this.cleanupTimeouts.forEach((timeout) => clearTimeout(timeout));
-    this.cleanupTimeouts.clear();
 
     super.disconnect();
   }

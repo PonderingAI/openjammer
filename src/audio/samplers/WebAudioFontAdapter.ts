@@ -10,8 +10,8 @@ import type { EnvelopeConfig } from './types';
 // Constants
 // ============================================================================
 
-/** Timeout for preset loading (30 seconds) */
-const PRESET_LOAD_TIMEOUT_MS = 30000;
+/** Timeout for preset loading (10 seconds) */
+const PRESET_LOAD_TIMEOUT_MS = 10000;
 
 /** Maximum concurrent notes to prevent resource exhaustion */
 const MAX_CONCURRENT_NOTES = 64;
@@ -73,7 +73,7 @@ interface WebAudioFontConfig {
   envelope?: EnvelopeConfig;
 }
 
-export class WebAudioFontInstrument extends SampledInstrument {
+export class WebAudioFontInstrument extends SampledInstrument<boolean> {
   private player: WebAudioFontPlayer | null = null;
   private preset: unknown = null;
   private config: WebAudioFontConfig;

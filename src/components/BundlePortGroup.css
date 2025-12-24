@@ -1,0 +1,240 @@
+/**
+ * BundlePortGroup Styles
+ *
+ * Expandable/collapsible bundle port visualization
+ */
+
+.bundle-port-group {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+/* Bundle row layout */
+.bundle-port-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    min-height: 28px;
+}
+
+.bundle-port-group.left .bundle-port-row {
+    flex-direction: row;
+}
+
+.bundle-port-group.right .bundle-port-row {
+    flex-direction: row-reverse;
+}
+
+/* Expand/collapse button */
+.bundle-expand-button {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    cursor: pointer;
+    color: var(--text-secondary, #888);
+    font-size: 10px;
+    line-height: 1;
+    border-radius: 3px;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.bundle-expand-button:hover {
+    background-color: var(--hover-bg, rgba(255, 255, 255, 0.1));
+    color: var(--text-primary, #fff);
+}
+
+.bundle-triangle {
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+
+.bundle-expand-button.expanded .bundle-triangle {
+    /* Triangle already points down for expanded state */
+}
+
+/* Bundle label */
+.bundle-label {
+    font-size: 12px;
+    color: var(--text-primary, #fff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+    cursor: default;
+    user-select: none;
+}
+
+.bundle-count {
+    color: var(--text-secondary, #888);
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+/* Bundle port marker (thicker than regular ports) */
+.bundle-port-marker {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--port-border, #666);
+    background-color: var(--port-bg, #333);
+    cursor: crosshair;
+    transition: border-color 0.15s, background-color 0.15s, transform 0.1s;
+    flex-shrink: 0;
+}
+
+.bundle-port-marker:hover {
+    transform: scale(1.2);
+    border-color: var(--port-hover-border, #fff);
+}
+
+.bundle-port-marker.connected {
+    background-color: var(--port-connected-bg, #4a9eff);
+    border-color: var(--port-connected-border, #6ab7ff);
+}
+
+/* Control port colors for bundle */
+.bundle-port-marker.control-port {
+    border-color: var(--control-port-color, #f0a020);
+}
+
+.bundle-port-marker.control-port.connected {
+    background-color: var(--control-port-color, #f0a020);
+}
+
+/* Audio port colors for bundle */
+.bundle-port-marker.audio-port {
+    border-color: var(--audio-port-color, #4a9eff);
+}
+
+.bundle-port-marker.audio-port.connected {
+    background-color: var(--audio-port-color, #4a9eff);
+}
+
+/* Expanded channels container */
+.bundle-channels {
+    display: flex;
+    flex-direction: column;
+    padding-left: 8px;
+    margin-top: 2px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Scrollbar styling for channel list */
+.bundle-channels::-webkit-scrollbar {
+    width: 6px;
+}
+
+.bundle-channels::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.bundle-channels::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb, rgba(255, 255, 255, 0.2));
+    border-radius: 3px;
+}
+
+.bundle-channels::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover, rgba(255, 255, 255, 0.3));
+}
+
+/* Individual channel row */
+.bundle-channel-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    min-height: 20px;
+    font-size: 11px;
+}
+
+.bundle-channel-row.left {
+    flex-direction: row;
+}
+
+.bundle-channel-row.right {
+    flex-direction: row-reverse;
+}
+
+/* Tree connector characters */
+.bundle-channel-indent {
+    width: 8px;
+}
+
+.bundle-channel-connector {
+    color: var(--text-tertiary, #555);
+    font-family: monospace;
+    font-size: 12px;
+    width: 12px;
+    text-align: center;
+}
+
+/* Channel label */
+.bundle-channel-label {
+    color: var(--text-secondary, #aaa);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+    flex: 1;
+}
+
+/* Channel port marker (smaller, visual only) */
+.bundle-channel-marker {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    border: 1px solid var(--port-border, #666);
+    background-color: var(--port-bg, #333);
+    flex-shrink: 0;
+}
+
+.bundle-channel-marker.control-port {
+    border-color: var(--control-port-color, #f0a020);
+    background-color: rgba(240, 160, 32, 0.3);
+}
+
+.bundle-channel-marker.audio-port {
+    border-color: var(--audio-port-color, #4a9eff);
+    background-color: rgba(74, 158, 255, 0.3);
+}
+
+/* Collapsed state indicator */
+.bundle-port-group.collapsed .bundle-port-marker {
+    /* Slightly larger to indicate it's a bundle */
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 4px rgba(240, 160, 32, 0.4);
+}
+
+/* Animation for expansion */
+.bundle-port-group.expanded .bundle-channels {
+    animation: slideDown 0.15s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 300px;
+    }
+}
+
+/* Bundle header in expanded state */
+.bundle-port-row.bundle-header {
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    margin-bottom: 4px;
+    padding-bottom: 6px;
+}
+
+/* Empty slot indicator */
+.bundle-port-group + .empty-slot-indicator {
+    margin-top: 8px;
+    border-top: 1px dashed var(--border-color, rgba(255, 255, 255, 0.1));
+    padding-top: 8px;
+}

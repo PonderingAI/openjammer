@@ -7,6 +7,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Lock files (bun only - no npm/yarn/pnpm)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+shrinkwrap.json
+
 node_modules
 dist
 dist-ssr

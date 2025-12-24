@@ -1,0 +1,196 @@
+/**
+ * ResizeHandles - Styles for node resize handles
+ *
+ * Supports all 8 handles: 4 corners and 4 edges.
+ * Follows the sketch aesthetic with diagonal border marks for corners.
+ */
+
+.resize-handles {
+  /* Container is transparent, handles positioned absolutely */
+  pointer-events: none;
+}
+
+/* Base handle styles */
+.resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  opacity: 0.4;
+  transition: opacity var(--transition-fast, 0.15s ease);
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+  opacity: 1;
+}
+
+/* When resizing, keep all handles visible */
+.resize-handles.resizing .resize-handle {
+  opacity: 0.6;
+}
+
+.resize-handles.resizing .resize-handle.active {
+  opacity: 1;
+}
+
+/* ============================================
+ * Corner handles - Visual diagonal marks
+ * ============================================ */
+
+.resize-handle.corner {
+  width: 16px;
+  height: 16px;
+}
+
+.resize-handle.corner::before {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+}
+
+/* Southeast corner (bottom-right) - default/most common */
+.resize-handle-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle-se::before {
+  right: 3px;
+  bottom: 3px;
+  border-right: 2px solid var(--text-muted, #666);
+  border-bottom: 2px solid var(--text-muted, #666);
+}
+
+/* Northwest corner (top-left) */
+.resize-handle-nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle-nw::before {
+  left: 3px;
+  top: 3px;
+  border-left: 2px solid var(--text-muted, #666);
+  border-top: 2px solid var(--text-muted, #666);
+}
+
+/* Northeast corner (top-right) */
+.resize-handle-ne {
+  right: 0;
+  top: 0;
+  cursor: nesw-resize;
+}
+
+.resize-handle-ne::before {
+  right: 3px;
+  top: 3px;
+  border-right: 2px solid var(--text-muted, #666);
+  border-top: 2px solid var(--text-muted, #666);
+}
+
+/* Southwest corner (bottom-left) */
+.resize-handle-sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
+}
+
+.resize-handle-sw::before {
+  left: 3px;
+  bottom: 3px;
+  border-left: 2px solid var(--text-muted, #666);
+  border-bottom: 2px solid var(--text-muted, #666);
+}
+
+/* ============================================
+ * Edge handles - Invisible hit areas with hover indicator
+ * ============================================ */
+
+.resize-handle.edge {
+  background: transparent;
+}
+
+/* Show subtle indicator on hover */
+.resize-handle.edge::before {
+  content: '';
+  position: absolute;
+  background: var(--text-muted, #666);
+  opacity: 0;
+  transition: opacity var(--transition-fast, 0.15s ease);
+}
+
+.resize-handle.edge:hover::before,
+.resize-handle.edge.active::before {
+  opacity: 0.5;
+}
+
+/* North edge (top) */
+.resize-handle-n {
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resize-handle-n::before {
+  left: 20%;
+  right: 20%;
+  top: 2px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* South edge (bottom) */
+.resize-handle-s {
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resize-handle-s::before {
+  left: 20%;
+  right: 20%;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* East edge (right) */
+.resize-handle-e {
+  right: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resize-handle-e::before {
+  top: 20%;
+  bottom: 20%;
+  right: 2px;
+  width: 2px;
+  border-radius: 1px;
+}
+
+/* West edge (left) */
+.resize-handle-w {
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resize-handle-w::before {
+  top: 20%;
+  bottom: 20%;
+  left: 2px;
+  width: 2px;
+  border-radius: 1px;
+}

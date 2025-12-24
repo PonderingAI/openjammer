@@ -11,9 +11,10 @@ interface ContextMenuProps {
     position: Position;
     onClose: () => void;
     onAddNode: (type: NodeType, position: Position) => void;
+    onOpenMIDIBrowser?: () => void;
 }
 
-export function ContextMenu({ position, onClose, onAddNode }: ContextMenuProps) {
+export function ContextMenu({ position, onClose, onAddNode, onOpenMIDIBrowser }: ContextMenuProps) {
     const menuRef = useRef<HTMLDivElement>(null);
 
     // Close on click outside
@@ -55,8 +56,18 @@ export function ContextMenu({ position, onClose, onAddNode }: ContextMenuProps) 
     }, [position]);
 
     const handleAddNode = (type: NodeType) => {
+        // For MIDI, open the device browser instead of creating node directly
+        if (type === 'midi' && onOpenMIDIBrowser) {
+            onOpenMIDIBrowser();
+            onClose();
+            return;
+        }
         onAddNode(type, position);
-        onClose();
+        // Use requestAnimationFrame to ensure menu closes after React finishes updating
+        // This prevents timing issues where state updates could interfere with close
+        requestAnimationFrame(() => {
+            onClose();
+        });
     };
 
     const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {

@@ -1,0 +1,88 @@
+/**
+ * ClipDragLayer - Styling for the drag overlay
+ */
+
+/* ============================================
+ * Layer Container
+ * ============================================ */
+
+.clip-drag-layer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 10000;
+}
+
+/* ============================================
+ * Drop Zone Highlights
+ * ============================================ */
+
+.clip-drop-zone {
+    position: fixed;
+    border: 2px dashed var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: transparent;
+    transition:
+        border-color var(--transition-fast),
+        background-color var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.clip-drop-zone.valid {
+    border-color: var(--accent-success);
+}
+
+.clip-drop-zone.invalid {
+    border-color: var(--accent-danger);
+    opacity: 0.3;
+}
+
+.clip-drop-zone.hovered.valid {
+    background: color-mix(in srgb, var(--accent-success) 15%, transparent);
+    border-style: solid;
+    box-shadow: 0 0 20px color-mix(in srgb, var(--accent-success) 30%, transparent);
+}
+
+.clip-drop-zone-label {
+    font-family: var(--font-sketch);
+    font-size: var(--text-sm);
+    color: var(--accent-success);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    padding: 4px 12px;
+    background: color-mix(in srgb, var(--bg-node) 90%, transparent);
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================
+ * Dragged Clip Preview
+ * ============================================ */
+
+.clip-drag-preview {
+    position: fixed;
+    pointer-events: none;
+    z-index: 10001;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
+}
+
+/* ============================================
+ * Cursor Hint Badge
+ * ============================================ */
+
+.clip-drag-hint {
+    position: fixed;
+    pointer-events: none;
+    z-index: 10002;
+    font-family: var(--font-sketch);
+    font-size: var(--text-xs);
+    color: var(--text-on-accent);
+    background: var(--accent-success);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}

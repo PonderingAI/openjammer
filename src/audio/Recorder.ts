@@ -6,6 +6,7 @@
  */
 
 import { getAudioContext } from './AudioEngine';
+import { convertWebMToWAV } from './WavEncoder';
 
 // ============================================================================
 // Types
@@ -17,10 +18,62 @@ export interface Recording {
     duration: number;
     timestamp: number;
     name: string;
+    libraryItemId?: string;  // Reference to saved library item (if saved)
 }
 
 type RecordingCallback = (recording: Recording) => void;
 type TimeUpdateCallback = (time: number) => void;
+
+// Maximum number of recordings to keep in memory to prevent memory leaks
+const MAX_RECORDINGS = 50;
+
+// Interval in ms for collecting recording data chunks
+// Lower values = more responsive but higher overhead, higher values = more latency but efficient
+const RECORDING_CHUNK_INTERVAL_MS = 100;
+
+// Interval in ms for updating the recording time display
+const TIME_UPDATE_INTERVAL_MS = 100;
+
+// Maximum suffix attempts when checking for duplicate filenames
+const MAX_FILENAME_SUFFIX = 100;
+
+// Maximum filename length (Windows has 255 char limit for path components)
+const MAX_FILENAME_LENGTH = 200;
+
+// Windows reserved filenames that cannot be used
+const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+/**
+ * Sanitize a filename for safe filesystem usage
+ * Handles:
+ * - Unsafe characters removal
+ * - Leading/trailing dots and special chars
+ * - Windows reserved names
+ * - Length limits
+ */
+function sanitizeFilename(name: string, fallback = 'Recording'): string {
+    // Remove unsafe characters, keep alphanumeric, spaces, hyphens, underscores
+    let safe = name.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').trim();
+
+    // Remove leading/trailing dots, hyphens, and underscores
+    safe = safe.replace(/^[.\-_]+|[.\-_]+$/g, '');
+
+    // Handle Windows reserved names
+    if (WINDOWS_RESERVED_NAMES.test(safe)) {
+        safe = `file_${safe}`;
+    }
+
+    // Enforce length limit
+    if (safe.length > MAX_FILENAME_LENGTH) {
+        safe = safe.slice(0, MAX_FILENAME_LENGTH);
+        // Ensure we don't cut in the middle of a multi-byte sequence
+        // by trimming any trailing incomplete chars
+        safe = safe.replace(/[.\-_]+$/, '');
+    }
+
+    // Return fallback if empty after sanitization
+    return safe || fallback;
+}
 
 // ============================================================================
 // Recorder Class
@@ -37,6 +90,7 @@ export class Recorder {
 
     // Callbacks
     private onRecordingComplete: RecordingCallback | null = null;
+    private onRecordingDeleted: RecordingCallback | null = null;
     private onTimeUpdate: TimeUpdateCallback | null = null;
 
     // Time tracking
@@ -74,6 +128,13 @@ export class Recorder {
      */
     setOnRecordingComplete(callback: RecordingCallback): void {
         this.onRecordingComplete = callback;
+    }
+
+    /**
+     * Set callback for when recording is deleted (for trash handling)
+     */
+    setOnRecordingDeleted(callback: RecordingCallback): void {
+        this.onRecordingDeleted = callback;
     }
 
     /**
@@ -127,7 +188,16 @@ export class Recorder {
             this.processRecording();
         };
 
-        this.mediaRecorder.start(100); // Collect data every 100ms
+        this.mediaRecorder.onerror = (event) => {
+            console.error('[Recorder] MediaRecorder error:', event);
+            this.isRecording = false;
+            if (this.timeUpdateInterval) {
+                clearInterval(this.timeUpdateInterval);
+                this.timeUpdateInterval = null;
+            }
+        };
+
+        this.mediaRecorder.start(RECORDING_CHUNK_INTERVAL_MS);
 
         // Start time update interval
         this.timeUpdateInterval = window.setInterval(() => {
@@ -135,7 +205,7 @@ export class Recorder {
                 const elapsed = (Date.now() - this.startTime) / 1000;
                 this.onTimeUpdate?.(elapsed);
             }
-        }, 100);
+        }, TIME_UPDATE_INTERVAL_MS);
     }
 
     /**
@@ -174,86 +244,28 @@ export class Recorder {
         };
 
         this.recordings.push(recording);
+
+        // Enforce memory limit - remove oldest recordings if we exceed the limit
+        while (this.recordings.length > MAX_RECORDINGS) {
+            const removed = this.recordings.shift();
+            if (removed) {
+                console.warn(`[Recorder] Removed old recording "${removed.name}" to stay under memory limit`);
+            }
+        }
+
         this.onRecordingComplete?.(recording);
     }
 
     /**
      * Convert audio blob to WAV format
+     * Uses shared WavEncoder utility to avoid code duplication
      */
     private async convertToWav(blob: Blob): Promise<Blob> {
-        const ctx = getAudioContext();
-        if (!ctx) return blob;
-
         try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-            return this.audioBufferToWav(audioBuffer);
+            return await convertWebMToWAV(blob);
         } catch (e) {
             console.error('Failed to convert to WAV:', e);
             return blob; // Return original if conversion fails
-        }
-    }
-
-    /**
-     * Convert AudioBuffer to WAV Blob
-     */
-    private audioBufferToWav(buffer: AudioBuffer): Blob {
-        const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-
-        const bytesPerSample = bitDepth / 8;
-        const blockAlign = numChannels * bytesPerSample;
-
-        // Interleave channels
-        const length = buffer.length;
-        const interleaved = new Float32Array(length * numChannels);
-
-        for (let i = 0; i < length; i++) {
-            for (let channel = 0; channel < numChannels; channel++) {
-                const channelData = buffer.getChannelData(channel);
-                interleaved[i * numChannels + channel] = channelData[i];
-            }
-        }
-
-        // Convert to 16-bit PCM
-        const dataLength = interleaved.length * bytesPerSample;
-        const wavBuffer = new ArrayBuffer(44 + dataLength);
-        const view = new DataView(wavBuffer);
-
-        // WAV header
-        this.writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + dataLength, true);
-        this.writeString(view, 8, 'WAVE');
-        this.writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true); // Subchunk1Size
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bitDepth, true);
-        this.writeString(view, 36, 'data');
-        view.setUint32(40, dataLength, true);
-
-        // Write audio data
-        const offset = 44;
-        for (let i = 0; i < interleaved.length; i++) {
-            const sample = Math.max(-1, Math.min(1, interleaved[i]));
-            const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-            view.setInt16(offset + i * bytesPerSample, intSample, true);
-        }
-
-        return new Blob([wavBuffer], { type: 'audio/wav' });
-    }
-
-    /**
-     * Write string to DataView
-     */
-    private writeString(view: DataView, offset: number, str: string): void {
-        for (let i = 0; i < str.length; i++) {
-            view.setUint8(offset + i, str.charCodeAt(i));
         }
     }
 
@@ -271,7 +283,96 @@ export class Recorder {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // Delay revocation to ensure download has time to start
+        // 1 second is sufficient for the browser to initiate the download
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    /**
+     * Save a recording to the project folder
+     * Returns the relative path of the saved file, or null on failure
+     */
+    async saveRecordingToProject(
+        recordingId: string,
+        projectHandle: FileSystemDirectoryHandle
+    ): Promise<{ path: string; duration: number; sampleRate: number } | null> {
+        const recording = this.recordings.find(r => r.id === recordingId);
+        if (!recording) return null;
+
+        try {
+            // Navigate to library folder
+            const libraryDir = await projectHandle.getDirectoryHandle('library', { create: true });
+
+            // Generate filename with timestamp
+            const timestamp = new Date(recording.timestamp).toISOString()
+                .replace(/[:.]/g, '-')
+                .replace('T', '_')
+                .slice(0, 19);
+            // Sanitize name using comprehensive sanitization function
+            const safeName = sanitizeFilename(recording.name);
+
+            // Generate unique filename with random suffix to prevent race conditions
+            // The timestamp alone could collide if multiple saves happen within the same second
+            const randomSuffix = Math.random().toString(36).slice(2, 6);
+            let filename = `${safeName}_${timestamp}_${randomSuffix}.wav`;
+            let suffix = 1;
+
+            // Try to create file, with retry logic if file already exists
+            let fileHandle: FileSystemFileHandle | null = null;
+            while (suffix < MAX_FILENAME_SUFFIX && !fileHandle) {
+                try {
+                    // Check if file already exists first
+                    await libraryDir.getFileHandle(filename, { create: false });
+                    // File exists, try with incremented suffix
+                    suffix++;
+                    filename = `${safeName}_${timestamp}_${randomSuffix}_${suffix}.wav`;
+                } catch {
+                    // File doesn't exist, create it atomically
+                    try {
+                        fileHandle = await libraryDir.getFileHandle(filename, { create: true });
+                    } catch (createErr) {
+                        // Another process may have created it between check and create
+                        // Try with incremented suffix
+                        suffix++;
+                        filename = `${safeName}_${timestamp}_${randomSuffix}_${suffix}.wav`;
+                    }
+                }
+            }
+
+            if (!fileHandle) {
+                throw new Error(`Failed to create unique filename after ${MAX_FILENAME_SUFFIX} attempts`);
+            }
+
+            const writable = await fileHandle.createWritable();
+            try {
+                await writable.write(recording.blob);
+                await writable.close();
+            } catch (err) {
+                await writable.abort().catch(() => {});
+                throw err;
+            }
+
+            // Get audio info for manifest
+            const ctx = getAudioContext();
+            const sampleRate = ctx?.sampleRate ?? 44100;
+
+            return {
+                path: `library/${filename}`,
+                duration: recording.duration,
+                sampleRate
+            };
+        } catch (err) {
+            console.error('[Recorder] Failed to save to project:', err);
+            return null;
+        }
+    }
+
+    /**
+     * Get a recording blob by ID (for external save operations)
+     */
+    getRecordingBlob(recordingId: string): Blob | null {
+        const recording = this.recordings.find(r => r.id === recordingId);
+        return recording?.blob ?? null;
     }
 
     /**
@@ -280,7 +381,11 @@ export class Recorder {
     deleteRecording(recordingId: string): void {
         const index = this.recordings.findIndex(r => r.id === recordingId);
         if (index !== -1) {
+            const recording = this.recordings[index];
             this.recordings.splice(index, 1);
+
+            // Notify for trash handling (if recording was saved to library)
+            this.onRecordingDeleted?.(recording);
         }
     }
 
@@ -306,6 +411,8 @@ export class Recorder {
         }
 
         if (this.mediaStreamDestination) {
+            // Stop all tracks in the stream to release microphone indicator
+            this.mediaStreamDestination.stream.getTracks().forEach(track => track.stop());
             this.mediaStreamDestination.disconnect();
             this.mediaStreamDestination = null;
         }

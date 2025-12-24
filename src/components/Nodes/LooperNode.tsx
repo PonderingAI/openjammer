@@ -5,12 +5,24 @@
  * and a minimal record button.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { GraphNode, LooperNodeData } from '../../engine/types';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import type { GraphNode, LooperNodeData, AudioClip, ClipDropTarget } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { useAudioStore } from '../../store/audioStore';
+import { useAudioClipStore, setClipBuffer, getClipBuffer } from '../../store/audioClipStore';
+import { useLibraryStore } from '../../store/libraryStore';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { getAudioContext } from '../../audio/AudioEngine';
 import { INFINITE_DURATION, isInfiniteDuration, type Loop } from '../../audio/Looper';
+import { createClipFromLoop, loadClipAudio } from '../../utils/clipUtils';
+import { useScrollCapture } from '../../hooks/useScrollCapture';
+import type { ScrollData } from '../../hooks/useScrollCapture';
+import { ScrollContainer } from '../common/ScrollContainer';
+import { toast } from 'sonner';
+
+// Type for library store functions to use in refs
+type SaveAudioToLibraryFn = (buffer: AudioBuffer, name: string, tags?: string[]) => Promise<string | null>;
+type TrashItemFn = (itemId: string) => void;
 
 interface LooperNodeProps {
     node: GraphNode;
@@ -33,9 +45,10 @@ interface LoopState {
     id: string;
     waveformData: number[];  // The recorded waveform shape
     isMuted: boolean;
+    libraryItemId?: string;  // Reference to saved library item
 }
 
-export function LooperNode({
+export const LooperNode = memo(function LooperNode({
     node,
     handlePortMouseDown,
     handlePortMouseUp,
@@ -53,6 +66,35 @@ export function LooperNode({
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
     const isAudioContextReady = useAudioStore((s) => s.isAudioContextReady);
 
+    // Audio clip store for drag-out functionality
+    const addClip = useAudioClipStore((s) => s.addClip);
+    const startClipDrag = useAudioClipStore((s) => s.startDrag);
+    const registerDropTarget = useAudioClipStore((s) => s.registerDropTarget);
+    const unregisterDropTarget = useAudioClipStore((s) => s.unregisterDropTarget);
+    const clipDragState = useAudioClipStore((s) => s.dragState);
+
+    // Library store for auto-saving loops and trashing deleted items
+    const saveAudioToLibrary = useLibraryStore((s) => s.saveAudioToLibrary);
+    const trashItem = useLibraryStore((s) => s.trashItem);
+
+    // Refs for library store functions to avoid re-running effect when store updates
+    // This prevents the effect from re-running when saveAudioToLibrary updates the store,
+    // which could cause stale closures or unnecessary callback re-registrations
+    const saveAudioToLibraryRef = useRef<SaveAudioToLibraryFn>(saveAudioToLibrary);
+    const trashItemRef = useRef<TrashItemFn>(trashItem);
+
+    // Keep refs in sync with latest function references
+    useEffect(() => {
+        saveAudioToLibraryRef.current = saveAudioToLibrary;
+    }, [saveAudioToLibrary]);
+
+    useEffect(() => {
+        trashItemRef.current = trashItem;
+    }, [trashItem]);
+
+    // Ref for drop target bounds
+    const nodeRef = useRef<HTMLDivElement>(null);
+
     const [loops, setLoops] = useState<LoopState[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [duration, setDuration] = useState(data.duration || 10);
@@ -69,9 +111,11 @@ export function LooperNode({
 
     // Get port IDs from node.ports
     const inputPort = node.ports.find(p => p.direction === 'input' && p.type === 'audio');
-    const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio');
+    const outputPort = node.ports.find(p => p.direction === 'output' && p.type === 'audio' && p.id !== 'sample-out');
+    const sampleOutPort = node.ports.find(p => p.id === 'sample-out');
     const inputPortId = inputPort?.id || 'audio-in';
     const outputPortId = outputPort?.id || 'audio-out';
+    const sampleOutPortId = sampleOutPort?.id || 'sample-out';
 
     // Get the Looper instance from AudioGraphManager
     const getLooper = useCallback(() => {
@@ -79,6 +123,7 @@ export function LooperNode({
     }, [node.id]);
 
     // Set up Looper callbacks when component mounts or audio context becomes ready
+    // Uses refs for library store functions to prevent effect re-runs when store updates
     useEffect(() => {
         if (!isAudioContextReady) return;
 
@@ -90,16 +135,48 @@ export function LooperNode({
             if (!l || isSetup) return;
             isSetup = true;
 
-            l.setOnLoopAdded((audioLoop: Loop) => {
+            l.setOnLoopAdded(async (audioLoop: Loop) => {
                 const newLoop: LoopState = {
                     id: audioLoop.id,
                     waveformData: audioLoop.waveformData || [],
-                    isMuted: audioLoop.isMuted
+                    isMuted: audioLoop.isMuted,
+                    libraryItemId: undefined  // Will be set after save completes
                 };
                 setLoops(prev => [...prev, newLoop]);
                 // Reset active waveform history for next recording
                 setWaveformHistory([]);
                 setPlayheadPosition(0);
+
+                // Send the loop's audio buffer to connected samplers via sample-out port
+                if (audioLoop.buffer) {
+                    audioGraphManager.sendSampleBuffer(node.id, audioLoop.buffer);
+
+                    // Auto-save to project library with "loop" tag
+                    // Use ref to get latest function without causing effect re-runs
+                    try {
+                        const itemId = await saveAudioToLibraryRef.current(audioLoop.buffer, 'Loop', ['loop']);
+                        if (itemId) {
+                            // Store the library item ID on both the Loop object and React state
+                            audioLoop.libraryItemId = itemId;
+                            setLoops(prev => prev.map(loop =>
+                                loop.id === audioLoop.id ? { ...loop, libraryItemId: itemId } : loop
+                            ));
+                        } else {
+                            toast.error('Failed to save loop to library');
+                        }
+                    } catch (err) {
+                        console.warn('[Looper] Failed to auto-save loop to library:', err);
+                        toast.error('Failed to save loop to library');
+                    }
+                }
+            });
+
+            l.setOnLoopDeleted((deletedLoop: Loop) => {
+                // Trash the library item if the loop was saved
+                // Use ref to get latest function without causing effect re-runs
+                if (deletedLoop.libraryItemId) {
+                    trashItemRef.current(deletedLoop.libraryItemId);
+                }
             });
 
             l.setOnWaveformHistoryUpdate((history: number[], playhead: number) => {
@@ -118,7 +195,8 @@ export function LooperNode({
                 setLoops(existingLoops.map(loop => ({
                     id: loop.id,
                     waveformData: loop.waveformData || [],
-                    isMuted: loop.isMuted
+                    isMuted: loop.isMuted,
+                    libraryItemId: loop.libraryItemId
                 })));
             }
         };
@@ -155,9 +233,14 @@ export function LooperNode({
             const l = getLooper();
             if (l) {
                 l.setOnLoopAdded(() => {});
+                l.setOnLoopDeleted(() => {});
                 l.setOnWaveformHistoryUpdate(() => {});
             }
         };
+    // Note: saveAudioToLibrary and trashItem are accessed via refs to prevent
+    // effect re-runs when the library store updates (which happens during saving).
+    // This fixes a bug where loops were being trashed immediately after recording
+    // due to effect re-runs causing callback re-registration.
     }, [isAudioContextReady, node.id, duration, getLooper]);
 
     // Auto-scroll to show newest loops when new loop is added
@@ -224,23 +307,27 @@ export function LooperNode({
         }
     }, [node.id, updateNodeData, getLooper]);
 
-    const handleDurationWheel = useCallback((e: React.WheelEvent) => {
+    // Handle scroll on duration value (uses native listener for proper trackpad support)
+    const handleDurationScroll = useCallback((data: ScrollData) => {
         if (isRecording || isEditingDuration) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const scrollingUp = e.deltaY < 0;
 
-        if (isInfinite && !scrollingUp) {
+        if (isInfinite && data.scrollingDown) {
             // Scrolling down from infinite goes to 60
             handleDurationChange(60);
-        } else if (duration === 60 && scrollingUp) {
+        } else if (duration === 60 && data.scrollingUp) {
             // Scrolling up from 60 goes to infinite
             handleDurationChange(INFINITE_DURATION);
         } else if (!isInfinite) {
-            const delta = scrollingUp ? 1 : -1;
+            const delta = data.scrollingUp ? 1 : -1;
             handleDurationChange(duration + delta);
         }
     }, [duration, isInfinite, isRecording, isEditingDuration, handleDurationChange]);
+
+    // Scroll capture for duration adjustment
+    const { ref: durationScrollRef } = useScrollCapture<HTMLSpanElement>({
+        onScroll: handleDurationScroll,
+        enabled: !isRecording && !isEditingDuration,
+    });
 
     const handleDurationClick = useCallback((e: React.MouseEvent) => {
         if (isRecording) return;
@@ -270,9 +357,99 @@ export function LooperNode({
         }
     }, [handleDurationBlur]);
 
+    // Handle drag-out from loop items
+    const handleLoopDragStart = useCallback((loopState: LoopState, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const looper = getLooper();
+        if (!looper) return;
+
+        // Find the actual loop with buffer
+        const loop = looper.getLoops().find(l => l.id === loopState.id);
+        if (!loop || !loop.buffer) return;
+
+        // Create a temporary sample ID based on the loop
+        const tempSampleId = `looper-${node.id}-${loopState.id}-${Date.now()}`;
+        const tempSampleName = `Loop ${loops.indexOf(loopState) + 1}.wav`;
+
+        // Store the buffer in global cache so any looper can access it
+        setClipBuffer(tempSampleId, loop.buffer);
+
+        // Create the clip
+        const clipData = createClipFromLoop(loop, tempSampleId, tempSampleName, node.id);
+        if (!clipData) return; // Buffer was null (shouldn't happen since we checked above)
+
+        // Add to store and get the ID
+        const clipId = addClip(clipData);
+
+        // Get bounds of the loop item element
+        const target = e.currentTarget as HTMLElement;
+        const bounds = target.getBoundingClientRect();
+
+        // Remove the loop from the looper (move semantics - the loop becomes a clip)
+        looper.deleteLoop(loopState.id);
+        // Update React state to reflect removal
+        setLoops(prev => prev.filter(l => l.id !== loopState.id));
+
+        // Start dragging
+        startClipDrag(clipId, { x: e.clientX, y: e.clientY }, bounds);
+    }, [getLooper, node.id, loops, addClip, startClipDrag]);
+
+    // Handle clip drop into looper (add as new loop layer)
+    const handleClipDrop = useCallback(async (clip: AudioClip) => {
+        const looper = getLooper();
+        if (!looper) {
+            console.warn('Looper not available for clip drop');
+            return;
+        }
+
+        try {
+            // First check if buffer is in cache (for looper-originated clips)
+            const cachedBuffer = getClipBuffer(clip.sampleId);
+            if (cachedBuffer) {
+                // Use cached buffer directly
+                looper.addLoopFromBuffer(cachedBuffer);
+                return;
+            }
+
+            // Otherwise load from sample library
+            const audioContext = getAudioContext();
+            if (!audioContext) {
+                console.warn('AudioContext not available');
+                return;
+            }
+
+            const buffer = await loadClipAudio(clip, audioContext);
+
+            // Add as a new loop
+            looper.addLoopFromBuffer(buffer);
+        } catch (error) {
+            console.error('Failed to load clip audio for looper:', error);
+        }
+    }, [getLooper]);
+
+    // Register as drop target
+    useEffect(() => {
+        const dropTarget: ClipDropTarget = {
+            nodeId: node.id,
+            targetName: 'Looper',
+            onClipDrop: handleClipDrop,
+            canAcceptClip: () => true, // Accept any audio clip
+            getDropZoneBounds: () => nodeRef.current?.getBoundingClientRect() ?? null,
+        };
+
+        registerDropTarget(dropTarget);
+        return () => unregisterDropTarget(node.id);
+    }, [node.id, handleClipDrop, registerDropTarget, unregisterDropTarget]);
+
+    // Visual feedback when being dragged over
+    const isDropTarget = clipDragState.hoveredTargetId === node.id;
+
     return (
         <div
-            className={`schematic-node looper-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            ref={nodeRef}
+            className={`schematic-node looper-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'clip-drop-target' : ''}`}
             style={style}
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
@@ -308,9 +485,9 @@ export function LooperNode({
                         />
                     ) : (
                         <span
+                            ref={durationScrollRef}
                             className={`looper-duration editable-value ${isRecording ? 'disabled' : ''}`}
                             onClick={handleDurationClick}
-                            onWheel={handleDurationWheel}
                             title="Click to edit, scroll to adjust"
                         >
                             {isInfinite ? '∞' : duration}
@@ -374,13 +551,19 @@ export function LooperNode({
 
             {/* Completed loops as line waveforms */}
             {loops.length > 0 && (
-                <div
+                <ScrollContainer
+                    mode="dropdown"
                     className="looper-loops"
                     ref={loopsContainerRef}
-                    onWheel={(e) => e.stopPropagation()}
                 >
                     {loops.map((loop) => (
-                        <div key={loop.id} className={`looper-loop-item ${loop.isMuted ? 'muted' : ''}`}>
+                        <div
+                            key={loop.id}
+                            className={`looper-loop-item ${loop.isMuted ? 'muted' : ''}`}
+                            onMouseDown={(e) => handleLoopDragStart(loop, e)}
+                            style={{ cursor: 'grab' }}
+                            title="Drag to canvas or another node"
+                        >
                             <svg viewBox="0 0 100 20" preserveAspectRatio="none">
                                 {loop.waveformData.length > 1 ? (
                                     <polyline
@@ -400,7 +583,8 @@ export function LooperNode({
                             <div className="looper-loop-controls">
                                 <button
                                     className={`looper-loop-btn ${loop.isMuted ? 'muted' : ''}`}
-                                    onClick={() => handleToggleMute(loop.id)}
+                                    onClick={(e) => { e.stopPropagation(); handleToggleMute(loop.id); }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     title={loop.isMuted ? 'Unmute' : 'Mute'}
                                 >
                                     <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
@@ -413,7 +597,8 @@ export function LooperNode({
                                 </button>
                                 <button
                                     className="looper-loop-btn delete"
-                                    onClick={() => handleDeleteLoop(loop.id)}
+                                    onClick={(e) => { e.stopPropagation(); handleDeleteLoop(loop.id); }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     title="Delete"
                                 >
                                     <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
@@ -423,7 +608,7 @@ export function LooperNode({
                             </div>
                         </div>
                     ))}
-                </div>
+                </ScrollContainer>
             )}
 
             {/* Record button - centered red circle with white center */}
@@ -434,6 +619,26 @@ export function LooperNode({
                     disabled={!isAudioContextReady}
                 />
             </div>
+
+            {/* Sample-out port - positioned on right side below audio-out */}
+            {sampleOutPort && (
+                <div
+                    className={`looper-sample-out-port ${hasConnection(sampleOutPortId) ? 'connected' : ''}`}
+                    style={{
+                        position: 'absolute',
+                        right: '-8px',
+                        top: `${(sampleOutPort.position?.y || 0.65) * 100}%`,
+                        transform: 'translateY(-50%)'
+                    }}
+                    onMouseDown={(e) => handlePortMouseDown?.(sampleOutPortId, e)}
+                    onMouseUp={(e) => handlePortMouseUp?.(sampleOutPortId, e)}
+                    onMouseEnter={() => handlePortMouseEnter?.(sampleOutPortId)}
+                    onMouseLeave={handlePortMouseLeave}
+                    data-node-id={node.id}
+                    data-port-id={sampleOutPortId}
+                    title="Sample buffer output - connect to Sampler"
+                />
+            )}
         </div>
     );
-}
+});

@@ -6,6 +6,51 @@
     padding: 0;
 }
 
+/* Guide Launch Button */
+.guide-launch-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, rgba(66, 133, 244, 0.15), rgba(156, 39, 176, 0.1));
+    border: 2px solid rgba(66, 133, 244, 0.3);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 24px;
+}
+
+.guide-launch-btn:hover {
+    background: linear-gradient(135deg, rgba(66, 133, 244, 0.25), rgba(156, 39, 176, 0.15));
+    border-color: rgba(66, 133, 244, 0.5);
+    transform: translateY(-1px);
+}
+
+.guide-launch-btn:active {
+    transform: translateY(0);
+}
+
+.guide-launch-btn svg {
+    flex-shrink: 0;
+    color: var(--accent-primary, #4285f4);
+}
+
+.guide-launch-btn .arrow-icon {
+    margin-left: auto;
+    opacity: 0.5;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.guide-launch-btn:hover .arrow-icon {
+    transform: translateX(4px);
+    opacity: 1;
+}
+
 .audio-info-banner {
     padding: 16px;
     border-radius: 8px;

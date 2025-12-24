@@ -55,6 +55,57 @@ export interface KeyMapping {
     enabled: boolean;          // can disable individual keys
 }
 
+// ============================================================================
+// Bundle Types - For expandable/collapsible bundle connections
+// ============================================================================
+
+/**
+ * Represents a single channel within a bundle
+ * E.g., one key in a keyboard bundle or one knob in a controller bundle
+ */
+export interface BundleChannel {
+    id: string;                // Unique channel ID within bundle
+    label: string;             // Display label: "{ParentName} {InputType} {Number}"
+    sourcePortId: string;      // Original port ID in source node (e.g., "key-48")
+    sourceNodeId: string;      // ID of the source node
+}
+
+/**
+ * Bundle information attached to a port
+ * Used for collapsible/expandable bundle visualization
+ */
+export interface BundleInfo {
+    /** Bundle identifier (matches the parent port ID) */
+    bundleId: string;
+
+    /** Display label for the bundle (e.g., "MiniLab3 Keys") */
+    bundleLabel: string;
+
+    /** Alias for bundleLabel - used by graphStore */
+    label: string;
+
+    /** Number of channels in the bundle */
+    size: number;
+
+    /** Source node information for label generation */
+    sourceNodeName: string;    // e.g., "MiniLab3"
+    sourceNodeType: string;    // e.g., "minilab-3"
+
+    /** Individual channels in the bundle */
+    channels: BundleChannel[];
+
+    /** UI state: whether bundle is expanded to show individual channels */
+    expanded: boolean;
+}
+
+/**
+ * Extended port definition for bundle-aware ports
+ */
+export interface BundlePortDefinition extends PortDefinition {
+    /** Bundle metadata - present only on bundle ports */
+    bundleInfo?: BundleInfo;
+}
+
 export interface Connection {
     id: string;
     sourceNodeId: string;
@@ -87,6 +138,10 @@ export type NodeType =
     | 'keyboard-visual' // Visual keyboard with per-key outputs (internal node)
     | 'instrument-visual' // Visual instrument with row configuration (internal node)
     | 'microphone'
+    | 'midi'            // MIDI input device (generic)
+    | 'midi-visual'     // Visual MIDI device representation (internal node)
+    | 'minilab-3'       // Arturia MiniLab 3 with per-control outputs
+    | 'minilab3-visual' // Visual MiniLab 3 with per-control outputs (internal node)
     | 'piano'
     | 'cello'
     | 'electricCello'
@@ -107,7 +162,10 @@ export type NodeType =
     | 'input-panel'    // Multi-port input panel with editable labels
     | 'container'      // Empty container node for grouping
     | 'add'            // Addition node (mixes signals)
-    | 'subtract';      // Subtraction node (phase cancellation)
+    | 'subtract'       // Subtraction node (phase cancellation)
+    | 'library'        // Sample library node for local audio files
+    | 'sampler'        // Pitch-shifting sampler instrument (outside view)
+    | 'sampler-visual'; // Visual sampler with detailed controls (inside view)
 
 export interface Position {
     x: number;
@@ -134,6 +192,21 @@ export interface InstrumentRow {
     baseOffset: number;      // -24 to +24 semitones
     portCount: number;       // Number of ports in this row
     keyGains: number[];      // Per-key gain values (length = portCount)
+}
+
+/**
+ * Sampler row configuration - represents a connected bundle from keyboard
+ * Simplified structure: each row has gain and spread controls
+ */
+export interface SamplerRow {
+    rowId: string;           // Unique row identifier
+    sourceNodeId: string;    // Which keyboard node this came from
+    sourcePortId: string;    // Which keyboard port this came from (composite ID)
+    targetPortId: string;    // Which sampler input port receives this bundle
+    label: string;           // Auto-pulled from source ("Row 1", "Keys", etc.)
+    portCount: number;       // Number of ports in this row
+    gain: number;            // Per-row gain (0-2, default 1.0)
+    spread: number;          // Per-row spread in semitones (default 1.0 = chromatic)
 }
 
 export interface InstrumentNodeData extends NodeData {
@@ -213,6 +286,96 @@ export interface RecordingData {
     buffer: ArrayBuffer | null;
     duration: number;
     timestamp: number;
+}
+
+export interface LibraryItemRef {
+    id: string;
+    relativePath: string;
+    displayName: string;
+    libraryId: string;
+}
+
+// Keep old name as alias for backwards compatibility
+export type LibrarySampleRef = LibraryItemRef;
+
+export interface LibraryNodeData extends NodeData {
+    // Library reference
+    libraryId?: string;
+
+    // Current item selection
+    currentItemId?: string;
+
+    // Items used in this node (for workflow persistence)
+    itemRefs: LibraryItemRef[];
+
+    // Playback mode
+    playbackMode: 'oneshot' | 'loop' | 'hold';
+
+    // Volume (0-1)
+    volume: number;
+
+    // Missing items detected on load
+    missingItemIds?: string[];
+
+    // Tag panel state
+    separatorPosition?: number;  // Position of pinned/other tags separator (0-1)
+
+    // Node resizing
+    width?: number;
+    height?: number;
+}
+
+export interface SamplerNodeData extends NodeData {
+    // Sample reference
+    sampleId: string | null;
+    sampleName: string | null;
+
+    // Visual data for waveform display
+    waveformData?: number[];       // 50-point waveform peaks
+    duration?: number;             // Sample duration in seconds
+
+    // Core audio parameters
+    rootNote: number;              // MIDI note (default: 60 = C4)
+    gain: number;                  // Overall gain (0-2, default 1.0)
+    spread: number;                // Semitones between keys (0-12, default 1.0)
+    attack: number;                // Attack time in seconds (0.001-1, default 0.01)
+    release: number;               // Release time in seconds (0.01-2, default 0.1)
+
+    // Row-based structure for bundle connections
+    rows?: SamplerRow[];
+}
+
+export interface MIDILearnedMapping {
+    type: 'note' | 'cc' | 'pitchBend';
+    channel: number;
+    noteOrCC: number;  // Note number or CC number
+}
+
+/**
+ * Stable device signature for MIDI device identification across sessions/machines.
+ * Unlike deviceId which is volatile, this persists and enables auto-reconnection.
+ */
+export interface MIDIDeviceSignature {
+    presetId: string;      // e.g., "arturia-minilab-3", "generic"
+    deviceName: string;    // Auto-generated or user-customized: "MiniLab 3", "MiniLab 3 2"
+}
+
+export interface MIDIInputNodeData extends NodeData {
+    // Volatile - set at runtime, cleared on save
+    deviceId: string | null;           // Selected MIDI input device ID (runtime only)
+    isConnected: boolean;              // Whether device is currently connected
+
+    // Stable - persisted across sessions for auto-reconnection
+    deviceSignature: MIDIDeviceSignature | null;  // Stable identifier for device matching
+    presetId: string;                  // Preset ID (e.g., "arturia-minilab-3" or "generic")
+
+    // MIDI channel configuration
+    activeChannel: number;             // 0 = omni (all channels), 1-16 for specific
+
+    // MIDI Learn state
+    midiLearnMode: boolean;
+    learnTarget: string | null;        // Port ID being learned
+    learnedMappings: Record<string, MIDILearnedMapping>;
 }
 
 // ============================================================================
@@ -322,6 +485,98 @@ export interface NodeDefinition {
     // Whether this node can be entered with E key (default: true)
     // If false, pressing E will flash red instead of entering
     canEnter?: boolean;
+}
+
+// ============================================================================
+// Audio Clip Types - Lightweight draggable audio references
+// ============================================================================
+
+/**
+ * AudioClip - Lightweight audio reference with non-destructive crop region
+ *
+ * Unlike nodes, clips are simple visual elements that reference audio
+ * stored in the sample library. Crop points are metadata only - the
+ * original audio is never modified.
+ *
+ * Usage:
+ * - Drag from LooperNode loops onto canvas
+ * - Drag from LibraryNode samples onto canvas
+ * - Drag clips into compatible drop target nodes
+ * - Double-click to open waveform editor for cropping
+ */
+export interface AudioClip {
+    id: string;
+
+    // Reference to source audio in library
+    sampleId: string;           // ID in libraryStore
+    sampleName: string;         // Display name (filename)
+
+    // Non-destructive crop region (in sample frames, not seconds)
+    // This allows precise, sample-accurate cropping
+    startFrame: number;         // Start point (0 = beginning)
+    endFrame: number;           // End point (-1 = end of file)
+
+    // Cached metadata for UI (derived from sample library)
+    durationSeconds: number;    // Duration of cropped region
+    sampleRate: number;         // For frame-to-time conversion
+
+    // Waveform preview data (downsampled for mini display)
+    waveformPeaks: number[];    // 64-128 values for mini waveform
+
+    // Canvas position (null if not placed on canvas)
+    position: Position | null;
+
+    // Visual dimensions
+    width: number;              // Default: 120px
+    height: number;             // Default: 40px
+
+    // Origin tracking
+    sourceType: 'looper' | 'library' | 'imported';
+    sourceNodeId?: string;      // If from looper/library node
+
+    // Timestamps
+    createdAt: number;
+    lastModifiedAt: number;
+}
+
+/**
+ * ClipDropTarget - Interface for nodes that can accept clip drops
+ *
+ * Any node can implement this interface to become a drop target for audio clips.
+ * Register with audioClipStore.registerDropTarget() on mount, unregister on unmount.
+ *
+ * Example usage in a node component:
+ * ```tsx
+ * useEffect(() => {
+ *     registerDropTarget({
+ *         nodeId: node.id,
+ *         targetName: 'Looper',
+ *         onClipDrop: async (clip) => {
+ *             const buffer = await loadClipAudio(clip);
+ *             // Add as new loop layer
+ *         },
+ *         canAcceptClip: () => true,
+ *         getDropZoneBounds: () => ref.current?.getBoundingClientRect() ?? null,
+ *     });
+ *     return () => unregisterDropTarget(node.id);
+ * }, []);
+ * ```
+ */
+export interface ClipDropTarget {
+    /** Unique identifier for this drop target (node ID) */
+    nodeId: string;
+
+    /** Human-readable target name for UI feedback */
+    targetName: string;
+
+    /** Callback when clip is dropped onto this target */
+    onClipDrop: (clip: AudioClip) => Promise<void>;
+
+    /** Check if this target can accept the given clip */
+    canAcceptClip: (clip: AudioClip) => boolean;
+
+    /** Get drop zone bounds for hit testing during drag */
+    getDropZoneBounds: () => DOMRect | null;
 }
 
 // ============================================================================
