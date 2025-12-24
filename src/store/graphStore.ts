@@ -16,7 +16,8 @@ import { createDefaultInternalStructure } from '../utils/nodeInternals';
 import { syncPortsWithInternalNodes, checkDynamicPortAddition, checkDynamicPortRemoval, isInstrumentNode, detectBundleInfo, expandTargetForBundleWithInfo } from '../utils/portSync';
 import { useUIFeedbackStore } from './uiFeedbackStore';
 import { useCanvasNavigationStore } from './canvasNavigationStore';
-import type { InstrumentRow, InstrumentNodeData } from '../engine/types';
+import { useMIDIStore } from './midiStore';
+import type { InstrumentRow, InstrumentNodeData, SamplerRow, SamplerNodeData } from '../engine/types';
 
 // ============================================================================
 // Constants
@@ -155,6 +156,9 @@ interface GraphStore {
     // Instrument Row Actions
     updateInstrumentRow: (nodeId: string, rowId: string, updates: Partial<InstrumentRow>) => void;
     updateKeyGain: (nodeId: string, rowId: string, keyIndex: number, gain: number) => void;
+
+    // Sampler Row Actions
+    updateSamplerRow: (nodeId: string, rowId: string, updates: Partial<SamplerRow>) => void;
 
     // Connection Actions
     addConnection: (
@@ -474,6 +478,19 @@ export const useGraphStore = create<GraphStore>()(
                         }
                     });
 
+                    // Clean up MIDI device signatures for deleted MIDI nodes
+                    // This allows the toast to show again when the device reconnects
+                    nodesToDelete.forEach(id => {
+                        const n = newNodes.get(id);
+                        if (n && (n.type === 'midi' || n.type === 'minilab-3')) {
+                            const deviceId = (n.data as { deviceId?: string })?.deviceId;
+                            if (deviceId) {
+                                // Release the device signature so toast can show again
+                                useMIDIStore.getState().releaseDeviceSignature(deviceId);
+                            }
+                        }
+                    });
+
                     // Remove all nodes
                     nodesToDelete.forEach(id => {
                         newNodes.delete(id);
@@ -664,6 +681,34 @@ export const useGraphStore = create<GraphStore>()(
                 });
             },
 
+            // Sampler Row Actions
+            updateSamplerRow: (nodeId, rowId, updates) => {
+                set((state) => {
+                    const node = state.nodes.get(nodeId);
+                    if (!node || node.type !== 'sampler') return state;
+
+                    const samplerData = node.data as SamplerNodeData;
+                    const rows = samplerData.rows || [];
+                    const rowIndex = rows.findIndex(r => r.rowId === rowId);
+                    if (rowIndex === -1) return state;
+
+                    const updatedRow = { ...rows[rowIndex], ...updates };
+
+                    // If spread changed, keyGains stay at 1 for sampler (gain is per-row, not per-key based on spread)
+                    // Unlike instrument where spread affects keyGains, sampler spread controls pitch interval
+
+                    const newRows = [...rows];
+                    newRows[rowIndex] = updatedRow;
+
+                    const newNodes = new Map(state.nodes);
+                    newNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, rows: newRows }
+                    });
+                    return { nodes: newNodes, version: state.version + 1 };
+                });
+            },
+
             // Connection Actions
             addConnection: (sourceNodeId, sourcePortId, targetNodeId, targetPortId) => {
                 const state = get();
@@ -818,78 +863,156 @@ export const useGraphStore = create<GraphStore>()(
                                 const updatedConnection = { ...connection, targetPortId: bundleTargetPortId };
                                 newConnections.set(id, updatedConnection);
 
-                                // If target is an instrument, also create InstrumentRow
+                                // If target is an instrument or sampler, create appropriate row
                                 const targetNodeForExpansion = newNodes.get(targetNodeId);
                                 if (targetNodeForExpansion && isInstrumentNode(targetNodeForExpansion)) {
                                     const rowId = `row-${Date.now()}`;
-                                    const defaultSpread = 0.5;
 
-                                    const newRow: InstrumentRow = {
-                                        rowId,
-                                        sourceNodeId,
-                                        sourcePortId,
-                                        targetPortId: bundleTargetPortId,
-                                        label: bundleInfo.bundleLabel,
-                                        spread: defaultSpread,
-                                        baseNote: 0,
-                                        baseOctave: 4,
-                                        baseOffset: 0,
-                                        portCount: bundleSize,
-                                        keyGains: Array.from({ length: bundleSize }, () => 1)
-                                    };
+                                    // Handle sampler nodes differently - use SamplerRow
+                                    if (targetNodeForExpansion.type === 'sampler') {
+                                        const samplerData = targetNodeForExpansion.data as SamplerNodeData;
 
-                                    const instrumentData = targetNodeForExpansion.data as InstrumentNodeData;
-                                    const existingRows = instrumentData.rows || [];
-                                    newNodes.set(targetNodeId, {
-                                        ...targetNodeForExpansion,
-                                        data: {
-                                            ...targetNodeForExpansion.data,
-                                            rows: [...existingRows, newRow]
-                                        }
-                                    });
+                                        // Use pre-configured defaults if set by user, otherwise use standard defaults
+                                        const defaultGain = samplerData.defaultGain ?? 1.0;
+                                        const defaultSpread = samplerData.defaultSpread ?? 1.0;
 
-                                    // === INTERNAL WIRING ===
-                                    // Find instrument-visual node and wire up the key ports
-                                    const instrumentVisual = targetNodeForExpansion.childIds
-                                        .map(cid => newNodes.get(cid))
-                                        .find(n => n?.type === 'instrument-visual');
-
-                                    if (instrumentVisual) {
-                                        // Create key input ports on instrument-visual
-                                        const newKeyPorts: PortDefinition[] = [];
-                                        for (let i = 0; i < bundleSize; i++) {
-                                            const keyPortId = `${rowId}-key-${i}`;
-                                            const yPos = 0.1 + (i / bundleSize) * 0.8;
-                                            newKeyPorts.push({
-                                                id: keyPortId,
-                                                name: `Key ${i + 1}`,
-                                                type: 'control',
-                                                direction: 'input',
-                                                position: { x: 0, y: yPos }
-                                            });
-                                        }
-
-                                        // Update instrument-visual with new ports
-                                        const existingVisualPorts = instrumentVisual.ports;
-                                        newNodes.set(instrumentVisual.id, {
-                                            ...instrumentVisual,
-                                            ports: [...existingVisualPorts, ...newKeyPorts]
+                                        const newSamplerRow: SamplerRow = {
+                                            rowId,
+                                            sourceNodeId,
+                                            sourcePortId,
+                                            targetPortId: bundleTargetPortId,
+                                            label: bundleInfo.bundleLabel,
+                                            spread: defaultSpread,
+                                            baseOffset: 0,
+                                            gain: defaultGain,
+                                            portCount: bundleSize,
+                                            keyGains: Array.from({ length: bundleSize }, () => 1)
+                                        };
+                                        const existingRows = samplerData.rows || [];
+                                        newNodes.set(targetNodeId, {
+                                            ...targetNodeForExpansion,
+                                            data: {
+                                                ...targetNodeForExpansion.data,
+                                                rows: [...existingRows, newSamplerRow]
+                                            }
                                         });
 
-                                        // Create internal connections from input-panel bundle port to each key port
-                                        const bundlePortId = expansion.newPorts[0]?.id;
-                                        if (bundlePortId) {
+                                        // === INTERNAL WIRING FOR SAMPLER ===
+                                        // Find sampler-visual node and wire up the key ports
+                                        const samplerVisual = targetNodeForExpansion.childIds
+                                            .map(cid => newNodes.get(cid))
+                                            .find(n => n?.type === 'sampler-visual');
+
+                                        if (samplerVisual) {
+                                            // Create key input ports on sampler-visual
+                                            const newKeyPorts: PortDefinition[] = [];
                                             for (let i = 0; i < bundleSize; i++) {
                                                 const keyPortId = `${rowId}-key-${i}`;
-                                                const connId = `internal-conn-${generateId()}`;
-                                                newConnections.set(connId, {
-                                                    id: connId,
-                                                    sourceNodeId: expansion.panelId,
-                                                    sourcePortId: bundlePortId,
-                                                    targetNodeId: instrumentVisual.id,
-                                                    targetPortId: keyPortId,
-                                                    type: 'control'
+                                                const yPos = 0.1 + (i / bundleSize) * 0.8;
+                                                newKeyPorts.push({
+                                                    id: keyPortId,
+                                                    name: `Key ${i + 1}`,
+                                                    type: 'control',
+                                                    direction: 'input',
+                                                    position: { x: 0, y: yPos }
                                                 });
+                                            }
+
+                                            // Update sampler-visual with new ports
+                                            const existingVisualPorts = samplerVisual.ports;
+                                            newNodes.set(samplerVisual.id, {
+                                                ...samplerVisual,
+                                                ports: [...existingVisualPorts, ...newKeyPorts]
+                                            });
+
+                                            // Create internal connections from input-panel bundle port to each key port
+                                            const bundlePortId = expansion.newPorts[0]?.id;
+                                            if (bundlePortId) {
+                                                for (let i = 0; i < bundleSize; i++) {
+                                                    const keyPortId = `${rowId}-key-${i}`;
+                                                    const connId = `internal-conn-${generateId()}`;
+                                                    newConnections.set(connId, {
+                                                        id: connId,
+                                                        sourceNodeId: expansion.panelId,
+                                                        sourcePortId: bundlePortId,
+                                                        targetNodeId: samplerVisual.id,
+                                                        targetPortId: keyPortId,
+                                                        type: 'control'
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Handle other instrument nodes - use InstrumentRow
+                                        const defaultSpread = 0.5;
+
+                                        const newRow: InstrumentRow = {
+                                            rowId,
+                                            sourceNodeId,
+                                            sourcePortId,
+                                            targetPortId: bundleTargetPortId,
+                                            label: bundleInfo.bundleLabel,
+                                            spread: defaultSpread,
+                                            baseNote: 0,
+                                            baseOctave: 4,
+                                            baseOffset: 0,
+                                            portCount: bundleSize,
+                                            keyGains: Array.from({ length: bundleSize }, () => 1)
+                                        };
+
+                                        const instrumentData = targetNodeForExpansion.data as InstrumentNodeData;
+                                        const existingRows = instrumentData.rows || [];
+                                        newNodes.set(targetNodeId, {
+                                            ...targetNodeForExpansion,
+                                            data: {
+                                                ...targetNodeForExpansion.data,
+                                                rows: [...existingRows, newRow]
+                                            }
+                                        });
+
+                                        // === INTERNAL WIRING ===
+                                        // Find instrument-visual node and wire up the key ports
+                                        const instrumentVisual = targetNodeForExpansion.childIds
+                                            .map(cid => newNodes.get(cid))
+                                            .find(n => n?.type === 'instrument-visual');
+
+                                        if (instrumentVisual) {
+                                            // Create key input ports on instrument-visual
+                                            const newKeyPorts: PortDefinition[] = [];
+                                            for (let i = 0; i < bundleSize; i++) {
+                                                const keyPortId = `${rowId}-key-${i}`;
+                                                const yPos = 0.1 + (i / bundleSize) * 0.8;
+                                                newKeyPorts.push({
+                                                    id: keyPortId,
+                                                    name: `Key ${i + 1}`,
+                                                    type: 'control',
+                                                    direction: 'input',
+                                                    position: { x: 0, y: yPos }
+                                                });
+                                            }
+
+                                            // Update instrument-visual with new ports
+                                            const existingVisualPorts = instrumentVisual.ports;
+                                            newNodes.set(instrumentVisual.id, {
+                                                ...instrumentVisual,
+                                                ports: [...existingVisualPorts, ...newKeyPorts]
+                                            });
+
+                                            // Create internal connections from input-panel bundle port to each key port
+                                            const bundlePortId = expansion.newPorts[0]?.id;
+                                            if (bundlePortId) {
+                                                for (let i = 0; i < bundleSize; i++) {
+                                                    const keyPortId = `${rowId}-key-${i}`;
+                                                    const connId = `internal-conn-${generateId()}`;
+                                                    newConnections.set(connId, {
+                                                        id: connId,
+                                                        sourceNodeId: expansion.panelId,
+                                                        sourcePortId: bundlePortId,
+                                                        targetNodeId: instrumentVisual.id,
+                                                        targetPortId: keyPortId,
+                                                        type: 'control'
+                                                    });
+                                                }
                                             }
                                         }
                                     }

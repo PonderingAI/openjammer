@@ -5,7 +5,7 @@
  * They are used across multiple components (nodes, audio engine, visual nodes).
  */
 
-import type { InstrumentNodeData, InstrumentRow, SamplerNodeData, SpeakerNodeData, NodeData } from './types';
+import type { InstrumentNodeData, InstrumentRow, SamplerNodeData, SamplerRow, SpeakerNodeData, NodeData } from './types';
 
 // ============================================================================
 // Validation Constants
@@ -61,6 +61,46 @@ export function isValidInstrumentRow(row: unknown): row is InstrumentRow {
         r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
     if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
         r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
+
+    // Validate keyGains if present (optional field)
+    if ('keyGains' in r && r.keyGains !== undefined) {
+        if (!Array.isArray(r.keyGains)) return false;
+        const gains = r.keyGains as unknown[];
+        const validGains = gains.every((g): g is number =>
+            typeof g === 'number' &&
+            Number.isFinite(g) &&
+            g >= VALIDATION_BOUNDS.MIN_KEY_GAIN &&
+            g <= VALIDATION_BOUNDS.MAX_KEY_GAIN
+        );
+        if (!validGains) return false;
+    }
+
+    return true;
+}
+
+/**
+ * Type guard for sampler row validation
+ * Validates both structure and value ranges
+ */
+export function isValidSamplerRow(row: unknown): row is SamplerRow {
+    if (typeof row !== 'object' || row === null) return false;
+    const r = row as Record<string, unknown>;
+
+    // Type checks
+    if (typeof r.rowId !== 'string') return false;
+    if (typeof r.portCount !== 'number' || !Number.isFinite(r.portCount)) return false;
+    if (typeof r.baseOffset !== 'number' || !Number.isFinite(r.baseOffset)) return false;
+    if (typeof r.spread !== 'number' || !Number.isFinite(r.spread)) return false;
+    if (typeof r.gain !== 'number' || !Number.isFinite(r.gain)) return false;
+
+    // Range validation
+    if (r.portCount < VALIDATION_BOUNDS.MIN_PORT_COUNT ||
+        r.portCount > VALIDATION_BOUNDS.MAX_PORT_COUNT) return false;
+    if (r.baseOffset < VALIDATION_BOUNDS.MIN_OFFSET ||
+        r.baseOffset > VALIDATION_BOUNDS.MAX_OFFSET) return false;
+    if (r.spread < VALIDATION_BOUNDS.MIN_SPREAD ||
+        r.spread > VALIDATION_BOUNDS.MAX_SPREAD) return false;
+    if (r.gain < 0 || r.gain > 2) return false;  // 0-2 gain range
 
     // Validate keyGains if present (optional field)
     if ('keyGains' in r && r.keyGains !== undefined) {
@@ -138,11 +178,23 @@ export function isBasicInstrumentNodeData(data: unknown): data is InstrumentNode
 }
 
 /**
- * Type guard for sampler node data
+ * Type guard for sampler node data with row validation
+ * Supports both:
+ * - New row-based system (rows array)
+ * - Legacy single-input system (no rows)
  */
 export function isSamplerNodeData(data: unknown): data is SamplerNodeData {
     if (typeof data !== 'object' || data === null) return false;
-    // SamplerNodeData can have various optional fields, basic object check is sufficient
+    const d = data as Record<string, unknown>;
+
+    // Check for new row-based system
+    if ('rows' in d && Array.isArray(d.rows)) {
+        // Validate each row has required fields with valid ranges
+        const rows = d.rows as unknown[];
+        return rows.every(isValidSamplerRow);
+    }
+
+    // No rows = valid (legacy or empty data)
     return true;
 }
 

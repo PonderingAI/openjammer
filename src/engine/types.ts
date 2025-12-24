@@ -194,6 +194,23 @@ export interface InstrumentRow {
     keyGains: number[];      // Per-key gain values (length = portCount)
 }
 
+/**
+ * Sampler row configuration - represents a connected bundle from keyboard
+ * Similar to InstrumentRow but for sampler pitch-shifting behavior
+ */
+export interface SamplerRow {
+    rowId: string;           // Unique row identifier
+    sourceNodeId: string;    // Which keyboard node this came from
+    sourcePortId: string;    // Which keyboard port this came from (composite ID)
+    targetPortId: string;    // Which sampler input port receives this bundle
+    label: string;           // Auto-pulled from source ("Row 1", "Keys", etc.)
+    spread: number;          // Semitones between keys (default 1.0 = chromatic)
+    baseOffset: number;      // Base pitch offset in semitones (-24 to +24)
+    gain: number;            // Overall row gain (0-2, default 1.0)
+    portCount: number;       // Number of ports in this row
+    keyGains: number[];      // Per-key gain multipliers (length = portCount)
+}
+
 export interface InstrumentNodeData extends NodeData {
     instrumentId?: string; // ID from InstrumentDefinitions (optional, falls back to legacy type mapping)
 
@@ -311,24 +328,25 @@ export interface LibraryNodeData extends NodeData {
 }
 
 export interface SamplerNodeData extends NodeData {
-    // Sample reference
+    // Sample reference (single sample shared by all rows)
     sampleId: string | null;
     sampleName: string | null;
 
-    // Core parameters (visible outside)
+    // Core audio parameters
     rootNote: number;              // MIDI note (default: 60 = C4)
     attack: number;                // seconds
     decay: number;                 // seconds
     sustain: number;               // 0-1
     release: number;               // seconds
 
-    // Base note components (for UI display/editing)
-    baseNote: number;              // 0-6 (C-B)
-    baseOctave: number;            // 0-8
-    baseOffset: number;            // Semitone offset (-24 to +24)
-    spread: number;                // Stereo/detuning spread (0-1)
+    // NEW: Row-based structure for bundle connections (like InstrumentNode)
+    rows?: SamplerRow[];
 
-    // Internal parameters (visible inside)
+    // Default values for new rows (editable before keyboard connected)
+    defaultGain?: number;          // 0-2, default 1.0
+    defaultSpread?: number;        // semitones between keys, default 1.0
+
+    // Internal parameters
     velocityCurve: 'linear' | 'exponential' | 'logarithmic';
     triggerMode: 'gate' | 'oneshot' | 'toggle';
     loopEnabled: boolean;

@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
 import { NodeCanvas } from './components/Canvas/NodeCanvas';
 import { Toolbar } from './components/Toolbar/Toolbar';
+import { Breadcrumbs } from './components/Toolbar/Breadcrumbs';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
 import { MIDIIntegration } from './components/MIDI';
@@ -346,8 +347,11 @@ function App() {
       {/* Main Canvas */}
       <NodeCanvas />
 
-      {/* Toolbar */}
-      <Toolbar />
+      {/* Toolbar + Breadcrumbs */}
+      <div className="toolbar-wrapper">
+        <Toolbar />
+        <Breadcrumbs />
+      </div>
 
       {/* Settings Panel */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}

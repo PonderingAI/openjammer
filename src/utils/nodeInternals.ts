@@ -1085,8 +1085,9 @@ function createMiniLab3Internals(parentNode: GraphNode): InternalStructure {
     internalNodes.set(minilab3VisualId, minilab3Visual);
     // NOT added to specialNodes - doesn't appear on parent
 
-    // Create output-panel with "Keys" bundle port (only one port by default)
+    // Create output-panel with "Keys" bundle port + empty slot for adding new outputs
     const outputPanelId = generateUniqueId('output-panel-');
+    const emptyOutputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const outputPanel: GraphNode = {
         id: outputPanelId,
         type: 'output-panel',
@@ -1094,11 +1095,16 @@ function createMiniLab3Internals(parentNode: GraphNode): InternalStructure {
         position: { x: outputPanelX, y: outputPanelY },
         data: {
             portLabels: {
-                'bundle-keys': 'Keys'
+                'bundle-keys': 'Keys',
+                [emptyOutputPortId]: ''  // Empty slot for adding new outputs
+            },
+            portHideExternalLabel: {
+                [emptyOutputPortId]: true  // Hide empty slot on parent
             }
         },
         ports: [
-            { id: 'bundle-keys', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } }
+            { id: 'bundle-keys', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
+            { id: emptyOutputPortId, name: '', type: 'control', direction: 'input', position: { x: 0, y: 0.9 } }
         ],
         parentId: null,
         childIds: []
@@ -1167,9 +1173,8 @@ function createSamplerInternals(): InternalStructure {
     const internalConnections = new Map<string, Connection>();
     const specialNodes: string[] = [];
 
-    // Create input-panel with:
-    // 1. Empty placeholder for bundle connections (keyboard rows)
-    // 2. Sample input port for receiving AudioBuffer from Library/Looper
+    // Create input-panel with one empty placeholder port
+    // When bundles connect, this will expand dynamically (same pattern as instrument)
     const inputPanelId = generateUniqueId('input-panel-');
     const emptyInputPortId = generateUniqueId(EMPTY_PORT_PREFIX);
     const inputPanel: GraphNode = {
@@ -1179,16 +1184,14 @@ function createSamplerInternals(): InternalStructure {
         position: { x: 50, y: 150 },
         data: {
             portLabels: {
-                [emptyInputPortId]: '',  // Empty label for bundle placeholder
-                'sample-in': 'Sample'    // Sample input from Library/Looper
+                [emptyInputPortId]: ''  // Empty label for placeholder
             },
             portHideExternalLabel: {
                 [emptyInputPortId]: true  // Hide the empty label on parent
             }
         },
         ports: [
-            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.3 } },
-            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'output', position: { x: 1, y: 0.7 } }
+            { id: emptyInputPortId, name: '', type: 'control', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         parentId: null,
         childIds: []
@@ -1197,28 +1200,25 @@ function createSamplerInternals(): InternalStructure {
     specialNodes.push(inputPanelId);
 
     // Create sampler-visual node in the center
-    // This is the detailed visual representation with waveform, ADSR, root note, etc.
-    // NOT a special node - doesn't sync ports to parent
+    // This is purely for internal visualization - NOT a special node
+    // Its ports should not sync to the parent
+    // Key input ports are added dynamically when bundles connect
     const samplerVisualId = generateUniqueId('sampler-visual-');
     const samplerVisual: GraphNode = {
         id: samplerVisualId,
         type: 'sampler-visual',
         category: 'instruments',
-        position: { x: 300, y: 100 },
-        data: {},  // Will inherit from parent sampler node
+        position: { x: 250, y: 100 },
+        data: {},  // Inherits from parent sampler node via parentId
         ports: [
-            // Key inputs - receives from input panel
-            { id: 'keys-in', name: 'Keys', type: 'control', direction: 'input', position: { x: 0, y: 0.3 } },
-            // Sample input - receives from input panel
-            { id: 'sample-in', name: 'Sample', type: 'audio', direction: 'input', position: { x: 0, y: 0.7 } },
-            // Audio output - sends to output panel
+            // Only audio output - key input ports are added dynamically per bundle
             { id: 'audio-out', name: 'Audio', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
         ],
         parentId: null,
         childIds: []
     };
     internalNodes.set(samplerVisualId, samplerVisual);
-    // NOT added to specialNodes - internal visualization only
+    // NOT added to specialNodes - this is internal visualization only
 
     // Create output-panel with audio output
     const outputPanelId = generateUniqueId('output-panel-');
@@ -1226,7 +1226,7 @@ function createSamplerInternals(): InternalStructure {
         id: outputPanelId,
         type: 'output-panel',
         category: 'routing',
-        position: { x: 700, y: 150 },
+        position: { x: 800, y: 150 },
         data: {
             portLabels: {
                 'audio-out': 'Audio'
@@ -1241,16 +1241,8 @@ function createSamplerInternals(): InternalStructure {
     internalNodes.set(outputPanelId, outputPanel);
     specialNodes.push(outputPanelId);
 
-    // Create connection: input-panel sample-in -> sampler-visual sample-in
-    const conn1Id = generateUniqueId('conn-');
-    internalConnections.set(conn1Id, {
-        id: conn1Id,
-        sourceNodeId: inputPanelId,
-        sourcePortId: 'sample-in',
-        targetNodeId: samplerVisualId,
-        targetPortId: 'sample-in',
-        type: 'audio'
-    });
+    // NOTE: No default input-panel → sampler-visual connection
+    // Bundle connections are wired dynamically in graphStore.ts when bundles connect
 
     // Create connection: sampler-visual -> output-panel
     const conn2Id = generateUniqueId('conn-');
@@ -1267,7 +1259,7 @@ function createSamplerInternals(): InternalStructure {
         internalNodes,
         internalConnections,
         specialNodes,
-        showEmptyInputPorts: true,    // Show empty input placeholder for bundle connections
+        showEmptyInputPorts: true,    // Show empty input placeholder
         showEmptyOutputPorts: true    // Always show audio output
     };
 }

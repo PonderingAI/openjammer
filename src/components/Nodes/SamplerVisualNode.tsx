@@ -1,14 +1,20 @@
 /**
- * Sampler Visual Node - INSIDE view (compact horizontal layout)
+ * Sampler Visual Node - INSIDE view with row-based layout
  *
- * Layout: [Input port] | [Waveform + Controls] | [Output port]
- * Input panel on left, output panel on right, like MiniLab3Visual.
+ * Layout:
+ * ┌────────────────────────────────────┐
+ * │  [In]    Config          [Out]     │
+ * ├────────────────────────────────────┤
+ * │ Row 1: Gain 1.0  Spread 1.0        │
+ * │ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪   │
+ * │ 0  1  2  3  4  5  6  7  8  9 10 11 │
+ * └────────────────────────────────────┘
  */
 
-import { useRef, useEffect, useCallback, useState, memo } from 'react';
-import type { GraphNode, SamplerNodeData } from '../../engine/types';
+import { useCallback, memo } from 'react';
+import type { GraphNode, SamplerNodeData, SamplerRow } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
-import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { isSamplerNodeData } from '../../engine/typeGuards';
 import './SamplerVisual.css';
 
 interface SamplerVisualNodeProps {
@@ -26,16 +32,11 @@ interface SamplerVisualNodeProps {
     style?: React.CSSProperties;
 }
 
-// Convert MIDI note to display string
-function midiToNote(midi: number): string {
-    const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const octave = Math.floor(midi / 12) - 1;
-    const note = notes[midi % 12];
-    return `${note}${octave}`;
-}
-
-// Type guard imported from shared module
-import { isSamplerNodeData } from '../../engine/typeGuards';
+/** Row parameter value ranges */
+const ROW_PARAM_RANGES = {
+    GAIN: { min: 0, max: 2, step: 0.1 },
+    SPREAD: { min: 0, max: 12, step: 0.5 },
+} as const;
 
 export const SamplerVisualNode = memo(function SamplerVisualNode({
     node,
@@ -44,12 +45,19 @@ export const SamplerVisualNode = memo(function SamplerVisualNode({
     handlePortMouseEnter,
     handlePortMouseLeave,
     hasConnection,
+    handleHeaderMouseDown,
     handleNodeMouseEnter,
     handleNodeMouseLeave,
     isSelected,
     isDragging,
     style
 }: SamplerVisualNodeProps) {
+    // Get parent node for data access
+    const parentNodeId = node.parentId;
+    const parentNode = useGraphStore((s) => parentNodeId ? s.nodes.get(parentNodeId) : null);
+    const updateSamplerRow = useGraphStore((s) => s.updateSamplerRow);
+    const updateNodeData = useGraphStore((s) => s.updateNodeData);
+
     const defaultData: SamplerNodeData = {
         sampleId: null,
         sampleName: null,
@@ -58,206 +66,231 @@ export const SamplerVisualNode = memo(function SamplerVisualNode({
         decay: 0.1,
         sustain: 0.8,
         release: 0.3,
-        baseNote: 0,
-        baseOctave: 4,
-        baseOffset: 0,
-        spread: 0.5,
+        rows: [],
         velocityCurve: 'exponential',
         triggerMode: 'gate',
         loopEnabled: false,
         loopStart: 0,
         loopEnd: 0,
         maxVoices: 16,
+        defaultGain: 1.0,
+        defaultSpread: 1.0,
     };
 
-    const data: SamplerNodeData = isSamplerNodeData(node.data)
-        ? { ...defaultData, ...(node.data as Partial<SamplerNodeData>) }
+    // Get data from parent node (where the actual sampler data is stored)
+    const parentData: SamplerNodeData = parentNode && isSamplerNodeData(parentNode.data)
+        ? { ...defaultData, ...(parentNode.data as Partial<SamplerNodeData>) }
         : defaultData;
 
-    const updateNodeData = useGraphStore((s) => s.updateNodeData);
-    const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
-    const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+    // Get rows from parent data
+    const rows: SamplerRow[] = parentData.rows || [];
 
-    // Get ports - look for control-in and audio-out
-    const controlInPort = node.ports.find(p => p.id === 'control-in' || (p.direction === 'input' && p.type === 'control'));
-    const audioOutPort = node.ports.find(p => p.id === 'audio-out' || (p.direction === 'output' && p.type === 'audio'));
+    // Get output ports for audio out (no input ports - bundles connect via rows)
+    const outputPorts = node.ports.filter(p => p.direction === 'output');
 
-    // Try to get the audio buffer
-    useEffect(() => {
-        const parentId = node.parentId;
-        if (parentId) {
-            const sampler = audioGraphManager.getSamplerAdapter(parentId);
-            if (sampler) {
-                const buffer = sampler.getBuffer();
-                setAudioBuffer(buffer);
-            }
-        }
-    }, [node.id, node.parentId, data.sampleId]);
+    // Handle row update
+    const handleRowUpdate = useCallback((rowId: string, field: keyof SamplerRow, value: number) => {
+        if (!parentNodeId) return;
+        updateSamplerRow(parentNodeId, rowId, { [field]: value });
+    }, [parentNodeId, updateSamplerRow]);
 
-    // Draw compact waveform using themed colors
-    useEffect(() => {
-        const canvas = waveformCanvasRef.current;
-        if (!canvas) return;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        const { width, height } = canvas;
-        ctx.clearRect(0, 0, width, height);
-
-        // Get computed style for themed colors
-        const computedStyle = getComputedStyle(document.documentElement);
-        const borderColor = computedStyle.getPropertyValue('--border-subtle').trim() || '#e0e0e0';
-        const accentColor = computedStyle.getPropertyValue('--accent-primary').trim() || '#3b82f6';
-        const mutedColor = computedStyle.getPropertyValue('--text-muted').trim() || '#888';
-
-        // Center line
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, height / 2);
-        ctx.lineTo(width, height / 2);
-        ctx.stroke();
-
-        if (audioBuffer) {
-            const channelData = audioBuffer.getChannelData(0);
-            const samplesPerPixel = Math.floor(channelData.length / width);
-
-            ctx.strokeStyle = accentColor;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-
-            const midY = height / 2;
-            const amplitude = height * 0.4;
-
-            for (let x = 0; x < width; x++) {
-                const startSample = x * samplesPerPixel;
-                let min = 1, max = -1;
-
-                for (let i = 0; i < samplesPerPixel; i++) {
-                    const sample = channelData[startSample + i] || 0;
-                    if (sample < min) min = sample;
-                    if (sample > max) max = sample;
-                }
-
-                const yMin = midY - max * amplitude;
-                const yMax = midY - min * amplitude;
-
-                if (x === 0) ctx.moveTo(x, (yMin + yMax) / 2);
-                else { ctx.lineTo(x, yMin); ctx.lineTo(x, yMax); }
-            }
-            ctx.stroke();
-        } else {
-            ctx.fillStyle = mutedColor;
-            ctx.font = '11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('No sample', width / 2, height / 2);
-        }
-    }, [audioBuffer]);
-
-    // Wheel handlers
-    const handleRootNoteWheel = useCallback((e: React.WheelEvent) => {
+    // Handle default row wheel (when no rows connected yet)
+    const handleDefaultRowWheel = useCallback((field: 'gain' | 'spread', e: React.WheelEvent) => {
         e.stopPropagation();
+        if (!parentNodeId) return;
+        const currentValue = field === 'gain' ? (parentData.defaultGain ?? 1.0) : (parentData.defaultSpread ?? 1.0);
         const delta = e.deltaY > 0 ? -1 : 1;
-        const newRootNote = Math.max(0, Math.min(127, data.rootNote + delta));
-        updateNodeData(node.id, { rootNote: newRootNote });
-    }, [node.id, data.rootNote, updateNodeData]);
-
-    const handleOffsetWheel = useCallback((e: React.WheelEvent) => {
-        e.stopPropagation();
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const newOffset = Math.max(-24, Math.min(24, (data.baseOffset || 0) + delta));
-        updateNodeData(node.id, { baseOffset: newOffset });
-    }, [node.id, data.baseOffset, updateNodeData]);
-
-    const handleSpreadWheel = useCallback((e: React.WheelEvent) => {
-        e.stopPropagation();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        const newSpread = Math.max(0, Math.min(1, (data.spread || 0.5) + delta));
-        updateNodeData(node.id, { spread: parseFloat(newSpread.toFixed(1)) });
-    }, [node.id, data.spread, updateNodeData]);
+        const ranges = field === 'gain' ? ROW_PARAM_RANGES.GAIN : ROW_PARAM_RANGES.SPREAD;
+        const newValue = Math.max(ranges.min, Math.min(ranges.max, currentValue + delta * ranges.step));
+        updateNodeData(parentNodeId, {
+            [field === 'gain' ? 'defaultGain' : 'defaultSpread']: parseFloat(newValue.toFixed(1))
+        });
+    }, [parentNodeId, parentData.defaultGain, parentData.defaultSpread, updateNodeData]);
 
     return (
         <div
-            className={`sampler-visual-node horizontal ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+            className={`sampler-visual-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
             style={style}
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
         >
-            {/* Left: Input port panel */}
-            <div className="sampler-visual-input-panel">
-                {controlInPort && (
-                    <div
-                        className={`sampler-visual-port input ${hasConnection?.(controlInPort.id) ? 'connected' : ''}`}
-                        data-node-id={node.id}
-                        data-port-id={controlInPort.id}
-                        onMouseDown={(e) => handlePortMouseDown?.(controlInPort.id, e)}
-                        onMouseUp={(e) => handlePortMouseUp?.(controlInPort.id, e)}
-                        onMouseEnter={() => handlePortMouseEnter?.(controlInPort.id)}
-                        onMouseLeave={handlePortMouseLeave}
-                        title="Control input"
-                    />
-                )}
-                <span className="sampler-panel-label">In</span>
+            {/* Header */}
+            <div className="sampler-visual-header" onMouseDown={handleHeaderMouseDown}>
+                <span className="sampler-visual-title">Config</span>
             </div>
 
-            {/* Center: Waveform and controls */}
-            <div className="sampler-visual-content">
-                {/* Waveform */}
-                <div className="sampler-visual-waveform-container">
-                    <canvas
-                        ref={waveformCanvasRef}
-                        className="sampler-visual-waveform"
-                        width={200}
-                        height={50}
-                    />
-                </div>
-
-                {/* Controls row */}
-                <div className="sampler-visual-controls">
-                    <span
-                        className="sampler-ctrl"
-                        onWheel={handleRootNoteWheel}
-                        title="Root note - scroll to change"
-                    >
-                        {midiToNote(data.rootNote)}
-                    </span>
-                    <span
-                        className="sampler-ctrl"
-                        onWheel={handleOffsetWheel}
-                        title="Offset - scroll to change"
-                    >
-                        {(data.baseOffset || 0) >= 0 ? `+${data.baseOffset || 0}` : data.baseOffset}
-                    </span>
-                    <span
-                        className="sampler-ctrl"
-                        onWheel={handleSpreadWheel}
-                        title="Spread - scroll to change"
-                    >
-                        {(data.spread ?? 0.5).toFixed(1)}
-                    </span>
-                </div>
+            {/* Rows container */}
+            <div className="sampler-visual-rows">
+                {rows.length === 0 ? (
+                    /* Default row with editable controls */
+                    <div className="sampler-row-compact default-row">
+                        <div className="sampler-row-header-compact">
+                            <span className="sampler-row-label">Row 1</span>
+                            <span
+                                className="sampler-editable-value"
+                                onWheel={(e) => handleDefaultRowWheel('gain', e)}
+                                title="Gain (0-2) - scroll to change"
+                            >
+                                G:{(parentData.defaultGain ?? 1.0).toFixed(1)}
+                            </span>
+                            <span
+                                className="sampler-editable-value"
+                                onWheel={(e) => handleDefaultRowWheel('spread', e)}
+                                title="Spread (semitones) - scroll to change"
+                            >
+                                S:{(parentData.defaultSpread ?? 1.0).toFixed(1)}
+                            </span>
+                        </div>
+                        <div className="sampler-row-hint">
+                            Connect a keyboard bundle to enable
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        {rows.map((row) => (
+                            <RowWithPorts
+                                key={row.rowId}
+                                row={row}
+                                nodeId={node.id}
+                                onUpdate={(field, value) => handleRowUpdate(row.rowId, field, value)}
+                                handlePortMouseDown={handlePortMouseDown}
+                                handlePortMouseUp={handlePortMouseUp}
+                                handlePortMouseEnter={handlePortMouseEnter}
+                                handlePortMouseLeave={handlePortMouseLeave}
+                                hasConnection={hasConnection}
+                                disabled={!parentNodeId}
+                            />
+                        ))}
+                    </>
+                )}
             </div>
 
-            {/* Right: Output port panel */}
-            <div className="sampler-visual-output-panel">
-                <span className="sampler-panel-label">Out</span>
-                {audioOutPort && (
+            {/* Output port on right */}
+            <div className="output-port-area">
+                {outputPorts.map((port) => (
                     <div
-                        className={`sampler-visual-port output ${hasConnection?.(audioOutPort.id) ? 'connected' : ''}`}
+                        key={port.id}
+                        className={`sampler-visual-port output audio ${hasConnection?.(port.id) ? 'connected' : ''}`}
                         data-node-id={node.id}
-                        data-port-id={audioOutPort.id}
-                        onMouseDown={(e) => handlePortMouseDown?.(audioOutPort.id, e)}
-                        onMouseUp={(e) => handlePortMouseUp?.(audioOutPort.id, e)}
-                        onMouseEnter={() => handlePortMouseEnter?.(audioOutPort.id)}
+                        data-port-id={port.id}
+                        onMouseDown={(e) => handlePortMouseDown?.(port.id, e)}
+                        onMouseUp={(e) => handlePortMouseUp?.(port.id, e)}
+                        onMouseEnter={() => handlePortMouseEnter?.(port.id)}
                         onMouseLeave={handlePortMouseLeave}
-                        title="Audio output"
                     />
-                )}
+                ))}
             </div>
         </div>
     );
 });
+
+// Row with individual key ports
+function RowWithPorts({
+    row,
+    nodeId,
+    onUpdate,
+    handlePortMouseDown,
+    handlePortMouseUp,
+    handlePortMouseEnter,
+    handlePortMouseLeave,
+    hasConnection,
+    disabled
+}: {
+    row: SamplerRow;
+    nodeId: string;
+    onUpdate: (field: keyof SamplerRow, value: number) => void;
+    handlePortMouseDown?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseUp?: (portId: string, e: React.MouseEvent) => void;
+    handlePortMouseEnter?: (portId: string) => void;
+    handlePortMouseLeave?: () => void;
+    hasConnection?: (portId: string) => boolean;
+    disabled: boolean;
+}) {
+    // Generate key ports
+    const keyCount = row.portCount;
+    const keys = Array.from({ length: keyCount }, (_, i) => i);
+
+    // Calculate pitch offset for each key (in semitones)
+    const getKeyOffset = (index: number) => {
+        return row.baseOffset + index * row.spread;
+    };
+
+    // Format offset for display
+    const formatOffset = (offset: number) => {
+        const rounded = Math.round(offset * 10) / 10;
+        return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(1);
+    };
+
+    // Handle wheel on controls
+    const handleGainWheel = useCallback((e: React.WheelEvent) => {
+        e.stopPropagation();
+        if (disabled) return;
+        const delta = e.deltaY > 0 ? -1 : 1;
+        const newValue = Math.max(
+            ROW_PARAM_RANGES.GAIN.min,
+            Math.min(ROW_PARAM_RANGES.GAIN.max, row.gain + delta * ROW_PARAM_RANGES.GAIN.step)
+        );
+        onUpdate('gain', parseFloat(newValue.toFixed(1)));
+    }, [disabled, row.gain, onUpdate]);
+
+    const handleSpreadWheel = useCallback((e: React.WheelEvent) => {
+        e.stopPropagation();
+        if (disabled) return;
+        const delta = e.deltaY > 0 ? -1 : 1;
+        const newValue = Math.max(
+            ROW_PARAM_RANGES.SPREAD.min,
+            Math.min(ROW_PARAM_RANGES.SPREAD.max, row.spread + delta * ROW_PARAM_RANGES.SPREAD.step)
+        );
+        onUpdate('spread', parseFloat(newValue.toFixed(1)));
+    }, [disabled, row.spread, onUpdate]);
+
+    return (
+        <div className="sampler-row-compact">
+            {/* Row header with editable values */}
+            <div className="sampler-row-header-compact">
+                <span className="sampler-row-label">{row.label || `Row`}</span>
+                <span
+                    className={`sampler-editable-value ${disabled ? 'disabled' : ''}`}
+                    onWheel={handleGainWheel}
+                    title="Gain (0-2) - scroll to change"
+                >
+                    G:{row.gain.toFixed(1)}
+                </span>
+                <span
+                    className={`sampler-editable-value ${disabled ? 'disabled' : ''}`}
+                    onWheel={handleSpreadWheel}
+                    title="Spread (semitones between keys) - scroll to change"
+                >
+                    S:{row.spread.toFixed(1)}
+                </span>
+            </div>
+
+            {/* Key ports with offset labels */}
+            <div className="sampler-row-keys-compact">
+                {keys.map((index) => {
+                    const portId = `${row.rowId}-key-${index}`;
+                    const offset = getKeyOffset(index);
+                    const isConnected = hasConnection?.(portId) ?? false;
+
+                    return (
+                        <div key={index} className="sampler-key-slot">
+                            <div
+                                className={`sampler-key-port ${isConnected ? 'connected' : ''}`}
+                                data-node-id={nodeId}
+                                data-port-id={portId}
+                                onMouseDown={(e) => handlePortMouseDown?.(portId, e)}
+                                onMouseUp={(e) => handlePortMouseUp?.(portId, e)}
+                                onMouseEnter={() => handlePortMouseEnter?.(portId)}
+                                onMouseLeave={handlePortMouseLeave}
+                                title={`Key ${index + 1}: ${formatOffset(offset)} semitones`}
+                            />
+                            <span className="sampler-key-offset">{formatOffset(offset)}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
 
 export default SamplerVisualNode;

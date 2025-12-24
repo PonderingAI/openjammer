@@ -14,8 +14,8 @@ import { Looper } from './Looper';
 import { Recorder } from './Recorder';
 import { LocalSampleAdapter } from './samplers/LocalSampleAdapter';
 import { SamplerAdapter } from './samplers/SamplerAdapter';
-import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, LibraryNodeData, MIDIInputNodeData, SamplerNodeData } from '../engine/types';
-import { isInstrumentNodeData } from '../engine/typeGuards';
+import type { GraphNode, Connection, NodeType, EffectNodeData, AmplifierNodeData, SpeakerNodeData, InstrumentNodeData, InstrumentRow, LibraryNodeData, MIDIInputNodeData, SamplerNodeData, SamplerRow } from '../engine/types';
+import { isInstrumentNodeData, isSamplerNodeData } from '../engine/typeGuards';
 import { getMIDIManager, midiNoteToName, normalizeMIDIValue } from '../midi';
 import type { MIDIEvent } from '../midi/types';
 import { useMIDIStore } from '../store/midiStore';
@@ -1427,6 +1427,32 @@ class AudioGraphManager {
     }
 
     /**
+     * Pause all continuous audio sources (Loopers).
+     * Does NOT affect live instruments - they can still be played.
+     */
+    pauseAllContinuousSources(): void {
+        this.audioNodes.forEach((audioNode) => {
+            if (audioNode.instance instanceof Looper) {
+                audioNode.instance.pauseAll();
+            }
+            // Future: Add other continuous source types here
+            // e.g., if (audioNode.instance instanceof Sequencer) { ... }
+        });
+    }
+
+    /**
+     * Resume all paused continuous audio sources.
+     */
+    resumeAllContinuousSources(): void {
+        this.audioNodes.forEach((audioNode) => {
+            if (audioNode.instance instanceof Looper) {
+                audioNode.instance.resumeAll();
+            }
+            // Future: Resume other continuous source types here
+        });
+    }
+
+    /**
      * Trigger a sample in a library node
      */
     triggerSample(nodeId: string, velocity: number = 1.0): void {
@@ -1682,14 +1708,46 @@ class AudioGraphManager {
 
             if (!targetNode) continue;
 
-            // Check if target is an instrument
+            // Check if target is an instrument type
             if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
-            // Validate instrument data with type guard
+            const targetPortId = connection.targetPortId;
+
+            // Handle sampler nodes separately (they use SamplerRow instead of InstrumentRow)
+            if (targetNode.type === 'sampler') {
+                if (!isSamplerNodeData(targetNode.data)) continue;
+                const samplerData = targetNode.data;
+
+                // Find the sampler row for this keyboard connection
+                const samplerRow = this.findSamplerRow(samplerData, keyboardId, sourcePortId);
+                if (!samplerRow) continue;
+
+                // Calculate pitch: rootNote + baseOffset + (keyIndex * spread)
+                const rootNote = samplerData.rootNote ?? 60; // Middle C
+                const pitchOffset = samplerRow.baseOffset + (keyIndex * samplerRow.spread);
+                const finalMidiNote = rootNote + pitchOffset;
+
+                // Convert MIDI note to note name
+                const octave = Math.floor(finalMidiNote / 12) - 1;
+                const noteIndex = finalMidiNote % 12;
+                const noteName = getNoteName(noteIndex, octave);
+
+                // Apply per-key gain and row gain
+                const keyGain = samplerRow.keyGains?.[keyIndex] ?? 1;
+                const rowGain = samplerRow.gain ?? 1;
+                const finalVelocity = Math.max(0, Math.min(1, clampedVelocity * keyGain * rowGain));
+
+                // Get the sampler adapter and play the note
+                const sampler = this.getSamplerAdapter(targetNodeId);
+                if (sampler) {
+                    sampler.playNote(noteName, finalVelocity);
+                }
+                continue;
+            }
+
+            // Handle regular instrument nodes
             if (!isInstrumentNodeData(targetNode.data)) continue;
             const instrumentData = targetNode.data;
-
-            const targetPortId = connection.targetPortId;
 
             // NEW: Check for row-based system first
             const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);
@@ -1773,6 +1831,21 @@ class AudioGraphManager {
     }
 
     /**
+     * Find the sampler row that corresponds to a source keyboard and port
+     */
+    private findSamplerRow(samplerData: SamplerNodeData, sourceNodeId: string, sourcePortId: string): SamplerRow | undefined {
+        if (!samplerData.rows || samplerData.rows.length === 0) {
+            return undefined;
+        }
+
+        // Find row that matches BOTH the source node AND port
+        return samplerData.rows.find(row =>
+            row.sourceNodeId === sourceNodeId &&
+            (row.sourcePortId === sourcePortId || sourcePortId.includes(row.sourcePortId))
+        );
+    }
+
+    /**
      * Release a note from keyboard input
      * @param keyboardId - The keyboard node ID
      * @param row - The active row (1, 2, or 3)
@@ -1808,14 +1881,41 @@ class AudioGraphManager {
 
             if (!targetNode) continue;
 
-            // Check if target is an instrument
+            // Check if target is an instrument type
             if (!INSTRUMENT_NODE_TYPES.includes(targetNode.type as typeof INSTRUMENT_NODE_TYPES[number])) continue;
 
-            // Validate instrument data with type guard
+            const targetPortId = connection.targetPortId;
+
+            // Handle sampler nodes separately (they use SamplerRow instead of InstrumentRow)
+            if (targetNode.type === 'sampler') {
+                if (!isSamplerNodeData(targetNode.data)) continue;
+                const samplerData = targetNode.data;
+
+                // Find the sampler row for this keyboard connection
+                const samplerRow = this.findSamplerRow(samplerData, keyboardId, sourcePortId);
+                if (!samplerRow) continue;
+
+                // Calculate pitch: rootNote + baseOffset + (keyIndex * spread)
+                const rootNote = samplerData.rootNote ?? 60; // Middle C
+                const pitchOffset = samplerRow.baseOffset + (keyIndex * samplerRow.spread);
+                const finalMidiNote = rootNote + pitchOffset;
+
+                // Convert MIDI note to note name
+                const octave = Math.floor(finalMidiNote / 12) - 1;
+                const noteIndex = finalMidiNote % 12;
+                const noteName = getNoteName(noteIndex, octave);
+
+                // Get the sampler adapter and stop the note
+                const sampler = this.getSamplerAdapter(targetNodeId);
+                if (sampler) {
+                    sampler.stopNote(noteName);
+                }
+                continue;
+            }
+
+            // Handle regular instrument nodes
             if (!isInstrumentNodeData(targetNode.data)) continue;
             const instrumentData = targetNode.data;
-
-            const targetPortId = connection.targetPortId;
 
             // NEW: Check for row-based system first
             const instrumentRow = this.findInstrumentRow(instrumentData, keyboardId, sourcePortId);

@@ -693,28 +693,25 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
         canEnter: false  // Library browser is inline, not a sub-canvas
     },
 
-    // Sampler Instrument Node - Simplified single-input design
+    // Sampler Instrument Node - Row-based design like instrument nodes
     sampler: {
         type: 'sampler',
         category: 'instruments',
         name: 'Sampler',
-        description: 'Play a sample chromatically via control input',
+        description: 'Play a sample chromatically via keyboard bundles',
         defaultPorts: [
-            // Single control input on left
-            { id: 'control-in', name: 'In', type: 'control', direction: 'input', position: { x: 0, y: 0.5 } },
+            // Bundled control input on left (accepts keyboard bundles)
+            { id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true },
             // Audio output on right
-            { id: 'audio-out', name: 'Out', type: 'audio', direction: 'output', position: { x: 1, y: 0.5 } }
+            { id: 'audio-out', name: 'Out', type: 'audio', direction: 'output' }
         ],
         defaultData: {
-            // Sample reference
+            // Sample reference (single sample shared by all rows)
             sampleId: null,
             sampleName: null,
-            // Display parameters
-            baseNote: 0,        // 0-6 (C, D, E, F, G, A, B)
-            baseOctave: 4,      // 0-8
-            baseOffset: 0,      // -24 to +24 semitones
-            spread: 0.5,        // 0-1
-            // Core audio parameters (kept for engine)
+            // Row-based structure (populated when bundles connect)
+            rows: [],
+            // Core audio parameters
             rootNote: 60,       // MIDI note (C4)
             attack: 0.01,
             decay: 0.1,
@@ -728,11 +725,11 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
             maxVoices: 16
         },
         portLayout: {
-            direction: 'horizontal',
-            inputArea: { x: 0, startY: 0.4, endY: 0.6 },
+            direction: 'vertical',
+            inputArea: { x: 0, startY: 0.2, endY: 0.8 },
             outputArea: { x: 1, startY: 0.4, endY: 0.6 }
         },
-        dimensions: { width: 160, height: 80 },
+        dimensions: { width: 180, height: 100 },
         canEnter: true  // Allows E key to view internal structure
     },
 

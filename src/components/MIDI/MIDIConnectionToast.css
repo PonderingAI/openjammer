@@ -41,45 +41,7 @@
 }
 
 .midi-connection-toast-header-left {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm, 8px);
-}
-
-.midi-connection-toast-badge {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: var(--text-xs, 11px);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.midi-connection-toast-badge.recognized {
-    background: linear-gradient(135deg, var(--accent-success) 0%, var(--accent-primary) 100%);
-    color: var(--text-on-accent);
-}
-
-.midi-connection-toast-badge.generic {
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
-}
-
-.midi-connection-toast-badge-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: midiToastPulseDot 1.5s ease-in-out infinite;
-}
-
-@keyframes midiToastPulseDot {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.8); }
+    flex: 1;
 }
 
 .midi-connection-toast-dismiss {

@@ -2,15 +2,66 @@
 
 This guide walks you through creating new node types in OpenJammer. Nodes are the building blocks of the audio/control graph, and can be hierarchical (containing other nodes inside).
 
+---
+
+## Quick Start Checklist
+
+Use this checklist to verify your node is complete and follows best practices:
+
+### Required Steps
+- [ ] **Type registered** - Added to `NodeType` union in `src/engine/types.ts`
+- [ ] **Registry entry** - Added to `nodeDefinitions` in `src/engine/registry.ts`
+- [ ] **Component created** - `src/components/Nodes/[Name]Node.tsx` exists
+- [ ] **NodeWrapper routing** - Case added in `src/components/Canvas/NodeCanvas.tsx`
+- [ ] **Exported** - Added to `src/components/Nodes/index.ts`
+
+### Naming Conventions
+- [ ] **Node type**: `kebab-case` (e.g., `my-new-node`, `audio-mixer`)
+- [ ] **Port IDs**: `kebab-case` (e.g., `audio-in`, `control-out`)
+- [ ] **Component name**: `PascalCase` + `Node` suffix (e.g., `MyNewNode`)
+- [ ] **CSS class**: `kebab-case` matching node type (e.g., `my-new-node`)
+
+### Port Positioning
+- [ ] **Position values**: 0-1 normalized (0=left/top, 1=right/bottom)
+- [ ] **Input ports**: `position.x = 0` (left side)
+- [ ] **Output ports**: `position.x = 1` (right side)
+- [ ] **Vertical spacing**: Evenly distributed `y` values (e.g., 0.3, 0.5, 0.7)
+
+### Data & State
+- [ ] **defaultData** defined in registry with sensible defaults
+- [ ] **Type-safe access**: Cast `node.data as YourNodeData`
+- [ ] **Updates via store**: Use `updateNodeData()` from `useGraphStore`
+- [ ] **Cleanup in useEffect**: Release resources on unmount
+
+### Audio Integration (if applicable)
+- [ ] **Register with AudioGraphManager**: Call appropriate setter on mount
+- [ ] **Disconnect on unmount**: Clean up audio nodes in useEffect return
+- [ ] **Handle mute/unmute**: Respond to `isMuted` in node data
+
+### Quality Checks
+- [ ] **TypeScript compiles** without errors
+- [ ] **Renders correctly** at different canvas zoom levels
+- [ ] **Ports are clickable** and connections work
+- [ ] **State persists** after page refresh (via graphStore)
+
+---
+
 ## Table of Contents
 
-1. [Node Architecture Overview](#node-architecture-overview)
-2. [Port Visibility System](#port-visibility-system)
-3. [Creating a Simple Node](#creating-a-simple-node)
-4. [Creating a Hierarchical Node](#creating-a-hierarchical-node)
-5. [Panel Nodes and Bundles](#panel-nodes-and-bundles)
-6. [Utility Functions](#utility-functions)
-7. [Complete Example](#complete-example)
+1. [Quick Start Checklist](#quick-start-checklist)
+2. [Node Architecture Overview](#node-architecture-overview)
+3. [Port Visibility System](#port-visibility-system)
+4. [Creating a Simple Node](#creating-a-simple-node)
+5. [Creating a Hierarchical Node](#creating-a-hierarchical-node)
+6. [Panel Nodes and Bundles](#panel-nodes-and-bundles)
+7. [Utility Functions](#utility-functions)
+8. [Scroll Capture](#scroll-capture-preventing-canvas-scroll)
+9. [Resizable Nodes](#resizable-nodes)
+10. [Audio Integration Guide](#audio-integration-guide)
+11. [Testing Your Node](#testing-your-node)
+12. [Common Mistakes](#common-mistakes)
+13. [Complete Example](#complete-example)
+14. [Node Standards Reference](#node-standards-reference)
 
 ---
 
@@ -713,6 +764,362 @@ export const MixerVisualNode = memo(function MixerVisualNode({
 
 ---
 
+## Audio Integration Guide
+
+OpenJammer uses Web Audio API with a centralized `AudioGraphManager` for managing audio connections. Here's how to properly integrate audio in your nodes.
+
+### AudioGraphManager Overview
+
+The `AudioGraphManager` (`src/audio/AudioGraphManager.ts`) is a singleton that:
+- Manages all Web Audio node connections
+- Handles audio context lifecycle
+- Provides methods for registering node outputs/inputs
+- Routes audio between connected nodes automatically
+
+### Registering Audio Sources (Output Nodes)
+
+For nodes that **produce** audio (microphones, instruments, samplers):
+
+```typescript
+import { audioGraphManager } from '../../audio/AudioGraphManager';
+import { getAudioContext } from '../../audio/AudioEngine';
+
+function MyAudioSourceNode({ node }) {
+    const [outputNode, setOutputNode] = useState<AudioNode | null>(null);
+
+    useEffect(() => {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        // Create your audio chain
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.connect(gainNode);
+        oscillator.start();
+
+        // Register with AudioGraphManager
+        // The manager will route this to any connected nodes
+        audioGraphManager.setInstrumentOutput(node.id, gainNode);
+        setOutputNode(gainNode);
+
+        // Cleanup on unmount
+        return () => {
+            oscillator.stop();
+            oscillator.disconnect();
+            gainNode.disconnect();
+            audioGraphManager.removeNode(node.id);
+        };
+    }, [node.id]);
+
+    return <div>...</div>;
+}
+```
+
+### Common AudioGraphManager Methods
+
+```typescript
+// For microphone nodes
+audioGraphManager.setMicrophoneOutput(nodeId: string, audioNode: AudioNode)
+
+// For instrument/sampler nodes
+audioGraphManager.setInstrumentOutput(nodeId: string, audioNode: AudioNode)
+
+// For effect nodes (have both input and output)
+audioGraphManager.setEffectNodes(nodeId: string, inputNode: AudioNode, outputNode: AudioNode)
+
+// For speaker/output nodes
+audioGraphManager.setSpeakerInput(nodeId: string, audioNode: AudioNode)
+
+// Remove a node from the graph
+audioGraphManager.removeNode(nodeId: string)
+
+// Get current audio context
+import { getAudioContext } from '../../audio/AudioEngine';
+const ctx = getAudioContext();
+```
+
+### Effect Node Pattern
+
+For nodes that **process** audio (effects, amplifiers):
+
+```typescript
+function MyEffectNode({ node }) {
+    const data = node.data as MyEffectData;
+
+    useEffect(() => {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        // Create effect chain
+        const inputGain = ctx.createGain();
+        const distortion = ctx.createWaveShaper();
+        const outputGain = ctx.createGain();
+
+        inputGain.connect(distortion);
+        distortion.connect(outputGain);
+
+        // Set up the curve based on node data
+        distortion.curve = makeDistortionCurve(data.amount);
+
+        // Register both input and output
+        audioGraphManager.setEffectNodes(node.id, inputGain, outputGain);
+
+        return () => {
+            inputGain.disconnect();
+            distortion.disconnect();
+            outputGain.disconnect();
+            audioGraphManager.removeNode(node.id);
+        };
+    }, [node.id, data.amount]);
+
+    return <div>...</div>;
+}
+```
+
+### Handling Mute State
+
+Most audio nodes should respect an `isMuted` flag:
+
+```typescript
+function MyAudioNode({ node }) {
+    const data = node.data as { isMuted: boolean };
+    const [gainNode, setGainNode] = useState<GainNode | null>(null);
+
+    // Update gain when mute changes
+    useEffect(() => {
+        if (gainNode) {
+            gainNode.gain.value = data.isMuted ? 0 : 1;
+        }
+    }, [data.isMuted, gainNode]);
+
+    // ... rest of component
+}
+```
+
+### Waveform Visualization
+
+For visualizing audio (like MicrophoneNode):
+
+```typescript
+function AudioVisualization({ analyserNode }) {
+    const [waveform, setWaveform] = useState<number[]>([]);
+    const animationRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (!analyserNode) return;
+
+        const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+
+        const updateWaveform = () => {
+            if (!document.hidden) {  // Skip when tab not visible
+                analyserNode.getByteFrequencyData(dataArray);
+                // Process dataArray into visualization data
+                const bars = Array.from(dataArray.slice(0, 16)).map(v => v / 255);
+                setWaveform(bars);
+            }
+            animationRef.current = requestAnimationFrame(updateWaveform);
+        };
+
+        updateWaveform();
+
+        return () => {
+            if (animationRef.current) {
+                cancelAnimationFrame(animationRef.current);
+            }
+        };
+    }, [analyserNode]);
+
+    return (
+        <div className="waveform">
+            {waveform.map((v, i) => (
+                <div key={i} className="bar" style={{ height: `${v * 100}%` }} />
+            ))}
+        </div>
+    );
+}
+```
+
+### Best Practices
+
+1. **Always clean up**: Disconnect audio nodes in useEffect cleanup
+2. **Use refs for cleanup**: Store audio nodes in refs to avoid stale closure issues
+3. **Throttle visualizations**: Limit animation to 30fps for performance
+4. **Check audio context**: Always verify `getAudioContext()` returns a valid context
+5. **Handle suspended context**: Audio contexts start suspended; resume on user interaction
+
+---
+
+## Testing Your Node
+
+### Manual Testing Checklist
+
+Before considering your node complete, verify:
+
+#### Visual Testing
+- [ ] Node renders correctly on the canvas
+- [ ] Node looks correct when selected vs unselected
+- [ ] Node looks correct while being dragged
+- [ ] Ports are visible and positioned correctly
+- [ ] Labels are readable and not clipped
+- [ ] Node respects canvas zoom levels
+
+#### Interaction Testing
+- [ ] Can create connections from output ports
+- [ ] Can receive connections on input ports
+- [ ] Node data updates correctly via UI controls
+- [ ] Keyboard shortcuts work (if applicable)
+- [ ] Scroll gestures don't propagate to canvas (if node has scrollable content)
+
+#### State Testing
+- [ ] Data persists after page refresh
+- [ ] Undo/redo works for data changes
+- [ ] Deleting the node cleans up properly
+- [ ] Copy/paste works correctly
+
+#### Audio Testing (if applicable)
+- [ ] Audio flows through correctly
+- [ ] Mute/unmute works
+- [ ] Volume/gain controls work
+- [ ] No audio glitches or pops
+- [ ] CPU usage is reasonable
+
+### Testing in Development
+
+```bash
+# Start dev server
+bun run dev
+
+# Open browser at localhost:5173
+# Create your node from the menu
+# Test all interactions
+```
+
+### Console Debugging
+
+Check browser console for:
+- Audio context errors
+- Port sync warnings
+- Connection validation errors
+
+---
+
+## Common Mistakes
+
+### 1. Forgetting to Register in NodeWrapper
+
+**Symptom**: Node appears as blank rectangle or shows wrong component.
+
+**Fix**: Add case in `src/components/Canvas/NodeCanvas.tsx`:
+```typescript
+case 'my-node':
+    return <MyNode node={node} {...handlers} />;
+```
+
+### 2. Wrong Port Directions for Panels
+
+**Symptom**: Ports don't appear on parent node, or data flows backwards.
+
+**Fix**: Remember the inversion rule:
+- Input panel ports are `direction: 'output'` (they output to inside)
+- Output panel ports are `direction: 'input'` (they receive from inside)
+
+### 3. Port Positions Outside 0-1 Range
+
+**Symptom**: Ports appear at wrong positions or off-screen.
+
+**Fix**: Ensure all position values are normalized:
+```typescript
+position: { x: 0, y: 0.5 }  // Left side, vertically centered
+position: { x: 1, y: 0.3 }  // Right side, 30% from top
+```
+
+### 4. Missing Audio Cleanup
+
+**Symptom**: Audio keeps playing after node is deleted, or memory leaks.
+
+**Fix**: Always disconnect and cleanup in useEffect:
+```typescript
+useEffect(() => {
+    // Setup...
+    return () => {
+        oscillator.stop();
+        oscillator.disconnect();
+        gainNode.disconnect();
+        audioGraphManager.removeNode(node.id);
+    };
+}, []);
+```
+
+### 5. Scroll Events Propagating to Canvas
+
+**Symptom**: Using mouse wheel on dropdowns/sliders moves the canvas.
+
+**Fix**: Use `ScrollContainer` or `useScrollCapture`:
+```tsx
+<ScrollContainer mode="dropdown" className="my-dropdown">
+    {/* dropdown content */}
+</ScrollContainer>
+```
+
+### 6. Stale Closures in Cleanup Functions
+
+**Symptom**: Cleanup function uses old values, or cleanup doesn't happen.
+
+**Fix**: Use refs for values needed in cleanup:
+```typescript
+const streamRef = useRef<MediaStream | null>(null);
+
+useEffect(() => {
+    streamRef.current = stream;
+}, [stream]);
+
+useEffect(() => {
+    return () => {
+        streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+}, []);
+```
+
+### 7. Missing Type Guard for Node Data
+
+**Symptom**: Runtime errors when accessing node.data properties.
+
+**Fix**: Cast data to the correct type:
+```typescript
+const data = node.data as MyNodeData;
+const value = data.myProperty ?? defaultValue;
+```
+
+### 8. Hierarchical Node Missing from specialNodes
+
+**Symptom**: Panel ports don't sync to parent node.
+
+**Fix**: Add panel IDs to `specialNodes` array:
+```typescript
+specialNodes.push(inputPanelId, outputPanelId);
+```
+
+### 9. Not Using updateNodeData for State Changes
+
+**Symptom**: Changes don't persist, or don't trigger re-renders.
+
+**Fix**: Always use the store:
+```typescript
+const updateNodeData = useGraphStore(s => s.updateNodeData);
+updateNodeData<MyNodeData>(node.id, { myProperty: newValue });
+```
+
+### 10. Bundle Ports Not Marked as Bundled
+
+**Symptom**: Multi-signal ports don't expand on connection.
+
+**Fix**: Add `isBundled: true` to port definition:
+```typescript
+{ id: 'bundle-in', name: 'Bundle', type: 'control', direction: 'input', isBundled: true }
+```
+
+---
+
 ## Summary
 
 1. **Register the node type** in `types.ts` and `registry.ts`
@@ -729,3 +1136,34 @@ export const MixerVisualNode = memo(function MixerVisualNode({
 | **Inside panel** | `direction: 'output'` | `direction: 'input'` |
 | **On parent** | `direction: 'input'` | `direction: 'output'` |
 | **Data flow** | Parent → Inside | Inside → Parent |
+
+---
+
+## Node Standards Reference
+
+For detailed naming conventions, required fields per category, and port templates, see:
+
+**[Node Standards](./node-standards.md)**
+
+---
+
+## CLI Scaffolding Tool
+
+To quickly create a new node with all boilerplate in place:
+
+```bash
+# Interactive mode - prompts for all options
+bun run create-node
+
+# Direct mode - specify options
+bun run create-node --name "reverb" --category "effects" --type "atomic"
+```
+
+This will generate:
+- Type definition in `types.ts`
+- Registry entry in `registry.ts`
+- Component file in `src/components/Nodes/`
+- CSS file (if needed)
+- NodeWrapper routing
+
+See `scripts/create-node.ts` for available options.

@@ -2,14 +2,13 @@
  * Toolbar - Photoshop-style menu bar with dropdown menus
  */
 
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { useGraphStore } from '../../store/graphStore';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useAudioStore } from '../../store/audioStore';
 import { useProjectStore } from '../../store/projectStore';
-import { beatClock } from '../../audio/BeatClock';
-import type { BeatClockState } from '../../audio/BeatClock';
+import { useTransportStore } from '../../store/transportStore';
 import { exportWorkflow, downloadWorkflow, loadWorkflowFromFile, importWorkflow } from '../../engine/serialization';
 import { DropdownMenu, type MenuItemOrSeparator } from './DropdownMenu';
 import { useOnlineStatus } from '../../hooks/usePWA';
@@ -50,20 +49,14 @@ export function Toolbar() {
     // Online status
     const isOnline = useOnlineStatus();
 
-    // Beat clock state for play/stop
-    const [clockState, setClockState] = useState<BeatClockState>(beatClock.getState());
-
-    useEffect(() => {
-        const unsubscribe = beatClock.onStateChange((state) => {
-            setClockState(state);
-        });
-        return unsubscribe;
-    }, []);
+    // Global transport state for play/pause (continuous sources like loopers)
+    const isGloballyPaused = useTransportStore((s) => s.isGloballyPaused);
+    const toggleGlobalPause = useTransportStore((s) => s.toggleGlobalPause);
 
     // Transport controls
     const handlePlayStop = useCallback(() => {
-        beatClock.toggle();
-    }, []);
+        toggleGlobalPause();
+    }, [toggleGlobalPause]);
 
     // Export workflow
     const handleExport = useCallback(() => {
@@ -307,6 +300,11 @@ export function Toolbar() {
         },
     ];
 
+    // Help panel toggle
+    const handleToggleHelp = useCallback(() => {
+        window.dispatchEvent(new CustomEvent('openjammer:toggle-help'));
+    }, []);
+
     const viewMenuItems: MenuItemOrSeparator[] = [
         {
             id: 'zoom-in',
@@ -332,6 +330,12 @@ export function Toolbar() {
             label: ghostMode ? '✓ Ghost Mode' : 'Ghost Mode',
             shortcut: 'W',
             onClick: toggleGhostMode,
+        },
+        {
+            id: 'help',
+            label: 'Help',
+            shortcut: '?',
+            onClick: handleToggleHelp,
         },
     ];
 
@@ -364,14 +368,14 @@ export function Toolbar() {
 
             <div className="toolbar-separator" />
 
-            {/* Play/Stop */}
+            {/* Global Play/Pause */}
             <button
-                className={`toolbar-btn toolbar-btn-icon ${clockState.isPlaying ? 'toolbar-btn-active' : ''}`}
+                className="toolbar-btn toolbar-btn-icon"
                 onClick={handlePlayStop}
                 disabled={!isAudioContextReady}
-                title={clockState.isPlaying ? 'Stop Clock' : 'Start Clock'}
+                title={isGloballyPaused ? 'Resume All (Space)' : 'Pause All (Space)'}
             >
-                {clockState.isPlaying ? '⏹' : '▶'}
+                {isGloballyPaused ? '▶' : '⏸'}
             </button>
 
             <div className="toolbar-separator" />

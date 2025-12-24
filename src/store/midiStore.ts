@@ -8,7 +8,10 @@ import { create } from 'zustand';
 import { subscribeWithSelector, persist } from 'zustand/middleware';
 import { getMIDIManager, getPresetRegistry } from '../midi';
 import type { MIDIDeviceInfo, MIDIDevicePreset, MIDIEvent } from '../midi/types';
-import type { MIDIDeviceSignature } from '../engine/types';
+import type { MIDIDeviceSignature, MIDIInputNodeData } from '../engine/types';
+// Note: This creates a circular dependency (graphStore imports midiStore)
+// but it's safe because we only use useGraphStore inside functions, not at module load time
+import { useGraphStore } from './graphStore';
 
 // ============================================================================
 // Store State
@@ -75,6 +78,7 @@ interface MIDIStoreActions {
     getDeviceSignature: (deviceId: string) => MIDIDeviceSignature | null;
     getDeviceBySignature: (signature: MIDIDeviceSignature) => MIDIDeviceInfo | null;
     isDeviceNameUsed: (presetId: string, deviceName: string) => boolean;
+    releaseDeviceSignature: (deviceId: string) => void;
 
     // Browser
     openBrowser: (targetNodeId?: string) => void;
@@ -390,6 +394,26 @@ export const useMIDIStore = create<MIDIStore>()(
             return !!get().usedDeviceNames[`${presetId}:${deviceName}`];
         },
 
+        releaseDeviceSignature: (deviceId: string) => {
+            const state = get();
+            const sig = state.deviceSignatures[deviceId];
+            if (!sig) return;
+
+            // Remove the name from usedDeviceNames so it can be reused
+            const nameKey = `${sig.presetId}:${sig.deviceName}`;
+            const newUsedNames = { ...state.usedDeviceNames };
+            delete newUsedNames[nameKey];
+
+            // Remove the signature for this deviceId
+            const newSignatures = { ...state.deviceSignatures };
+            delete newSignatures[deviceId];
+
+            set({
+                usedDeviceNames: newUsedNames,
+                deviceSignatures: newSignatures
+            });
+        },
+
         // ================================================================
         // Browser
         // ================================================================
@@ -458,8 +482,33 @@ export const useMIDIStore = create<MIDIStore>()(
                 return; // Don't show toast for non-preferred ports
             }
 
-            // Add to pending devices Map (enables stacking of multiple toasts)
-            // Toast display is handled by useMIDIConnectionToast hook
+            // Check if this device already has a node on the canvas
+            const graphNodes = useGraphStore.getState().nodes;
+            const presetId = preset?.id || 'generic';
+
+            for (const node of graphNodes.values()) {
+                const data = node.data as MIDIInputNodeData;
+                // Check if node has this deviceId
+                if (data?.deviceId === device.id) {
+                    // Device already has a node, auto-connect without toast
+                    useGraphStore.getState().updateNodeData(node.id, {
+                        deviceId: device.id,
+                        isConnected: true,
+                    });
+                    return;
+                }
+                // Check if node has a matching signature (same preset type, disconnected)
+                if (data?.deviceSignature?.presetId === presetId && !data?.isConnected) {
+                    // Has a matching signature, auto-connect without toast
+                    useGraphStore.getState().updateNodeData(node.id, {
+                        deviceId: device.id,
+                        isConnected: true,
+                    });
+                    return;
+                }
+            }
+
+            // No existing node, add to pending devices for toast
             const pendingDevices = new Map(get().pendingDevices);
             pendingDevices.set(device.id, { device, preset });
             set({ pendingDevices });

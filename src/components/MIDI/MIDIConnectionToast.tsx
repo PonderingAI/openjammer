@@ -51,14 +51,9 @@ export function MIDIConnectionToast({
                 aria-hidden="true"
             />
 
-            {/* Header with badge and dismiss */}
+            {/* Header with dismiss button */}
             <div className="midi-connection-toast-header">
-                <div className="midi-connection-toast-header-left">
-                    <div className={`midi-connection-toast-badge ${isRecognized ? 'recognized' : 'generic'}`}>
-                        <span className="midi-connection-toast-badge-dot" aria-hidden="true" />
-                        {isRecognized ? 'Recognized' : 'New Device'}
-                    </div>
-                </div>
+                <div className="midi-connection-toast-header-left" />
                 <button
                     className="midi-connection-toast-dismiss"
                     onClick={onDismiss}

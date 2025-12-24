@@ -1,74 +1,67 @@
 /**
- * Sampler Visual Node - INSIDE view (compact horizontal layout)
- * Uses CSS variables for cream theme compatibility
+ * Sampler Visual Node - INSIDE view (row-based layout)
  *
- * [Input Panel] | [Waveform + Controls] | [Output Panel]
+ * Layout:
+ * ┌────────────────────────────────────┐
+ * │  [In]    Config          [Out]     │
+ * ├────────────────────────────────────┤
+ * │ Row 1: G:1.0 S:1.0                 │
+ * │ Connect a keyboard bundle...       │
+ * └────────────────────────────────────┘
  */
 
 /* ============================================
- * Main Container - Horizontal Layout
+ * Main Container
  * ============================================ */
 
-.sampler-visual-node.horizontal {
+.sampler-visual-node {
+    position: relative;
     display: flex;
-    flex-direction: row;
-    align-items: stretch;
+    flex-direction: column;
     min-width: 280px;
-    height: 100px;
     background: var(--bg-node);
     border: var(--border-sketch-width) solid var(--sketch-black);
     border-radius: var(--radius-lg);
-    overflow: hidden;
+    overflow: visible;
     color: var(--text-primary);
     font-family: var(--font-sketch);
 }
 
-.sampler-visual-node.horizontal.selected {
+.sampler-visual-node.selected {
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
-.sampler-visual-node.horizontal.dragging {
+.sampler-visual-node.dragging {
     opacity: 0.8;
 }
 
 /* ============================================
- * Input Panel (Left Side)
+ * Header with ports
  * ============================================ */
 
-.sampler-visual-input-panel {
+.sampler-visual-header {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: var(--space-sm);
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
     background: var(--bg-tertiary);
-    border-right: 1px solid var(--border-subtle);
-    min-width: 40px;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: grab;
 }
 
-/* ============================================
- * Output Panel (Right Side)
- * ============================================ */
-
-.sampler-visual-output-panel {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: var(--space-sm);
-    background: var(--bg-tertiary);
-    border-left: 1px solid var(--border-subtle);
-    min-width: 40px;
+.sampler-visual-header:active {
+    cursor: grabbing;
 }
 
-.sampler-panel-label {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
+.sampler-visual-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    color: var(--text-primary);
+    flex: 1;
+    text-align: center;
 }
 
 /* ============================================
@@ -82,10 +75,11 @@
     border: var(--border-sketch-width) solid var(--sketch-black);
     cursor: crosshair;
     transition: all var(--transition-fast);
+    flex-shrink: 0;
 }
 
 .sampler-visual-port.input {
-    background: var(--control-input);
+    background: var(--control-input, #4a9eff);
 }
 
 .sampler-visual-port.input:hover {
@@ -94,12 +88,12 @@
 }
 
 .sampler-visual-port.input.connected {
-    background: var(--control-connected);
-    box-shadow: 0 0 6px var(--control-connected);
+    background: var(--control-connected, #2ecc71);
+    box-shadow: 0 0 6px var(--control-connected, #2ecc71);
 }
 
 .sampler-visual-port.output {
-    background: var(--audio-output);
+    background: var(--audio-output, #ff6b6b);
 }
 
 .sampler-visual-port.output:hover {
@@ -108,69 +102,151 @@
 }
 
 .sampler-visual-port.output.connected {
-    background: var(--audio-connected);
-    box-shadow: 0 0 6px var(--audio-connected);
+    background: var(--audio-connected, #e74c3c);
+    box-shadow: 0 0 6px var(--audio-connected, #e74c3c);
 }
 
 /* ============================================
- * Content Section (Center)
+ * Rows Container
  * ============================================ */
 
-.sampler-visual-content {
-    flex: 1;
+.sampler-visual-rows {
     display: flex;
     flex-direction: column;
     padding: var(--space-sm);
-    gap: var(--space-xs);
+    gap: var(--space-sm);
+    min-height: 60px;
 }
 
 /* ============================================
- * Waveform Container
+ * Row Styling
  * ============================================ */
 
-.sampler-visual-waveform-container {
-    flex: 1;
+.sampler-row-compact {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+}
+
+.sampler-row-compact.default-row {
+    border: 1px dashed var(--border-subtle);
+}
+
+.sampler-row-header-compact {
     display: flex;
     align-items: center;
-    justify-content: center;
-}
-
-.sampler-visual-waveform {
-    width: 100%;
-    height: 40px;
-    border-radius: var(--radius-sm);
-    display: block;
-    background: var(--bg-canvas);
-    border: 1px solid var(--border-subtle);
-}
-
-/* ============================================
- * Controls Row
- * ============================================ */
-
-.sampler-visual-controls {
-    display: flex;
-    justify-content: center;
     gap: var(--space-sm);
 }
 
-.sampler-ctrl {
+.sampler-row-label {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 50px;
+}
+
+.sampler-editable-value {
     font-size: var(--text-sm);
     font-weight: 600;
     font-family: var(--font-mono);
     color: var(--text-primary);
-    padding: 2px 8px;
+    padding: 2px 6px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     cursor: ns-resize;
     user-select: none;
     transition: background var(--transition-fast);
-    min-width: 32px;
+}
+
+.sampler-editable-value:hover {
+    background: var(--bg-node);
+    border-color: var(--accent-primary);
+}
+
+.sampler-editable-value.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sampler-row-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-style: italic;
+    padding-left: var(--space-xs);
+}
+
+/* ============================================
+ * Key Ports Grid
+ * ============================================ */
+
+.sampler-row-keys-compact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: var(--space-xs) 0;
+}
+
+.sampler-key-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.sampler-key-port {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--control-input, #4a9eff);
+    border: 1px solid var(--sketch-black);
+    cursor: crosshair;
+    transition: all var(--transition-fast);
+}
+
+.sampler-key-port:hover {
+    transform: scale(1.3);
+    filter: brightness(1.2);
+}
+
+.sampler-key-port.connected {
+    background: var(--control-connected, #2ecc71);
+    box-shadow: 0 0 4px var(--control-connected, #2ecc71);
+}
+
+.sampler-key-offset {
+    font-size: 8px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+/* ============================================
+ * Empty State
+ * ============================================ */
+
+.sampler-visual-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-md);
+    color: var(--text-muted);
+    font-style: italic;
     text-align: center;
 }
 
-.sampler-ctrl:hover {
-    background: var(--bg-secondary);
-    border-color: var(--sketch-light);
+/* ============================================
+ * Output Port Area
+ * ============================================ */
+
+.sampler-visual-node .output-port-area {
+    position: absolute;
+    right: -7px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
 }

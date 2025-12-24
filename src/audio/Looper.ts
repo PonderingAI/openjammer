@@ -25,6 +25,9 @@ export interface Loop {
     sourceNode: AudioBufferSourceNode | null;
     waveformData: number[];  // Amplitude values over time for visualization
     libraryItemId?: string;  // Reference to saved library item (if auto-saved)
+    // Pause state tracking for global transport control
+    isPaused: boolean;
+    pausedAtOffset: number;  // Position in buffer when paused (seconds)
 }
 
 /**
@@ -139,7 +142,9 @@ export class Looper {
             isMuted: false,
             gainNode: null,
             sourceNode: null,
-            waveformData
+            waveformData,
+            isPaused: false,
+            pausedAtOffset: 0
         };
 
         this.loops.push(loop);
@@ -415,7 +420,9 @@ export class Looper {
                 isMuted: false,
                 gainNode: null,
                 sourceNode: null,
-                waveformData: this.getWaveformHistoryArray()  // Store waveform shape
+                waveformData: this.getWaveformHistoryArray(),  // Store waveform shape
+                isPaused: false,
+                pausedAtOffset: 0
             };
 
             this.loops.push(loop);
@@ -643,6 +650,77 @@ export class Looper {
      */
     stopAll(): void {
         this.loops.forEach(loop => this.stopLoop(loop));
+    }
+
+    /**
+     * Pause a specific loop, storing its current playback position.
+     * Unlike stopLoop, this preserves the buffer so it can be resumed.
+     */
+    pauseLoop(loop: Loop): void {
+        if (!loop.sourceNode || loop.isPaused || !loop.buffer) return;
+
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        // Calculate current offset within the buffer
+        // Time since loop started, modulo buffer duration for looping
+        const elapsed = ctx.currentTime - loop.startTime;
+        const bufferDuration = loop.buffer.duration;
+        const offset = elapsed % bufferDuration;
+
+        // Stop the source node (cannot pause AudioBufferSourceNode)
+        loop.sourceNode.stop();
+        loop.sourceNode.disconnect();
+        loop.sourceNode = null;
+
+        // Store pause state (keep gainNode connected for seamless resume)
+        loop.isPaused = true;
+        loop.pausedAtOffset = offset;
+    }
+
+    /**
+     * Resume a paused loop from its stored position
+     */
+    resumeLoop(loop: Loop): void {
+        if (!loop.isPaused || loop.isMuted || !loop.buffer) return;
+
+        const ctx = getAudioContext();
+        if (!ctx || !this.outputNode) return;
+
+        // Ensure gain node exists
+        if (!loop.gainNode) {
+            loop.gainNode = ctx.createGain();
+            loop.gainNode.gain.value = loop.isMuted ? 0 : 1;
+            loop.gainNode.connect(this.outputNode);
+        }
+
+        // Create new source node
+        loop.sourceNode = ctx.createBufferSource();
+        loop.sourceNode.buffer = loop.buffer;
+        loop.sourceNode.loop = true;
+        loop.sourceNode.connect(loop.gainNode);
+
+        // Start from the stored offset
+        loop.sourceNode.start(0, loop.pausedAtOffset);
+        loop.startTime = ctx.currentTime - loop.pausedAtOffset;
+
+        // Clear pause state
+        loop.isPaused = false;
+        loop.pausedAtOffset = 0;
+    }
+
+    /**
+     * Pause all loops, storing their positions
+     */
+    pauseAll(): void {
+        this.loops.forEach(loop => this.pauseLoop(loop));
+    }
+
+    /**
+     * Resume all paused loops from their stored positions
+     */
+    resumeAll(): void {
+        this.loops.forEach(loop => this.resumeLoop(loop));
     }
 
     /**

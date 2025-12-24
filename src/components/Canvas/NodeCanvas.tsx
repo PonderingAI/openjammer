@@ -10,6 +10,7 @@ import { useAudioStore } from '../../store/audioStore';
 import { useKeybindingsStore } from '../../store/keybindingsStore';
 import { useCanvasNavigationStore } from '../../store/canvasNavigationStore';
 import { useUIFeedbackStore } from '../../store/uiFeedbackStore';
+import { useTransportStore } from '../../store/transportStore';
 import { getNodeDefinition } from '../../engine/registry';
 import { getPortPosition as calculatePortPosition } from '../../utils/portPositions';
 import { getConnectionBundleCount } from '../../utils/portSync';
@@ -596,6 +597,13 @@ export function NodeCanvas() {
                         exitToParent();
                     }
                     // At root level, Q silently does nothing (consistent with navigation being unavailable)
+                    return;
+                }
+
+                // Spacebar in config mode - toggle global play/pause for continuous sources
+                if (e.code === 'Space' && !e.repeat) {
+                    e.preventDefault();
+                    useTransportStore.getState().toggleGlobalPause();
                     return;
                 }
 

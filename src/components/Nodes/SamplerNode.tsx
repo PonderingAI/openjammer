@@ -1,21 +1,29 @@
 /**
- * Sampler Node - OUTSIDE view (like Looper pattern)
+ * Sampler Node - Row-based design like Instrument Node
  *
  * Layout:
- * [Control In] ─── [Sample waveform area] ─── [Audio Out]
- *              Offset: +0    Spread: 0.5
- *
- * The sample area shows waveform when loaded, accepts drops, and can be dragged out.
+ * ┌─────────────────────────────┐
+ * │        Sampler              │
+ * ├─────────────────────────────┤
+ * │  ┌─────────────────────┐    │
+ * │  │   [Waveform/Drop]   │    │
+ * │  └─────────────────────┘    │
+ * ├─────────────────────────────┤
+ * │ ⚪─ Row 1  G:1.0 S:1.0      │
+ * │ ⚪─ Row 2  G:1.0 S:0.5   ─⚪ │ (audio out)
+ * │ ⚪  (empty input)           │
+ * └─────────────────────────────┘
  */
 
-import { useCallback, useRef, useState, useEffect, memo } from 'react';
-import type { GraphNode, SamplerNodeData, AudioClip, ClipDropTarget } from '../../engine/types';
+import { useCallback, useRef, useState, useEffect, memo, useMemo } from 'react';
+import type { GraphNode, SamplerNodeData, SamplerRow, AudioClip, ClipDropTarget } from '../../engine/types';
 import { useGraphStore } from '../../store/graphStore';
 import { getItemFile } from '../../store/libraryStore';
 import { getAudioContext } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { useAudioClipStore, getClipBuffer } from '../../store/audioClipStore';
 import { loadClipAudio } from '../../utils/clipUtils';
+import { isSamplerNodeData } from '../../engine/typeGuards';
 
 interface SamplerNodeProps {
     node: GraphNode;
@@ -33,8 +41,12 @@ interface SamplerNodeProps {
     style?: React.CSSProperties;
 }
 
-// Type guard imported from shared module
-import { isSamplerNodeData } from '../../engine/typeGuards';
+/** Row parameter value ranges */
+const ROW_PARAM_RANGES = {
+    GAIN: { min: 0, max: 2, step: 0.1 },
+    SPREAD: { min: 0, max: 12, step: 0.5 },
+    OFFSET: { min: -24, max: 24, step: 1 },
+} as const;
 
 export const SamplerNode = memo(function SamplerNode({
     node,
@@ -59,16 +71,16 @@ export const SamplerNode = memo(function SamplerNode({
         decay: 0.1,
         sustain: 0.8,
         release: 0.3,
-        baseNote: 0,
-        baseOctave: 4,
-        baseOffset: 0,
-        spread: 0.5,
+        rows: [],
         velocityCurve: 'exponential',
         triggerMode: 'gate',
         loopEnabled: false,
         loopStart: 0,
         loopEnd: 0,
         maxVoices: 16,
+        // Store default row values for when keyboard connects
+        defaultGain: 1.0,
+        defaultSpread: 1.0,
     };
 
     const data: SamplerNodeData = isSamplerNodeData(node.data)
@@ -76,9 +88,9 @@ export const SamplerNode = memo(function SamplerNode({
         : defaultData;
 
     const updateNodeData = useGraphStore((s) => s.updateNodeData);
+    const updateSamplerRow = useGraphStore((s) => s.updateSamplerRow);
     const nodeRef = useRef<HTMLDivElement>(null);
     const sampleAreaRef = useRef<HTMLDivElement>(null);
-    const waveformRef = useRef<SVGSVGElement>(null);
 
     // Audio clip store for accepting clip drops
     const registerDropTarget = useAudioClipStore((s) => s.registerDropTarget);
@@ -88,9 +100,33 @@ export const SamplerNode = memo(function SamplerNode({
     const [isDragOver, setIsDragOver] = useState(false);
     const [waveformData, setWaveformData] = useState<number[]>([]);
 
+    // Get rows from data
+    const rows: SamplerRow[] = data.rows || [];
+
     // Get ports
-    const controlInPort = node.ports.find(p => p.id === 'control-in');
     const audioOutPort = node.ports.find(p => p.id === 'audio-out');
+
+    // Find empty port for new connections (bundle-in or any unconnected input port)
+    const emptyStatePort = useMemo(() => {
+        // If no rows, return the default bundle-in port
+        if (rows.length === 0) {
+            return node.ports.find(p => p.id === 'bundle-in' && p.direction === 'input');
+        }
+        return null;
+    }, [rows.length, node.ports]);
+
+    // Find available port for adding new rows
+    const availableNewRowPort = useMemo(() => {
+        if (rows.length === 0) return null;
+        // Find any control input port not already used by a row
+        const usedPortIds = new Set(rows.map(r => r.targetPortId));
+        return node.ports.find(p =>
+            p.direction === 'input' &&
+            p.type === 'control' &&
+            !usedPortIds.has(p.id) &&
+            !p.id.includes(':') // Skip composite port IDs
+        );
+    }, [rows, node.ports]);
 
     // Generate waveform data from audio buffer
     useEffect(() => {
@@ -104,7 +140,7 @@ export const SamplerNode = memo(function SamplerNode({
             const buffer = sampler.getBuffer();
             if (buffer) {
                 const channelData = buffer.getChannelData(0);
-                const samples = 50; // Number of points for waveform
+                const samples = 50;
                 const samplesPerPoint = Math.floor(channelData.length / samples);
                 const points: number[] = [];
 
@@ -131,21 +167,16 @@ export const SamplerNode = memo(function SamplerNode({
         }
 
         try {
-            // First check if buffer is in cache (for looper-originated clips)
             let buffer = getClipBuffer(clip.sampleId);
-
             if (!buffer) {
-                // Otherwise load from sample library (applies cropping too)
                 buffer = await loadClipAudio(clip, ctx);
             }
 
-            // Set the buffer on the sampler adapter
             const sampler = audioGraphManager.getSamplerAdapter(node.id);
             if (sampler) {
                 sampler.setBuffer(buffer);
             }
 
-            // Update node data with sample info
             updateNodeData(node.id, {
                 sampleId: clip.sampleId,
                 sampleName: clip.sampleName
@@ -178,7 +209,7 @@ export const SamplerNode = memo(function SamplerNode({
             nodeId: node.id,
             targetName: 'Sampler',
             onClipDrop: handleClipDrop,
-            canAcceptClip: () => true, // Accept any audio clip
+            canAcceptClip: () => true,
             getDropZoneBounds: () => sampleAreaRef.current?.getBoundingClientRect() ?? null,
         };
 
@@ -186,7 +217,6 @@ export const SamplerNode = memo(function SamplerNode({
         return () => unregisterDropTarget(node.id);
     }, [node.id, handleClipDrop, registerDropTarget, unregisterDropTarget]);
 
-    // Visual feedback when being dragged over with a clip
     const isClipDropTarget = clipDragState.hoveredTargetId === node.id;
 
     // Handle drag events for audio file drop zone
@@ -217,7 +247,27 @@ export const SamplerNode = memo(function SamplerNode({
                 try {
                     const arrayBuffer = await file.arrayBuffer();
                     if (ctx) {
-                        await ctx.decodeAudioData(arrayBuffer);
+                        const buffer = await ctx.decodeAudioData(arrayBuffer);
+                        const sampler = audioGraphManager.getSamplerAdapter(node.id);
+                        if (sampler) {
+                            sampler.setBuffer(buffer);
+                        }
+
+                        // Update waveform
+                        const channelData = buffer.getChannelData(0);
+                        const samples = 50;
+                        const samplesPerPoint = Math.floor(channelData.length / samples);
+                        const points: number[] = [];
+                        for (let i = 0; i < samples; i++) {
+                            let max = 0;
+                            const start = i * samplesPerPoint;
+                            for (let j = 0; j < samplesPerPoint; j++) {
+                                const val = Math.abs(channelData[start + j] || 0);
+                                if (val > max) max = val;
+                            }
+                            points.push(max);
+                        }
+                        setWaveformData(points);
                     }
                     updateNodeData(node.id, {
                         sampleName: file.name,
@@ -235,7 +285,30 @@ export const SamplerNode = memo(function SamplerNode({
         if (sampleId) {
             try {
                 const file = await getItemFile(sampleId);
-                if (file) {
+                if (file && ctx) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const buffer = await ctx.decodeAudioData(arrayBuffer);
+                    const sampler = audioGraphManager.getSamplerAdapter(node.id);
+                    if (sampler) {
+                        sampler.setBuffer(buffer);
+                    }
+
+                    // Update waveform
+                    const channelData = buffer.getChannelData(0);
+                    const samples = 50;
+                    const samplesPerPoint = Math.floor(channelData.length / samples);
+                    const points: number[] = [];
+                    for (let i = 0; i < samples; i++) {
+                        let max = 0;
+                        const start = i * samplesPerPoint;
+                        for (let j = 0; j < samplesPerPoint; j++) {
+                            const val = Math.abs(channelData[start + j] || 0);
+                            if (val > max) max = val;
+                        }
+                        points.push(max);
+                    }
+                    setWaveformData(points);
+
                     updateNodeData(node.id, {
                         sampleId,
                         sampleName: file.name
@@ -247,13 +320,6 @@ export const SamplerNode = memo(function SamplerNode({
         }
     }, [node.id, updateNodeData]);
 
-    // Handle drag-out of sample
-    const handleSampleDragStart = useCallback((e: React.MouseEvent) => {
-        if (!data.sampleId || !data.sampleName) return;
-        // For now just prevent the drag - could implement clip export later
-        e.preventDefault();
-    }, [data.sampleId, data.sampleName]);
-
     // Clear sample
     const handleClearSample = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
@@ -262,29 +328,60 @@ export const SamplerNode = memo(function SamplerNode({
             sampleName: null
         });
         setWaveformData([]);
+        const sampler = audioGraphManager.getSamplerAdapter(node.id);
+        if (sampler) {
+            sampler.setBuffer(null as unknown as AudioBuffer);
+        }
     }, [node.id, updateNodeData]);
 
-    // Wheel handlers for offset and spread
-    const handleOffsetWheel = useCallback((e: React.WheelEvent) => {
+    // Handle wheel on row control
+    const handleRowWheel = useCallback((rowId: string, field: keyof SamplerRow, e: React.WheelEvent) => {
         e.stopPropagation();
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const newOffset = Math.max(-24, Math.min(24, (data.baseOffset || 0) + delta));
-        updateNodeData(node.id, { baseOffset: newOffset });
-    }, [node.id, data.baseOffset, updateNodeData]);
+        const row = rows.find(r => r.rowId === rowId);
+        if (!row) return;
 
-    const handleSpreadWheel = useCallback((e: React.WheelEvent) => {
+        const currentValue = row[field] as number;
+        const delta = e.deltaY > 0 ? -1 : 1;
+
+        let min: number, max: number, step: number;
+        if (field === 'gain') {
+            min = ROW_PARAM_RANGES.GAIN.min;
+            max = ROW_PARAM_RANGES.GAIN.max;
+            step = ROW_PARAM_RANGES.GAIN.step;
+        } else if (field === 'spread') {
+            min = ROW_PARAM_RANGES.SPREAD.min;
+            max = ROW_PARAM_RANGES.SPREAD.max;
+            step = ROW_PARAM_RANGES.SPREAD.step;
+        } else {
+            min = ROW_PARAM_RANGES.OFFSET.min;
+            max = ROW_PARAM_RANGES.OFFSET.max;
+            step = ROW_PARAM_RANGES.OFFSET.step;
+        }
+
+        const newValue = Math.max(min, Math.min(max, currentValue + delta * step));
+        updateSamplerRow(node.id, rowId, { [field]: parseFloat(newValue.toFixed(1)) });
+    }, [rows, node.id, updateSamplerRow]);
+
+    // Handle wheel on default row controls (before any keyboard connected)
+    const handleDefaultRowWheel = useCallback((field: 'gain' | 'spread', e: React.WheelEvent) => {
         e.stopPropagation();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        const newSpread = Math.max(0, Math.min(1, (data.spread || 0.5) + delta));
-        updateNodeData(node.id, { spread: parseFloat(newSpread.toFixed(1)) });
-    }, [node.id, data.spread, updateNodeData]);
+        const currentValue = field === 'gain' ? (data.defaultGain ?? 1.0) : (data.defaultSpread ?? 1.0);
+        const delta = e.deltaY > 0 ? -1 : 1;
+
+        const ranges = field === 'gain' ? ROW_PARAM_RANGES.GAIN : ROW_PARAM_RANGES.SPREAD;
+        const newValue = Math.max(ranges.min, Math.min(ranges.max, currentValue + delta * ranges.step));
+
+        updateNodeData(node.id, {
+            [field === 'gain' ? 'defaultGain' : 'defaultSpread']: parseFloat(newValue.toFixed(1))
+        });
+    }, [data.defaultGain, data.defaultSpread, node.id, updateNodeData]);
 
     const hasSample = !!data.sampleName;
 
     return (
         <div
             ref={nodeRef}
-            className={`schematic-node sampler-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isHoveredWithConnections ? 'hover-connecting' : ''}`}
+            className={`sampler-node schematic-node ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isHoveredWithConnections ? 'hover-connecting' : ''}`}
             style={style}
             onMouseEnter={handleNodeMouseEnter}
             onMouseLeave={handleNodeMouseLeave}
@@ -294,68 +391,144 @@ export const SamplerNode = memo(function SamplerNode({
                 <span className="schematic-title">Sampler</span>
             </div>
 
-            {/* Main row: Control In - Sample Area - Audio Out */}
-            <div className="sampler-main-row">
-                {/* Control input port */}
-                {controlInPort && (
-                    <div
-                        className={`sampler-input-port ${hasConnection?.(controlInPort.id) ? 'connected' : ''}`}
-                        data-node-id={node.id}
-                        data-port-id={controlInPort.id}
-                        onMouseDown={(e) => handlePortMouseDown?.(controlInPort.id, e)}
-                        onMouseUp={(e) => handlePortMouseUp?.(controlInPort.id, e)}
-                        onMouseEnter={() => handlePortMouseEnter?.(controlInPort.id)}
-                        onMouseLeave={handlePortMouseLeave}
-                        title="Control input (connect keyboard/MIDI)"
-                    />
-                )}
-
-                {/* Sample area - like looper-loop-item */}
-                <div
-                    ref={sampleAreaRef}
-                    className={`sampler-sample-area ${isDragOver || isClipDropTarget ? 'drag-over' : ''} ${hasSample ? 'has-sample' : ''}`}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onMouseDown={hasSample ? handleSampleDragStart : undefined}
-                    style={{ cursor: hasSample ? 'grab' : 'default' }}
-                    title={data.sampleName || 'Drop audio file or clip here'}
-                >
-                    {hasSample ? (
-                        <>
-                            <svg ref={waveformRef} viewBox="0 0 100 20" preserveAspectRatio="none">
-                                {waveformData.length > 1 ? (
-                                    <polyline
-                                        className="sampler-waveform-path"
-                                        fill="none"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        points={waveformData.map((v, i) =>
-                                            `${(i / (waveformData.length - 1)) * 100},${10 - v * 8}`
-                                        ).join(' ')}
-                                    />
-                                ) : (
-                                    <line x1="0" y1="10" x2="100" y2="10" className="sampler-waveform-path" />
-                                )}
+            {/* Sample drop zone */}
+            <div
+                ref={sampleAreaRef}
+                className={`sampler-sample-area ${isDragOver || isClipDropTarget ? 'drag-over' : ''} ${hasSample ? 'has-sample' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                title={data.sampleName || 'Drop audio file or clip here'}
+            >
+                {hasSample ? (
+                    <>
+                        <svg viewBox="0 0 100 20" preserveAspectRatio="none">
+                            {waveformData.length > 1 ? (
+                                <polyline
+                                    className="sampler-waveform-path"
+                                    fill="none"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={waveformData.map((v, i) =>
+                                        `${(i / (waveformData.length - 1)) * 100},${10 - v * 8}`
+                                    ).join(' ')}
+                                />
+                            ) : (
+                                <line x1="0" y1="10" x2="100" y2="10" className="sampler-waveform-path" />
+                            )}
+                        </svg>
+                        <button
+                            className="sampler-clear-btn"
+                            onClick={handleClearSample}
+                            title="Remove sample"
+                        >
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                             </svg>
-                            {/* Clear button on hover */}
-                            <button
-                                className="sampler-clear-btn"
-                                onClick={handleClearSample}
-                                title="Remove sample"
-                            >
-                                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
-                                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                                </svg>
-                            </button>
-                        </>
+                        </button>
+                        <span className="sampler-sample-name">{data.sampleName}</span>
+                    </>
+                ) : (
+                    <span className="sampler-drop-text">Drop audio</span>
+                )}
+            </div>
+
+            {/* Main body - row layout like InstrumentNode */}
+            <div className="sampler-schematic-body">
+                {/* Rows container */}
+                <div className="sampler-rows-simple">
+                    {rows.length === 0 ? (
+                        /* Default row - always visible with controls */
+                        emptyStatePort && (
+                            <div className="sampler-row-simple">
+                                {/* Input port for keyboard bundle */}
+                                <div
+                                    className="bundle-input-port empty"
+                                    data-node-id={node.id}
+                                    data-port-id={emptyStatePort.id}
+                                    onMouseDown={(e) => handlePortMouseDown?.(emptyStatePort.id, e)}
+                                    onMouseUp={(e) => handlePortMouseUp?.(emptyStatePort.id, e)}
+                                    onMouseEnter={() => handlePortMouseEnter?.(emptyStatePort.id)}
+                                    onMouseLeave={handlePortMouseLeave}
+                                    title="Connect keyboard bundle"
+                                />
+
+                                {/* Row controls: Gain and Spread - editable even before keyboard connected */}
+                                <span
+                                    className="row-value gain-value editable-value"
+                                    onWheel={(e) => handleDefaultRowWheel('gain', e)}
+                                    title="Gain (0-2) - scroll to change"
+                                >
+                                    G:{(data.defaultGain ?? 1.0).toFixed(1)}
+                                </span>
+                                <span
+                                    className="row-value spread-value editable-value"
+                                    onWheel={(e) => handleDefaultRowWheel('spread', e)}
+                                    title="Spread (semitones between keys) - scroll to change"
+                                >
+                                    S:{(data.defaultSpread ?? 1.0).toFixed(1)}
+                                </span>
+                            </div>
+                        )
                     ) : (
-                        <span className="sampler-drop-text">Drop audio</span>
+                        /* Show rows with connections */
+                        <>
+                            {rows.map((row, index) => {
+                                const rowPort = node.ports.find(p => p.id === row.targetPortId);
+
+                                return (
+                                    <div key={row.rowId} className={`sampler-row-simple ${index > 0 ? 'with-divider' : ''}`}>
+                                        {/* Input port for this row's bundle */}
+                                        <div
+                                            className={`bundle-input-port ${rowPort && hasConnection?.(rowPort.id) ? 'connected' : ''}`}
+                                            data-node-id={node.id}
+                                            data-port-id={rowPort?.id || 'bundle-in'}
+                                            onMouseDown={(e) => handlePortMouseDown?.(rowPort?.id || 'bundle-in', e)}
+                                            onMouseUp={(e) => handlePortMouseUp?.(rowPort?.id || 'bundle-in', e)}
+                                            onMouseEnter={() => handlePortMouseEnter?.(rowPort?.id || 'bundle-in')}
+                                            onMouseLeave={handlePortMouseLeave}
+                                            title={row.label || 'Bundle input'}
+                                        />
+
+                                        {/* Row controls: Gain and Spread */}
+                                        <span
+                                            className="row-value gain-value editable-value"
+                                            onWheel={(e) => handleRowWheel(row.rowId, 'gain', e)}
+                                            title="Gain (0-2) - scroll to change"
+                                        >
+                                            G:{row.gain.toFixed(1)}
+                                        </span>
+                                        <span
+                                            className="row-value spread-value editable-value"
+                                            onWheel={(e) => handleRowWheel(row.rowId, 'spread', e)}
+                                            title="Spread (semitones between keys) - scroll to change"
+                                        >
+                                            S:{row.spread.toFixed(1)}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                            {/* Empty row for adding new connections */}
+                            {availableNewRowPort && (
+                                <div className="sampler-row-simple empty-row with-divider">
+                                    <div
+                                        className="bundle-input-port empty"
+                                        data-node-id={node.id}
+                                        data-port-id={availableNewRowPort.id}
+                                        onMouseDown={(e) => handlePortMouseDown?.(availableNewRowPort.id, e)}
+                                        onMouseUp={(e) => handlePortMouseUp?.(availableNewRowPort.id, e)}
+                                        onMouseEnter={() => handlePortMouseEnter?.(availableNewRowPort.id)}
+                                        onMouseLeave={handlePortMouseLeave}
+                                        title="Connect keyboard bundle"
+                                    />
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 
-                {/* Audio output port */}
+                {/* Output port on right */}
                 {audioOutPort && (
                     <div
                         className={`sampler-output-port ${hasConnection?.(audioOutPort.id) ? 'connected' : ''}`}
@@ -368,24 +541,6 @@ export const SamplerNode = memo(function SamplerNode({
                         title="Audio output"
                     />
                 )}
-            </div>
-
-            {/* Controls row: Offset and Spread */}
-            <div className="sampler-controls-row">
-                <span
-                    className="sampler-control-value"
-                    onWheel={handleOffsetWheel}
-                    title="Offset (semitones) - scroll to adjust"
-                >
-                    {(data.baseOffset || 0) >= 0 ? `+${data.baseOffset || 0}` : data.baseOffset}
-                </span>
-                <span
-                    className="sampler-control-value"
-                    onWheel={handleSpreadWheel}
-                    title="Spread - scroll to adjust"
-                >
-                    {(data.spread ?? 0.5).toFixed(1)}
-                </span>
             </div>
         </div>
     );

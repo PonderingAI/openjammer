@@ -380,7 +380,7 @@ export function getBundleSizeFromSourcePort(
 export function isInstrumentNode(node: GraphNode): boolean {
     const instrumentTypes = [
         'piano', 'cello', 'electricCello', 'violin', 'saxophone',
-        'strings', 'keys', 'winds', 'instrument'
+        'strings', 'keys', 'winds', 'instrument', 'sampler'
     ];
     return instrumentTypes.includes(node.type);
 }

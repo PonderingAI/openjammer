@@ -2,14 +2,46 @@
  * Help Panel - Keyboard shortcuts, mode indicator, and tips
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAudioStore } from '../../store/audioStore';
 
+const HELP_DISMISSED_KEY = 'openjammer:help-dismissed';
+
 export function HelpPanel() {
-    const [isVisible, setIsVisible] = useState(false);
+    // Default to visible, but check localStorage for dismissed state
+    const [isVisible, setIsVisible] = useState(() => {
+        const dismissed = localStorage.getItem(HELP_DISMISSED_KEY);
+        return dismissed !== 'true';
+    });
 
     const currentMode = useAudioStore((s) => s.currentMode);
     const isModeUnassigned = useAudioStore((s) => s.isModeUnassigned);
+
+    // Handle close and persist to localStorage
+    const handleClose = useCallback(() => {
+        setIsVisible(false);
+        localStorage.setItem(HELP_DISMISSED_KEY, 'true');
+    }, []);
+
+    // Handle toggle from View menu
+    const handleToggle = useCallback(() => {
+        setIsVisible((prev) => {
+            const newValue = !prev;
+            if (!newValue) {
+                localStorage.setItem(HELP_DISMISSED_KEY, 'true');
+            } else {
+                localStorage.removeItem(HELP_DISMISSED_KEY);
+            }
+            return newValue;
+        });
+    }, []);
+
+    // Listen for toggle event from toolbar
+    useEffect(() => {
+        const handler = () => handleToggle();
+        window.addEventListener('openjammer:toggle-help', handler);
+        return () => window.removeEventListener('openjammer:toggle-help', handler);
+    }, [handleToggle]);
 
     // Get mode description
     const getModeLabel = () => {
@@ -21,15 +53,15 @@ export function HelpPanel() {
         return (
             <button
                 className={`toolbar-btn help-btn-minimized ${isModeUnassigned ? 'warning' : ''}`}
-                onClick={() => setIsVisible(true)}
+                onClick={handleToggle}
                 style={{
                     position: 'fixed',
                     bottom: 'var(--space-md)',
-                    left: 'var(--space-md)',
+                    right: 'var(--space-md)',
                     background: 'var(--bg-node)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: 'var(--radius-lg)',
-                    zIndex: 100
+                    zIndex: 50
                 }}
             >
                 {isModeUnassigned ? '⚠️' : '❓'} Help
@@ -42,7 +74,7 @@ export function HelpPanel() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3>🎹 OpenJammer</h3>
                 <button
-                    onClick={() => setIsVisible(false)}
+                    onClick={handleClose}
                     style={{
                         background: 'none',
                         border: 'none',
