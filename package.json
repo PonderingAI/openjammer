@@ -27,7 +27,9 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "create-node": "bun scripts/create-node.ts",
+    "validate-nodes": "bun scripts/validate-nodes.ts"
   },
   "dependencies": {
     "@tonejs/piano": "^0.2.1",
