@@ -333,7 +333,8 @@ function App() {
     try {
       await initAudioContext({
         sampleRate: audioConfig.sampleRate,
-        latencyHint: audioConfig.latencyHint
+        latencyHint: audioConfig.latencyHint,
+        lowLatencyMode: audioConfig.lowLatencyMode
       });
       setAudioContextReady(true);
       setShowActivation(false);

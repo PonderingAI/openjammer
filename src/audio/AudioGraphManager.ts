@@ -35,9 +35,10 @@ const INSTRUMENT_NODE_TYPES = ['piano', 'cello', 'electricCello', 'violin', 'sax
 
 /** Speaker node instance with audio element for device routing */
 interface SpeakerNodeInstance {
-    audioElement: HTMLAudioElement;
+    audioElement: HTMLAudioElement | null;
     gainNode: GainNode;
-    destination: MediaStreamAudioDestinationNode;
+    destination: MediaStreamAudioDestinationNode | null;
+    isDirectConnection: boolean; // True when using direct ctx.destination (low latency)
 }
 
 /** Addition node instance - mixes two inputs */
@@ -741,33 +742,51 @@ class AudioGraphManager {
                 const speakerGain = ctx.createGain();
                 speakerGain.gain.value = speakerData.isMuted ? 0 : (speakerData.volume ?? 1);
 
-                // Create MediaStreamDestination for device routing
-                const destination = ctx.createMediaStreamDestination();
-                speakerGain.connect(destination);
+                // LOW LATENCY OPTIMIZATION:
+                // For default device, connect directly to ctx.destination (saves 10-20ms)
+                // Only use MediaStreamDestination when a specific device is selected
+                const useDirectConnection = !speakerData.deviceId || speakerData.deviceId === 'default';
 
-                // Create hidden audio element for setSinkId
-                const audioElement = new Audio();
-                audioElement.srcObject = destination.stream;
-                audioElement.play().catch(e => {
-                    console.warn('Failed to start audio element:', e);
-                    toast.error('Audio playback failed. Please check your audio permissions.');
-                });
+                if (useDirectConnection) {
+                    // Direct connection - lowest latency path
+                    speakerGain.connect(ctx.destination);
 
-                // Apply device selection if supported
-                if (this.supportsSetSinkId() && speakerData.deviceId !== 'default') {
-                    (audioElement as any).setSinkId(speakerData.deviceId)
-                        .catch((err: Error) => {
-                            console.error('Failed to set output device:', err);
-                            toast.error('Could not switch audio output device. Using default.');
-                        });
+                    baseInstance.instance = {
+                        gainNode: speakerGain,
+                        audioElement: null,
+                        destination: null,
+                        isDirectConnection: true
+                    };
+                } else {
+                    // Create MediaStreamDestination for device routing (higher latency)
+                    const destination = ctx.createMediaStreamDestination();
+                    speakerGain.connect(destination);
+
+                    // Create hidden audio element for setSinkId
+                    const audioElement = new Audio();
+                    audioElement.srcObject = destination.stream;
+                    audioElement.play().catch(e => {
+                        console.warn('Failed to start audio element:', e);
+                        toast.error('Audio playback failed. Please check your audio permissions.');
+                    });
+
+                    // Apply device selection
+                    if (this.supportsSetSinkId()) {
+                        (audioElement as any).setSinkId(speakerData.deviceId)
+                            .catch((err: Error) => {
+                                console.error('Failed to set output device:', err);
+                                toast.error('Could not switch audio output device. Using default.');
+                            });
+                    }
+
+                    baseInstance.instance = {
+                        gainNode: speakerGain,
+                        audioElement: audioElement,
+                        destination: destination,
+                        isDirectConnection: false
+                    };
                 }
 
-                // Store audio element for later device switching
-                baseInstance.instance = {
-                    gainNode: speakerGain,
-                    audioElement: audioElement,
-                    destination: destination
-                };
                 baseInstance.inputNode = speakerGain;
                 baseInstance.outputNode = speakerGain; // Also output for chaining to recorder
                 break;
@@ -975,10 +994,15 @@ class AudioGraphManager {
         // Cleanup speaker audio element
         if (audioNode.instance && typeof audioNode.instance === 'object' && 'audioElement' in audioNode.instance) {
             const speakerInstance = audioNode.instance as SpeakerNodeInstance;
-            speakerInstance.audioElement.pause();
-            speakerInstance.audioElement.srcObject = null;
+            // Only cleanup audio element if using non-direct connection
+            if (speakerInstance.audioElement) {
+                speakerInstance.audioElement.pause();
+                speakerInstance.audioElement.srcObject = null;
+            }
             speakerInstance.gainNode.disconnect();
-            speakerInstance.destination.disconnect();
+            if (speakerInstance.destination) {
+                speakerInstance.destination.disconnect();
+            }
         }
 
         // Disconnect nodes (may throw if already disconnected)

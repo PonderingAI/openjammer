@@ -61,7 +61,8 @@ export function AudioSettingsPanel() {
             // Reinitialize audio context with new settings
             await reinitAudioContext({
                 sampleRate: pendingConfig.sampleRate,
-                latencyHint: pendingConfig.latencyHint
+                latencyHint: pendingConfig.latencyHint,
+                lowLatencyMode: pendingConfig.lowLatencyMode
             });
 
             // Mark audio context as ready again - this triggers App.tsx to reinitialize
