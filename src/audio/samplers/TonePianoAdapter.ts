@@ -1,54 +1,67 @@
 /**
- * TonePianoAdapter - Adapter for @tonejs/piano (professional piano with 16 velocity layers)
+ * TonePianoAdapter - Professional piano using Tone.Sampler with Salamander samples
  *
- * CRITICAL: @tonejs/piano uses Tone.js internally. We MUST:
- * 1. Call Tone.setContext() with our AudioContext BEFORE creating Piano
- * 2. Use Tone.js nodes for connections (not native GainNode)
- * 3. Use Tone.connect() to bridge to native Web Audio nodes
+ * Uses Salamander Grand Piano samples (same as @tonejs/piano) but loaded directly
+ * via Tone.Sampler for compatibility with Tone.js 15.x
+ *
+ * IMPORTANT: Tone.js is dynamically imported to avoid AudioContext creation
+ * before user gesture. This prevents browser autoplay warnings.
  */
 
-import * as Tone from 'tone';
 import { SampledInstrument } from './SampledInstrument';
 import { getAudioContext, ensureToneStarted } from '../AudioEngine';
 import { ConvolutionReverb } from '../ConvolutionReverb';
 import type { EnvelopeConfig } from './types';
 
+// Tone.js types (imported dynamically to avoid eager AudioContext creation)
+type ToneType = typeof import('tone');
+type ToneSampler = import('tone').Sampler;
+type ToneGain = import('tone').Gain;
+
 // ============================================================================
 // Constants
 // ============================================================================
 
+/** Base URL for Salamander piano samples */
+const SALAMANDER_BASE_URL = 'https://tambien.github.io/Piano/audio/';
+
 /** Timeout for sample loading (30 seconds) */
 const SAMPLE_LOAD_TIMEOUT_MS = 30000;
 
-// Interface for @tonejs/piano (dynamically imported)
-interface PianoInstance {
-  load(): Promise<void>;
-  keyDown(options: { note: string; velocity?: number; time?: number }): void;
-  keyUp(options: { note: string; time?: number }): void;
-  pedalDown(time?: number): void;
-  pedalUp(time?: number): void;
-  connect(dest: Tone.ToneAudioNode): this;
-  disconnect(): this;
-  dispose(): void;
-  toDestination(): this;
-}
+/**
+ * Salamander sample mapping
+ * Keys: Standard note names for Tone.Sampler (D#1, F#1)
+ * Values: Salamander file names (Ds1, Fs1) - they use 's' instead of '#'
+ */
+const SAMPLE_MAP: Record<string, string> = {
+  'A0': 'A0', 'C1': 'C1', 'D#1': 'Ds1', 'F#1': 'Fs1', 'A1': 'A1',
+  'C2': 'C2', 'D#2': 'Ds2', 'F#2': 'Fs2', 'A2': 'A2',
+  'C3': 'C3', 'D#3': 'Ds3', 'F#3': 'Fs3', 'A3': 'A3',
+  'C4': 'C4', 'D#4': 'Ds4', 'F#4': 'Fs4', 'A4': 'A4',
+  'C5': 'C5', 'D#5': 'Ds5', 'F#5': 'Fs5', 'A5': 'A5',
+  'C6': 'C6', 'D#6': 'Ds6', 'F#6': 'Fs6', 'A6': 'A6',
+  'C7': 'C7', 'D#7': 'Ds7', 'F#7': 'Fs7', 'A7': 'A7',
+  'C8': 'C8'
+};
 
 interface TonePianoConfig {
   velocities?: 1 | 4 | 5 | 16;
   envelope?: EnvelopeConfig;
 }
 
-export class TonePianoInstrument extends SampledInstrument<boolean> {
-  private piano: PianoInstance | null = null;
+export class TonePianoInstrument extends SampledInstrument<ToneSampler> {
+  private sampler: ToneSampler | null = null;
   private config: TonePianoConfig;
-  private toneGain: Tone.Gain | null = null; // Use Tone.Gain instead of native GainNode
+  private toneGain: ToneGain | null = null;
+  private Tone: ToneType | null = null; // Dynamically imported
   private resonance: ConvolutionReverb | null = null;
   private isPedalDown: boolean = false;
+  private sustainedNotes: Set<string> = new Set();
 
   constructor(config: TonePianoConfig = {}) {
     super();
     this.config = {
-      velocities: config.velocities ?? 5, // Default to 5 layers (good balance)
+      velocities: config.velocities ?? 5,
       envelope: config.envelope
     };
   }
@@ -58,24 +71,34 @@ export class TonePianoInstrument extends SampledInstrument<boolean> {
     if (!ctx) throw new Error('AudioContext not available');
 
     try {
-      // CRITICAL: Ensure Tone.js is initialized with our shared AudioContext
-      // Uses the single source of truth from AudioEngine to prevent race conditions
       await ensureToneStarted();
 
-      // Dynamic import to avoid module loading errors
-      const { Piano } = await import('@tonejs/piano').catch((importErr) => {
-        console.error('[TonePiano] Failed to load @tonejs/piano module:', importErr);
-        throw new Error('Piano library failed to load. Check network connection or dependencies.');
+      // Dynamically import Tone.js to avoid AudioContext creation before user gesture
+      this.Tone = await import('tone');
+
+      // Build sample map: note -> URL
+      // Use velocity layer based on config (higher = more dynamic range but larger download)
+      const velocityLayer = Math.min(this.config.velocities ?? 5, 16);
+      const urls: Record<string, string> = {};
+
+      for (const [toneNote, fileNote] of Object.entries(SAMPLE_MAP)) {
+        // Salamander naming: A0v1.mp3, C4v5.mp3, Ds1v5.mp3, etc.
+        urls[toneNote] = `${fileNote}v${velocityLayer}.mp3`;
+      }
+
+      // Create sampler with timeout
+      const Tone = this.Tone;
+      const loadPromise = new Promise<ToneSampler>((resolve, reject) => {
+        const sampler = new Tone.Sampler({
+          urls,
+          baseUrl: SALAMANDER_BASE_URL,
+          onload: () => resolve(sampler),
+          onerror: (err) => reject(err),
+          // Piano-like release
+          release: 1.5
+        });
       });
 
-      // Create Piano instance (now uses our AudioContext via Tone.setContext)
-      this.piano = new Piano({
-        velocities: this.config.velocities
-      }) as PianoInstance;
-
-      // Wait for samples to load with timeout
-      // Properly clean up timeout to prevent dangling timer (memory leak fix)
-      const loadPromise = this.piano.load();
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(
@@ -85,32 +108,25 @@ export class TonePianoInstrument extends SampledInstrument<boolean> {
       });
 
       try {
-        await Promise.race([loadPromise, timeoutPromise]);
+        this.sampler = await Promise.race([loadPromise, timeoutPromise]);
       } finally {
         if (timeoutId !== null) {
           clearTimeout(timeoutId);
         }
       }
 
-      // Create Tone.Gain for piano output (Tone.js nodes work with Piano)
+      // Create output chain
       this.toneGain = new Tone.Gain(1);
-
-      // Create convolution reverb for sympathetic resonance
       this.resonance = new ConvolutionReverb(ctx);
 
-      // Connect piano to our chain using Tone.js patterns
-      // Route: piano → toneGain → resonance → outputNode
+      // Connect: sampler → toneGain → resonance → outputNode
       if (this.outputNode) {
-        // Connect Piano to Tone.Gain
-        this.piano.connect(this.toneGain);
-
-        // Bridge from Tone.js to native Web Audio using Tone.connect()
-        // toneGain → resonance input (native GainNode)
+        this.sampler.connect(this.toneGain);
         Tone.connect(this.toneGain, this.resonance.getInput());
-
-        // resonance output → our outputNode (native GainNode)
         this.resonance.getOutput().connect(this.outputNode);
       }
+
+      console.log('[TonePiano] Salamander piano loaded successfully');
     } catch (error) {
       console.error('[TonePiano] Error during initialization:', error);
       throw error;
@@ -118,45 +134,38 @@ export class TonePianoInstrument extends SampledInstrument<boolean> {
   }
 
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
-    const ctx = getAudioContext();
-    if (!this.piano || !ctx) return;
+    if (!this.sampler || !this.Tone) return;
 
-    // Trigger piano note (time omitted for immediate playback)
-    this.piano.keyDown({
-      note,
-      velocity
-    });
-
-    this.activeNotes.set(note, true);
+    // Tone.Sampler uses attack velocity
+    this.sampler.triggerAttack(note, this.Tone.now(), velocity);
+    this.activeNotes.set(note, this.sampler);
   }
 
   protected stopNoteImpl(note: string): void {
-    const ctx = getAudioContext();
-    if (!this.piano || !ctx) return;
+    if (!this.sampler || !this.Tone) return;
 
-    // Trigger piano key up (time omitted for immediate release)
-    // @tonejs/piano has built-in release handling
-    this.piano.keyUp({
-      note
-    });
+    // If pedal is down, add to sustained notes instead of releasing
+    if (this.isPedalDown) {
+      this.sustainedNotes.add(note);
+    } else {
+      this.sampler.triggerRelease(note, this.Tone.now());
+    }
 
     this.activeNotes.delete(note);
   }
 
-  // Pedal control for sympathetic resonance
   setPedal(down: boolean): void {
-    if (!this.piano) return;
-
     this.isPedalDown = down;
 
-    // Use @tonejs/piano's built-in pedal support
-    if (down) {
-      this.piano.pedalDown();
-    } else {
-      this.piano.pedalUp();
+    if (!down && this.sampler && this.Tone) {
+      // Release all sustained notes when pedal comes up
+      for (const note of this.sustainedNotes) {
+        this.sampler.triggerRelease(note, this.Tone.now());
+      }
+      this.sustainedNotes.clear();
     }
 
-    // Also control convolution reverb for sympathetic resonance
+    // Control convolution reverb for sympathetic resonance
     this.resonance?.setPedalDown(down);
   }
 
@@ -165,26 +174,22 @@ export class TonePianoInstrument extends SampledInstrument<boolean> {
   }
 
   disconnect(): void {
-    // Release all playing notes first
     this.stopAllNotes();
+    this.sustainedNotes.clear();
 
-    // Disconnect resonance
     if (this.resonance) {
       this.resonance.disconnect();
       this.resonance = null;
     }
 
-    // Disconnect and dispose Tone.Gain
     if (this.toneGain) {
       this.toneGain.dispose();
       this.toneGain = null;
     }
 
-    // Disconnect and dispose piano
-    if (this.piano) {
-      this.piano.disconnect();
-      this.piano.dispose();
-      this.piano = null;
+    if (this.sampler) {
+      this.sampler.dispose();
+      this.sampler = null;
     }
 
     super.disconnect();

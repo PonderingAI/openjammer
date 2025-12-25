@@ -111,7 +111,7 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    exclude: ['@tonejs/piano', 'webaudiofont']
+    exclude: ['webaudiofont']
   },
   // Worker configuration for AudioWorklet modules
   worker: {

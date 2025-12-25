@@ -1,14 +1,40 @@
 /**
  * Audio Settings Panel - Configure audio latency and devices
+ * Enhanced with detailed latency monitoring and smart warnings
  */
 
 import { useState, useEffect } from 'react';
 import { useAudioStore } from '../../store/audioStore';
+import type { LatencyClassification } from '../../store/audioStore';
 import { reinitAudioContext, getLatencyMetrics, startLatencyMonitoring } from '../../audio/AudioEngine';
 import { audioGraphManager } from '../../audio/AudioGraphManager';
 import { LowLatencyGuide } from '../Guides';
 import { useLowLatencyGuide } from '../../store/guideStore';
 import './AudioSettingsPanel.css';
+
+// Friendly messages for each latency classification
+const LATENCY_MESSAGES: Record<LatencyClassification, { message: string; hint: string }> = {
+    excellent: {
+        message: 'Perfect for real-time performance',
+        hint: 'Professional-grade latency'
+    },
+    good: {
+        message: 'Great for playing instruments',
+        hint: 'Most musicians won\'t notice any delay'
+    },
+    acceptable: {
+        message: 'Usable with slight delay',
+        hint: 'Fine for practice, consider optimizing for recording'
+    },
+    poor: {
+        message: 'Noticeable delay',
+        hint: 'May affect timing - try enabling Low Latency Mode'
+    },
+    bad: {
+        message: 'High latency detected',
+        hint: 'Not recommended for live playing'
+    }
+};
 
 export function AudioSettingsPanel() {
     const audioConfig = useAudioStore((s) => s.audioConfig);
@@ -124,30 +150,80 @@ export function AudioSettingsPanel() {
                 </div>
             )}
 
-            {/* Latency Metrics */}
+            {/* Enhanced Latency Status */}
             {isAudioContextReady && (
-                <div className="audio-metrics-section">
-                    <h3>Current Latency</h3>
-                    <div className="metrics-grid">
-                        <div className="metric-card">
-                            <span className="metric-label">Base Latency</span>
-                            <span className="metric-value">
-                                {audioMetrics.baseLatency.toFixed(1)} ms
+                <div className="latency-status-section">
+                    <div className="latency-status-card">
+                        <div className={`latency-status-indicator ${audioMetrics.classification}`}>
+                            <span className={`latency-value-large ${audioMetrics.classification}`}>
+                                {audioMetrics.estimatedRoundTrip.toFixed(0)}
                             </span>
+                            <span className="latency-label-small">ms round-trip</span>
                         </div>
-                        <div className="metric-card">
-                            <span className="metric-label">Output Latency</span>
-                            <span className="metric-value">
-                                {audioMetrics.outputLatency.toFixed(1)} ms
-                            </span>
-                        </div>
-                        <div className="metric-card total">
-                            <span className="metric-label">Total Latency</span>
-                            <span className="metric-value">
-                                {audioMetrics.totalLatency.toFixed(1)} ms
-                            </span>
+                        <div className="latency-status-info">
+                            <div className="latency-status-message">
+                                {LATENCY_MESSAGES[audioMetrics.classification].message}
+                            </div>
+                            <div className="latency-status-hint">
+                                {LATENCY_MESSAGES[audioMetrics.classification].hint}
+                            </div>
                         </div>
                     </div>
+
+                    {/* Bluetooth Warning */}
+                    {audioMetrics.isBluetoothSuspected && (
+                        <div className="bluetooth-warning">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                            </svg>
+                            <span>Bluetooth audio detected - connect wired headphones for lower latency</span>
+                        </div>
+                    )}
+
+                    {/* Detailed Breakdown (expandable) */}
+                    <details className="latency-breakdown">
+                        <summary>View detailed breakdown</summary>
+                        <div className="latency-breakdown-content">
+                            <div className="latency-breakdown-row">
+                                <span className="breakdown-label">Browser Processing</span>
+                                <span className="breakdown-value">{audioMetrics.baseLatency.toFixed(1)} ms</span>
+                            </div>
+                            <div className="latency-breakdown-row">
+                                <span className="breakdown-label">Audio Output Device</span>
+                                <span className="breakdown-value">{audioMetrics.outputLatency.toFixed(1)} ms</span>
+                            </div>
+                            <div className="latency-breakdown-row">
+                                <span className="breakdown-label">Tone.js Scheduler</span>
+                                <span className="breakdown-value">{audioMetrics.toneJsLookAhead.toFixed(1)} ms</span>
+                            </div>
+                            <div className="latency-breakdown-row">
+                                <span className="breakdown-label">Sample Rate</span>
+                                <span className="breakdown-value">{(audioMetrics.sampleRate / 1000).toFixed(1)} kHz</span>
+                            </div>
+                            <div className="latency-breakdown-row total">
+                                <span className="breakdown-label">Estimated Round-Trip</span>
+                                <span className="breakdown-value highlight">{audioMetrics.estimatedRoundTrip.toFixed(1)} ms</span>
+                            </div>
+                        </div>
+                    </details>
+
+                    {/* Suggestions for poor/bad latency */}
+                    {(audioMetrics.classification === 'poor' || audioMetrics.classification === 'bad') && !audioConfig.lowLatencyMode && (
+                        <div className="latency-suggestions">
+                            <h4>
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                    <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/>
+                                </svg>
+                                How to reduce latency
+                            </h4>
+                            <ul>
+                                <li>Enable <strong>Low Latency Mode</strong> below</li>
+                                <li>Use wired headphones instead of Bluetooth</li>
+                                <li>Close other audio applications</li>
+                                <li>Use a USB audio interface (like Focusrite Scarlett)</li>
+                            </ul>
+                        </div>
+                    )}
                 </div>
             )}
 

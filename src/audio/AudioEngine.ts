@@ -1,12 +1,17 @@
 /**
  * Audio Engine - Singleton managing Web Audio API
+ *
+ * IMPORTANT: Tone.js is dynamically imported to avoid AudioContext creation
+ * before user gesture. This prevents browser autoplay warnings.
  */
 
-import * as Tone from 'tone';
+// Tone.js types (imported dynamically to avoid eager AudioContext creation)
+type ToneType = typeof import('tone');
 
 let audioContext: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 let toneInitialized = false;
+let cachedTone: ToneType | null = null;
 
 /** Promise to track ongoing initialization (prevents race condition) */
 let initializationPromise: Promise<AudioContext> | null = null;
@@ -21,10 +26,17 @@ export interface AudioContextConfig {
     lowLatencyMode?: boolean; // When true, requests 5ms latency for USB interfaces
 }
 
+export type LatencyClassification = 'excellent' | 'good' | 'acceptable' | 'poor' | 'bad';
+
 export interface LatencyMetrics {
-    baseLatency: number; // ms
-    outputLatency: number; // ms
-    totalLatency: number; // ms
+    baseLatency: number;           // ms - browser processing overhead
+    outputLatency: number;         // ms - output device delay
+    totalLatency: number;          // ms - combined one-way latency
+    toneJsLookAhead: number;       // ms - Tone.js scheduling buffer
+    estimatedRoundTrip: number;    // ms - total perceived latency for live playing
+    classification: LatencyClassification;
+    isBluetoothSuspected: boolean; // true if outputLatency > 100ms
+    sampleRate: number;            // Hz - current sample rate
 }
 
 // ============================================================================
@@ -55,10 +67,11 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
     initializationPromise = (async () => {
         try {
             // LOW LATENCY OPTIMIZATION:
-            // When lowLatencyMode is enabled, request 5ms latency (0.005s)
-            // This works better with USB audio interfaces than 'interactive'
+            // When lowLatencyMode is enabled, request absolute minimum latency (0)
+            // This tells the browser to use the smallest possible buffer size
+            // Research shows 0 achieves ~10ms lower latency than 'interactive' on Chrome
             const latencyHint = config?.lowLatencyMode
-                ? 0.005 // 5ms target for USB interfaces
+                ? 0 // Absolute minimum latency - best for live MIDI performance
                 : (config?.latencyHint !== undefined ? config.latencyHint : 'interactive');
 
             audioContext = new AudioContext({
@@ -100,10 +113,24 @@ export async function ensureToneStarted(): Promise<void> {
         throw new Error('AudioContext not initialized. Call initAudioContext() first.');
     }
 
+    // Dynamically import Tone.js to avoid AudioContext creation before user gesture
+    if (!cachedTone) {
+        cachedTone = await import('tone');
+    }
+    const Tone = cachedTone;
+
     // Set Tone.js to use our context (only once)
     if (!toneInitialized) {
         try {
             Tone.setContext(audioContext);
+
+            // LOW LATENCY OPTIMIZATION:
+            // Tone.js defaults lookAhead to 0.1s (100ms) for scheduled playback
+            // For live MIDI performance, we need near-zero lookAhead
+            // Setting to 0.01s (10ms) balances low latency with stability
+            Tone.context.lookAhead = 0.01; // 10ms instead of 100ms default
+            // Note: updateInterval is set via Draw.setExpiration, not directly settable
+
             // Start Tone.js if not running
             if (Tone.context.state !== 'running') {
                 await Tone.start();
@@ -253,18 +280,51 @@ export function createGainNode(gain: number = 1): GainNode | null {
 // ============================================================================
 
 /**
+ * Classify latency based on professional audio standards
+ * @param roundTripMs - Estimated round-trip latency in milliseconds
+ */
+function classifyLatency(roundTripMs: number): LatencyClassification {
+    if (roundTripMs <= 10) return 'excellent';  // Professional quality
+    if (roundTripMs <= 20) return 'good';       // Acceptable for most musicians
+    if (roundTripMs <= 30) return 'acceptable'; // Passable for monitoring
+    if (roundTripMs <= 50) return 'poor';       // Noticeable delay
+    return 'bad';                               // Unusable for real-time
+}
+
+/**
  * Get current latency metrics from AudioContext
+ * Includes comprehensive breakdown for debugging and user feedback
  */
 export function getLatencyMetrics(): LatencyMetrics | null {
     if (!audioContext) return null;
 
-    const baseLatency = audioContext.baseLatency * 1000; // Convert to ms
-    const outputLatency = audioContext.outputLatency * 1000;
+    // Convert to ms
+    const baseLatency = (audioContext.baseLatency ?? 0) * 1000;
+    const outputLatency = (audioContext.outputLatency ?? 0) * 1000;
+    const totalLatency = baseLatency + outputLatency;
+
+    // Get Tone.js lookAhead (may not be initialized yet)
+    const toneJsLookAhead = cachedTone
+        ? (cachedTone.context?.lookAhead ?? 0.1) * 1000
+        : 100; // Default assumption before Tone.js is loaded
+
+    // Estimate round-trip latency for live playing:
+    // Input delay + processing + output delay + Tone.js scheduling buffer
+    // We use totalLatency * 2 for round-trip, plus lookAhead for scheduling
+    const estimatedRoundTrip = (totalLatency * 2) + toneJsLookAhead;
+
+    // Detect likely Bluetooth audio (typically adds 100-200ms)
+    const isBluetoothSuspected = outputLatency > 100;
 
     return {
         baseLatency,
         outputLatency,
-        totalLatency: baseLatency + outputLatency
+        totalLatency,
+        toneJsLookAhead,
+        estimatedRoundTrip,
+        classification: classifyLatency(estimatedRoundTrip),
+        isBluetoothSuspected,
+        sampleRate: audioContext.sampleRate
     };
 }
 

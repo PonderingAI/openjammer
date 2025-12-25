@@ -6,11 +6,17 @@
  * 2. Call Tone.start() on user gesture before playback
  * 3. Use Tone.connect() to bridge to native Web Audio nodes
  * 4. Wait for Tone.loaded() after creating Sampler
+ *
+ * IMPORTANT: Tone.js is dynamically imported to avoid AudioContext creation
+ * before user gesture. This prevents browser autoplay warnings.
  */
 
-import * as Tone from 'tone';
 import { SampledInstrument } from './SampledInstrument';
 import { getAudioContext } from '../AudioEngine';
+
+// Tone.js types (imported dynamically)
+type ToneType = typeof import('tone');
+type ToneSampler = import('tone').Sampler;
 
 interface SamplerUrls {
   [note: string]: string;
@@ -24,8 +30,15 @@ interface ToneSamplerConfig {
 
 // Module-level flag for Tone.js context initialization (global state)
 let toneContextInitialized = false;
+let cachedTone: ToneType | null = null;
 
-async function ensureToneContext(ctx: AudioContext): Promise<void> {
+async function ensureToneContext(ctx: AudioContext): Promise<ToneType> {
+  // Dynamically import Tone.js
+  if (!cachedTone) {
+    cachedTone = await import('tone');
+  }
+  const Tone = cachedTone;
+
   if (!toneContextInitialized) {
     Tone.setContext(ctx);
     toneContextInitialized = true;
@@ -35,11 +48,14 @@ async function ensureToneContext(ctx: AudioContext): Promise<void> {
   if (Tone.context.state !== 'running') {
     await Tone.start();
   }
+
+  return Tone;
 }
 
 export class ToneSamplerInstrument extends SampledInstrument<boolean> {
-  private sampler: Tone.Sampler | null = null;
+  private sampler: ToneSampler | null = null;
   private config: ToneSamplerConfig;
+  private Tone: ToneType | null = null;
 
   constructor(config: ToneSamplerConfig) {
     super();
@@ -51,7 +67,8 @@ export class ToneSamplerInstrument extends SampledInstrument<boolean> {
     if (!ctx) throw new Error('AudioContext not available');
 
     // CRITICAL: Ensure Tone.js is using our context BEFORE creating Sampler
-    await ensureToneContext(ctx);
+    this.Tone = await ensureToneContext(ctx);
+    const Tone = this.Tone;
 
     // Create sampler with onload callback
     return new Promise((resolve, reject) => {
@@ -107,16 +124,16 @@ export class ToneSamplerInstrument extends SampledInstrument<boolean> {
   }
 
   protected playNoteImpl(note: string, velocity: number = 0.8): void {
-    if (!this.sampler) return;
+    if (!this.sampler || !this.Tone) return;
 
-    this.sampler.triggerAttack(note, Tone.now(), velocity);
+    this.sampler.triggerAttack(note, this.Tone.now(), velocity);
     this.activeNotes.set(note, true);
   }
 
   protected stopNoteImpl(note: string): void {
-    if (!this.sampler) return;
+    if (!this.sampler || !this.Tone) return;
 
-    this.sampler.triggerRelease(note, Tone.now());
+    this.sampler.triggerRelease(note, this.Tone.now());
     this.activeNotes.delete(note);
   }
 

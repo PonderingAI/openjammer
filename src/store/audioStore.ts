@@ -17,11 +17,18 @@ export interface AudioConfig {
     lowLatencyMode: boolean; // Disables echo cancellation, noise suppression, AGC
 }
 
+export type LatencyClassification = 'excellent' | 'good' | 'acceptable' | 'poor' | 'bad';
+
 export interface AudioMetrics {
-    baseLatency: number; // From AudioContext.baseLatency (ms)
-    outputLatency: number; // From AudioContext.outputLatency (ms)
-    totalLatency: number; // baseLatency + outputLatency (ms)
-    lastUpdated: number; // Timestamp
+    baseLatency: number;           // From AudioContext.baseLatency (ms)
+    outputLatency: number;         // From AudioContext.outputLatency (ms)
+    totalLatency: number;          // baseLatency + outputLatency (ms)
+    toneJsLookAhead: number;       // Tone.js scheduling buffer (ms)
+    estimatedRoundTrip: number;    // Total perceived latency for live playing (ms)
+    classification: LatencyClassification;
+    isBluetoothSuspected: boolean; // True if outputLatency > 100ms
+    sampleRate: number;            // Current sample rate (Hz)
+    lastUpdated: number;           // Timestamp
 }
 
 export interface DeviceInfo {
@@ -123,6 +130,11 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
         baseLatency: 0,
         outputLatency: 0,
         totalLatency: 0,
+        toneJsLookAhead: 100, // Default before Tone.js is configured
+        estimatedRoundTrip: 0,
+        classification: 'good' as LatencyClassification,
+        isBluetoothSuspected: false,
+        sampleRate: 48000,
         lastUpdated: 0
     },
     updateAudioMetrics: (metrics) => set((state) => ({

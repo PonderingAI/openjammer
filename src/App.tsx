@@ -10,6 +10,7 @@ import { Breadcrumbs } from './components/Toolbar/Breadcrumbs';
 import { HelpPanel } from './components/Toolbar/HelpPanel';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
 import { MIDIIntegration } from './components/MIDI';
+import { LatencyWarningBanner } from './components/LatencyWarningBanner';
 import { initAudioContext, isAudioReady, getLatencyMetrics } from './audio/AudioEngine';
 import { audioGraphManager } from './audio/AudioGraphManager';
 import { InstrumentLoader } from './audio/samplers/InstrumentLoader';
@@ -382,6 +383,9 @@ function App() {
 
       {/* MIDI Integration - device detection, browser, and node creation */}
       <MIDIIntegration />
+
+      {/* Latency Warning Banner - shows when latency is too high */}
+      <LatencyWarningBanner onOpenSettings={() => setShowSettings(true)} />
 
       {/* Toast Notifications */}
       <Toaster

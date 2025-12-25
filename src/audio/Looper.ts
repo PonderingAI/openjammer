@@ -43,7 +43,11 @@ export interface Loop {
 // Maximum number of loops to prevent memory exhaustion in long sessions
 const MAX_LOOPS = 50;
 
+// Debug: track Looper instances
+let looperInstanceCounter = 0;
+
 export class Looper {
+    private instanceId: number;
     private duration: number;
     private loops: Loop[] = [];
     private isRecording: boolean = false;
@@ -69,6 +73,10 @@ export class Looper {
     // Separates monitoring (zero latency) from recording (can have latency)
     private inputHub: GainNode | null = null;
 
+    // Silent source to keep audio graph active during silence
+    // Without this, the worklet won't receive callbacks when no audio is playing
+    private silentSource: ConstantSourceNode | null = null;
+
     // Cycle timer
     private cycleTimerId: number | null = null;
     private animationFrameId: number | null = null;
@@ -93,6 +101,8 @@ export class Looper {
     private onWaveformHistoryUpdate: ((history: number[], playheadPosition: number) => void) | null = null;
 
     constructor(duration: number = 10) {
+        this.instanceId = ++looperInstanceCounter;
+        console.log('[Looper] Created new instance:', this.instanceId);
         this.duration = duration;
         this.waveformHistory = new Float32Array(this.MAX_WAVEFORM_SAMPLES);
         this.initOutput();
@@ -240,6 +250,15 @@ export class Looper {
             // Create input hub - this is the entry point for all audio
             this.inputHub = ctx.createGain();
             this.inputHub.gain.value = 1;
+
+            // CRITICAL: Create a silent constant source to keep the audio graph active
+            // Without this, the AudioWorklet won't receive process() callbacks during silence,
+            // causing gaps in the recording when no notes are being played.
+            // The ConstantSourceNode outputs a DC offset of 0 (silence) continuously.
+            this.silentSource = ctx.createConstantSource();
+            this.silentSource.offset.value = 0; // Silent - no audible output
+            this.silentSource.connect(this.inputHub);
+            this.silentSource.start();
 
             // DIRECT MONITORING PATH (zero added latency)
             // Audio flows directly to output without going through analyser/recorder
@@ -446,6 +465,8 @@ export class Looper {
     private endRecordingCycle(): void {
         if (!this.isRecording) return;
 
+        console.log('[Looper] endRecordingCycle called - stopping worklet to save loop');
+
         // Stop current recording method (triggers callback -> process -> next cycle)
         if (this.useWorklet && this.recordingWorklet) {
             // Stop worklet recording - this triggers the callback with AudioBuffer
@@ -534,6 +555,12 @@ export class Looper {
             return;
         }
 
+        console.log('[Looper] processWorkletRecording - creating loop with buffer:', {
+            length: audioBuffer.length,
+            duration: audioBuffer.duration.toFixed(2) + 's',
+            sampleRate: audioBuffer.sampleRate
+        });
+
         const loop: Loop = {
             id: `loop-${Date.now()}`,
             buffer: audioBuffer,
@@ -547,6 +574,7 @@ export class Looper {
         };
 
         this.loops.push(loop);
+        console.log('[Looper] Loop saved, total loops:', this.loops.length, 'looper instance:', this.instanceId);
 
         // Enforce max loops limit
         while (this.loops.length > MAX_LOOPS) {
@@ -563,7 +591,10 @@ export class Looper {
 
         // Start next cycle if still recording
         if (this.isRecording) {
+            console.log('[Looper] Starting next recording cycle from processWorkletRecording');
             this.startRecordingCycle();
+        } else {
+            console.log('[Looper] Not starting next cycle - isRecording is false');
         }
     }
 
@@ -875,6 +906,17 @@ export class Looper {
         if (this.mediaStreamDestination) {
             this.mediaStreamDestination.disconnect();
             this.mediaStreamDestination = null;
+        }
+
+        // Stop and cleanup silent source (keeps audio graph active during recording)
+        if (this.silentSource) {
+            try {
+                this.silentSource.stop();
+                this.silentSource.disconnect();
+            } catch {
+                // May already be stopped
+            }
+            this.silentSource = null;
         }
 
         if (this.inputHub) {

@@ -91,6 +91,19 @@ export const AudioClipVisual = memo(function AudioClipVisual({
         }
     }, [onDragStart]);
 
+    // Handle native HTML5 drag start for dropping onto library tags
+    const handleNativeDragStart = useCallback((e: React.DragEvent) => {
+        // Set clip data for library drops
+        e.dataTransfer.setData('application/audio-clip', JSON.stringify({
+            sampleId: clip.sampleId,
+            sampleName: clip.sampleName,
+            startFrame: clip.startFrame,
+            endFrame: clip.endFrame,
+            durationSeconds: clip.durationSeconds,
+        }));
+        e.dataTransfer.effectAllowed = 'copyMove';
+    }, [clip.sampleId, clip.sampleName, clip.startFrame, clip.endFrame, clip.durationSeconds]);
+
     // Calculate waveform points for SVG polyline
     const waveformPoints = clip.waveformPeaks.length > 1
         ? clip.waveformPeaks.map((v, i) =>
@@ -130,6 +143,8 @@ export const AudioClipVisual = memo(function AudioClipVisual({
             ref={containerRef}
             className={classNames}
             style={inlineStyle}
+            draggable
+            onDragStart={handleNativeDragStart}
             onMouseDown={handleMouseDown}
             onDoubleClick={handleDoubleClick}
             data-clip-id={clip.id}

@@ -288,6 +288,28 @@ export const LooperNode = memo(function LooperNode({
         setLoops(prev => prev.filter(loop => loop.id !== loopId));
     }, [getLooper]);
 
+    const handleExportLoop = useCallback(async (loopId: string, loopIndex: number) => {
+        const looper = getLooper();
+        if (!looper) return;
+
+        const audioLoop = looper.getLoops().find(l => l.id === loopId);
+        if (!audioLoop?.buffer) return;
+
+        // Prompt for name
+        const defaultName = `Loop ${loopIndex + 1}`;
+        const name = window.prompt('Export name:', defaultName);
+        if (!name) return;
+
+        // Save to library
+        const itemId = await saveAudioToLibraryRef.current(audioLoop.buffer, name, ['exported', 'loop']);
+        if (itemId) {
+            // Update loop state with library item ID
+            setLoops(prev => prev.map(l =>
+                l.id === loopId ? { ...l, libraryItemId: itemId } : l
+            ));
+        }
+    }, [getLooper]);
+
     const isInfinite = isInfiniteDuration(duration);
 
     const handleDurationChange = useCallback((newDuration: number) => {
@@ -593,6 +615,16 @@ export const LooperNode = memo(function LooperNode({
                                         ) : (
                                             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
                                         )}
+                                    </svg>
+                                </button>
+                                <button
+                                    className={`looper-loop-btn export ${loop.libraryItemId ? 'exported' : ''}`}
+                                    onClick={(e) => { e.stopPropagation(); handleExportLoop(loop.id, loops.indexOf(loop)); }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    title={loop.libraryItemId ? 'Re-export to library' : 'Export to library'}
+                                >
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                                     </svg>
                                 </button>
                                 <button

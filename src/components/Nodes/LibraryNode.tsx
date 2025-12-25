@@ -522,6 +522,65 @@ export const LibraryNode = memo(function LibraryNode({
       e.stopPropagation(); // Prevent canvas from also handling the drop
       setDragOverTag(null);
 
+      // Check for audio clip drop (from canvas)
+      const clipDataStr = e.dataTransfer.getData('application/audio-clip');
+      if (clipDataStr) {
+        try {
+          const clipData = JSON.parse(clipDataStr) as {
+            sampleId: string;
+            sampleName: string;
+            startFrame: number;
+            endFrame: number;
+          };
+
+          // Validate source is in library (not a file: prefix which means dropped from filesystem)
+          if (clipData.sampleId.startsWith('file:')) {
+            toast.error('Source file must be in library to save crop');
+            return;
+          }
+
+          const sourceItem = useLibraryStore.getState().items[clipData.sampleId];
+          if (!sourceItem) {
+            toast.error('Source file not found in library');
+            return;
+          }
+
+          // Don't create virtual from virtual
+          if (sourceItem.isVirtual) {
+            toast.error('Cannot create crop from existing virtual item');
+            return;
+          }
+
+          // If no crop (full file), just add tag to existing item
+          if (clipData.startFrame === 0 && clipData.endFrame === -1) {
+            addTagToItem(clipData.sampleId, tagName);
+            toast.success(`Tagged "${clipData.sampleName}"`);
+            return;
+          }
+
+          // Create virtual item with crop
+          const baseName = clipData.sampleName.replace(/\.\w+$/, '');
+          const virtualName = `${baseName} (crop)`;
+          const createVirtualItem = useLibraryStore.getState().createVirtualItem;
+          const virtualId = createVirtualItem(
+            clipData.sampleId,
+            clipData.startFrame,
+            clipData.endFrame,
+            virtualName,
+            [tagName]
+          );
+
+          if (virtualId) {
+            toast.success(`Saved crop as "${virtualName}"`);
+          } else {
+            toast.error('Failed to create virtual sample');
+          }
+          return;
+        } catch (err) {
+          console.error('[LibraryNode] Failed to parse clip data:', err);
+        }
+      }
+
       // Try to get multiple item IDs first
       const itemIdsStr = e.dataTransfer.getData('application/library-item-ids');
       if (itemIdsStr) {
@@ -870,6 +929,7 @@ export const LibraryNode = memo(function LibraryNode({
     const isTrashed = item.tags.includes('trash');
     const isEditing = editingItemId === item.id;
     const isMultiSelected = selectedItemIds.has(item.id);
+    const isVirtual = item.isVirtual === true;
 
     return (
       <div
@@ -878,7 +938,7 @@ export const LibraryNode = memo(function LibraryNode({
           if (el) fileRowRefs.current.set(item.id, el);
           else fileRowRefs.current.delete(item.id);
         }}
-        className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''} ${isLoading ? 'loading' : ''}`}
+        className={`library-file-row ${isActive ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''} ${isMissing ? 'missing' : ''} ${isTrashed ? 'trashed' : ''} ${isEditing ? 'editing' : ''} ${isLoading ? 'loading' : ''} ${isVirtual ? 'virtual' : ''}`}
         onClick={(e) => !isEditing && handleFileRowClick(item.id, e)}
         onKeyDown={(e) => {
           if (isEditing) return;
@@ -893,6 +953,15 @@ export const LibraryNode = memo(function LibraryNode({
         draggable={!isTrashed && !isEditing}
         onDragStart={(e) => !isTrashed && !isEditing && handleFileDragStart(e, item)}
       >
+        {/* Virtual item indicator */}
+        {isVirtual && (
+          <span className="virtual-indicator" title="Virtual crop (references parent file)">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+              <path d="M4 2v12l4-3v-6l-4-3zm5 3v6l4 3V2l-4 3z" opacity="0.7" />
+            </svg>
+          </span>
+        )}
+
         {/* Play/Stop button or loading indicator (I5) */}
         <button
           className={`file-preview-btn ${isPreviewing ? 'playing' : ''} ${isLoading ? 'loading' : ''}`}
