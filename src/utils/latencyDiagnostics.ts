@@ -6,6 +6,19 @@
 import type { LatencyClassification } from '../store/audioStore';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Threshold in ms above which we suspect Bluetooth audio */
+export const BLUETOOTH_LATENCY_THRESHOLD_MS = 100;
+
+/** Threshold in ms above which Tone.js lookAhead is considered too high */
+export const HIGH_LOOKAHEAD_THRESHOLD_MS = 50;
+
+/** Duration in ms to suppress warning after dismissal (1 hour) */
+export const WARNING_DISMISSAL_DURATION_MS = 60 * 60 * 1000; // 1 hour
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -81,7 +94,7 @@ export function diagnoseLatency(
     }
 
     // 4. Check Tone.js lookAhead (should be ~10ms after our optimization)
-    if (metrics.toneJsLookAhead > 50) {
+    if (metrics.toneJsLookAhead > HIGH_LOOKAHEAD_THRESHOLD_MS) {
         issues.push({
             severity: 'medium',
             issue: 'Audio scheduler buffer is unusually high',
@@ -157,8 +170,8 @@ export function shouldShowLatencyWarning(
         return false;
     }
 
-    // Don't show if dismissed within the last hour
-    if (dismissedAt && Date.now() - dismissedAt < 60 * 60 * 1000) {
+    // Don't show if dismissed within the cooldown period
+    if (dismissedAt && Date.now() - dismissedAt < WARNING_DISMISSAL_DURATION_MS) {
         return false;
     }
 

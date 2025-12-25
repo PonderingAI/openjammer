@@ -23,18 +23,21 @@ export function LatencyWarningBanner({ onOpenSettings }: LatencyWarningBannerPro
     const [dismissed, setDismissed] = useState(false);
     const [dismissedAt, setDismissedAt] = useState<number | null>(null);
 
-    // Load dismissed state from localStorage
+    // Load dismissed state from localStorage ONCE on mount (prevents race condition)
     useEffect(() => {
         const stored = localStorage.getItem(DISMISSED_KEY);
         if (stored) {
             const timestamp = parseInt(stored, 10);
             setDismissedAt(timestamp);
-            // Check if we should still show the warning
-            if (!shouldShowLatencyWarning(audioMetrics.classification, timestamp)) {
-                setDismissed(true);
-            }
         }
-    }, [audioMetrics.classification]);
+    }, []); // Empty deps - only run on mount
+
+    // Check if we should show warning based on dismissedAt and current classification
+    useEffect(() => {
+        if (dismissedAt && !shouldShowLatencyWarning(audioMetrics.classification, dismissedAt)) {
+            setDismissed(true);
+        }
+    }, [audioMetrics.classification, dismissedAt]);
 
     // Don't show if not ready, dismissed, or latency is acceptable
     if (!isAudioContextReady || dismissed) {
