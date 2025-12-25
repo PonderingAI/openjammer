@@ -1062,9 +1062,24 @@ class AudioGraphManager {
         this.activeAudioConnections.forEach(key => {
             if (!currentConnectionKeys.has(key)) {
                 // Parse the key format: sourceNodeId:sourcePortId->targetNodeId:targetPortId
-                const [sourcePart, targetPart] = key.split('->');
-                const [sourceNodeId, sourcePortId] = sourcePart.split(':');
-                const [targetNodeId, targetPortId] = targetPart.split(':');
+                // Validate key format to prevent silent failures from corrupted data
+                const parts = key.split('->');
+                if (parts.length !== 2) {
+                    console.warn(`[AudioGraphManager] Invalid connection key format (missing ->): ${key}`);
+                    return;
+                }
+                const [sourcePart, targetPart] = parts;
+
+                const sourceParts = sourcePart.split(':');
+                const targetParts = targetPart.split(':');
+
+                if (sourceParts.length !== 2 || targetParts.length !== 2) {
+                    console.warn(`[AudioGraphManager] Invalid port format in connection key: ${key}`);
+                    return;
+                }
+
+                const [sourceNodeId, sourcePortId] = sourceParts;
+                const [targetNodeId, targetPortId] = targetParts;
                 this.disconnectAudioNodes(sourceNodeId, sourcePortId, targetNodeId, targetPortId);
             }
         });

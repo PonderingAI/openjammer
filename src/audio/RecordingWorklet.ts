@@ -68,8 +68,13 @@ export class RecordingWorklet {
             );
             this.isInitialized = true;
         } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
             console.error('[RecordingWorklet] Failed to load worklet module:', error);
-            throw error;
+            throw new Error(
+                `AudioWorklet initialization failed: ${message}. ` +
+                'Your browser may not support AudioWorklet, CSP may be blocking the module, ' +
+                'or the worklet file may be missing.'
+            );
         }
     }
 

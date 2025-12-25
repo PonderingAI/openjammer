@@ -28,7 +28,13 @@ export function LatencyWarningBanner({ onOpenSettings }: LatencyWarningBannerPro
         const stored = localStorage.getItem(DISMISSED_KEY);
         if (stored) {
             const timestamp = parseInt(stored, 10);
-            setDismissedAt(timestamp);
+            // Validate the parsed timestamp - NaN check prevents corrupted data issues
+            if (!isNaN(timestamp) && timestamp > 0) {
+                setDismissedAt(timestamp);
+            } else {
+                console.warn('[LatencyWarningBanner] Invalid timestamp in localStorage, clearing');
+                localStorage.removeItem(DISMISSED_KEY);
+            }
         }
     }, []); // Empty deps - only run on mount
 
@@ -61,7 +67,15 @@ export function LatencyWarningBanner({ onOpenSettings }: LatencyWarningBannerPro
         const now = Date.now();
         setDismissed(true);
         setDismissedAt(now);
-        localStorage.setItem(DISMISSED_KEY, now.toString());
+
+        try {
+            localStorage.setItem(DISMISSED_KEY, now.toString());
+        } catch (e) {
+            // Handle QuotaExceededError (storage full, private browsing, iOS limits)
+            if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+                console.warn('[LatencyWarningBanner] localStorage full, dismissal will not persist');
+            }
+        }
     };
 
     const handleFixNow = () => {
