@@ -16,6 +16,12 @@ let cachedTone: ToneType | null = null;
 /** Promise to track ongoing initialization (prevents race condition) */
 let initializationPromise: Promise<AudioContext> | null = null;
 
+/** Promise guard for Tone.js dynamic import (prevents duplicate imports from concurrent calls) */
+let toneImportPromise: Promise<ToneType> | null = null;
+
+/** Configured Tone.js lookAhead in seconds (default 0.01 = 10ms for low latency) */
+let configuredLookAhead: number = 0.01;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -24,6 +30,7 @@ export interface AudioContextConfig {
     sampleRate?: number;
     latencyHint?: AudioContextLatencyCategory | number;
     lowLatencyMode?: boolean; // When true, requests 5ms latency for USB interfaces
+    toneJsLookAhead?: number; // Tone.js scheduling buffer in seconds (default 0.01 = 10ms)
 }
 
 export type LatencyClassification = 'excellent' | 'good' | 'acceptable' | 'poor' | 'bad';
@@ -74,6 +81,9 @@ export async function initAudioContext(config?: AudioContextConfig): Promise<Aud
                 ? 0 // Absolute minimum latency - best for live MIDI performance
                 : (config?.latencyHint !== undefined ? config.latencyHint : 'interactive');
 
+            // Store configured lookAhead for Tone.js (default 10ms for low latency)
+            configuredLookAhead = config?.toneJsLookAhead ?? 0.01;
+
             audioContext = new AudioContext({
                 sampleRate: config?.sampleRate || 48000,
                 latencyHint
@@ -114,8 +124,13 @@ export async function ensureToneStarted(): Promise<void> {
     }
 
     // Dynamically import Tone.js to avoid AudioContext creation before user gesture
+    // Use promise guard to prevent duplicate imports from concurrent calls
     if (!cachedTone) {
-        cachedTone = await import('tone');
+        if (!toneImportPromise) {
+            toneImportPromise = import('tone');
+        }
+        cachedTone = await toneImportPromise;
+        // Keep the promise around - it's resolved and can be awaited multiple times
     }
     const Tone = cachedTone;
 
@@ -127,8 +142,8 @@ export async function ensureToneStarted(): Promise<void> {
             // LOW LATENCY OPTIMIZATION:
             // Tone.js defaults lookAhead to 0.1s (100ms) for scheduled playback
             // For live MIDI performance, we need near-zero lookAhead
-            // Setting to 0.01s (10ms) balances low latency with stability
-            Tone.context.lookAhead = 0.01; // 10ms instead of 100ms default
+            // Use configured value (default 0.01s = 10ms) for balance
+            Tone.context.lookAhead = configuredLookAhead;
             // Note: updateInterval is set via Draw.setExpiration, not directly settable
 
             // Start Tone.js if not running

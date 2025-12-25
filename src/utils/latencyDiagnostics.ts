@@ -103,14 +103,22 @@ export function diagnoseLatency(
         });
     }
 
-    // 5. Browser-specific suggestions
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('firefox') && metrics.classification === 'poor') {
-        suggestions.push('Firefox typically has good audio latency - check your system audio settings');
-    } else if (ua.includes('chrome') && metrics.classification === 'poor') {
-        suggestions.push('Try launching Chrome with --enable-exclusive-audio flag for lower latency');
-    } else if (ua.includes('safari') && !ua.includes('chrome')) {
-        suggestions.push('Safari has limited audio optimization - consider using Chrome or Firefox');
+    // 5. Browser-specific suggestions using feature detection (more reliable than UA sniffing)
+    // Note: User-agent sniffing is unreliable - Edge includes "chrome", browsers spoof UAs
+    if (metrics.classification === 'poor') {
+        // Feature detection for browser engine
+        const isChromium = 'chrome' in window && !('opr' in window);
+        // Safari has a unique CSS property
+        const isSafari = 'webkitLineBreak' in document.documentElement.style && !isChromium;
+
+        if (isChromium && isWindowsPlatform()) {
+            suggestions.push('Try launching Chrome with --enable-exclusive-audio flag for lower latency');
+        } else if (isSafari) {
+            suggestions.push('Safari has limited audio optimization - consider using Chrome or Firefox');
+        } else {
+            // Generic suggestion for all other browsers
+            suggestions.push('Check your system audio settings for optimization options');
+        }
     }
 
     // 6. General suggestions for poor latency
