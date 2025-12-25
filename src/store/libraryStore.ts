@@ -21,7 +21,7 @@ import {
   walkDirectoryWithProgress,
   type FileEntry,
 } from '../utils/fileSystemAccess';
-import { createSampleMetadata, generateWaveformFromFile, peaksToBase64 } from '../utils/audioMetadata';
+import { createSampleMetadata, generateWaveformFromFile, generateWaveformPeaks, peaksToBase64 } from '../utils/audioMetadata';
 import { getAudioContext } from '../audio/AudioEngine';
 import { audioBufferToWAV, generateRecordingFilename } from '../audio/WavEncoder';
 
@@ -53,6 +53,18 @@ export interface LibraryItem extends SampleMetadata {
   status: 'available' | 'missing' | 'loading';
   /** Handle for direct file access */
   handleKey?: string;
+
+  // Virtual sample fields (for non-destructive crops)
+  /** True if this is a virtual crop reference */
+  isVirtual?: boolean;
+  /** ID of the source LibraryItem this crop references */
+  parentItemId?: string;
+  /** Start of crop region in sample frames */
+  cropStartFrame?: number;
+  /** End of crop region in sample frames (-1 = end of file) */
+  cropEndFrame?: number;
+  /** Duration of parent file (for validation) */
+  originalDuration?: number;
 }
 
 // Storage prefixes for IndexedDB keys
@@ -80,6 +92,72 @@ export async function getWaveform(itemId: string): Promise<string | null> {
   try {
     return await idbGet<string>(WAVEFORM_PREFIX + itemId) || null;
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Get or generate waveform for a virtual item (cropped from parent)
+ * Loads parent file, slices to crop region, generates waveform, and caches
+ */
+export async function getVirtualWaveform(itemId: string): Promise<string | null> {
+  const store = useLibraryStore.getState();
+  const item = store.items[itemId];
+
+  if (!item || !item.isVirtual || !item.parentItemId) {
+    return null;
+  }
+
+  // Check if already cached
+  const cached = await getWaveform(itemId);
+  if (cached) return cached;
+
+  // Get parent item
+  const parentItem = store.items[item.parentItemId];
+  if (!parentItem) return null;
+
+  // Load parent file
+  const file = await getItemFile(item.parentItemId);
+  if (!file) return null;
+
+  const audioContext = getAudioContext();
+  if (!audioContext) return null;
+
+  try {
+    // Decode parent audio
+    const arrayBuffer = await file.arrayBuffer();
+    const fullBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    // Get crop region
+    const start = item.cropStartFrame ?? 0;
+    const end = item.cropEndFrame === -1 ? fullBuffer.length : (item.cropEndFrame ?? fullBuffer.length);
+    const length = Math.max(0, end - start);
+
+    if (length === 0) return null;
+
+    // Create cropped buffer
+    const croppedBuffer = audioContext.createBuffer(
+      fullBuffer.numberOfChannels,
+      length,
+      fullBuffer.sampleRate
+    );
+
+    for (let ch = 0; ch < fullBuffer.numberOfChannels; ch++) {
+      const src = fullBuffer.getChannelData(ch);
+      const dst = croppedBuffer.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        dst[i] = src[start + i];
+      }
+    }
+
+    // Generate waveform peaks
+    const peaks = generateWaveformPeaks(croppedBuffer, 100);
+
+    // Cache and return
+    await storeWaveform(itemId, peaks);
+    return peaksToBase64(peaks);
+  } catch (err) {
+    console.error('[Library] Failed to generate virtual waveform:', err);
     return null;
   }
 }
@@ -188,6 +266,15 @@ interface LibraryStore {
 
   // Audio saving
   saveAudioToLibrary: (buffer: AudioBuffer, name: string, tags?: string[]) => Promise<string | null>;
+
+  // Virtual samples (non-destructive crops)
+  createVirtualItem: (
+    parentItemId: string,
+    startFrame: number,
+    endFrame: number,
+    name: string,
+    tags?: string[]
+  ) => string | null;
 
   // Trash management
   trashItem: (itemId: string) => void;
@@ -1111,6 +1198,81 @@ export const useLibraryStore = create<LibraryStore>()(
       },
 
       // ========================================
+      // Virtual Samples (Non-Destructive Crops)
+      // ========================================
+
+      createVirtualItem: (
+        parentItemId: string,
+        startFrame: number,
+        endFrame: number,
+        name: string,
+        tags: string[] = []
+      ) => {
+        const parentItem = get().items[parentItemId];
+        if (!parentItem) {
+          console.warn('[Library] Cannot create virtual item: parent not found');
+          return null;
+        }
+
+        // Prevent nested virtuals
+        if (parentItem.isVirtual) {
+          console.warn('[Library] Cannot create virtual from virtual item');
+          return null;
+        }
+
+        const itemId = crypto.randomUUID();
+
+        // Calculate virtual item duration from crop region
+        const totalFrames = Math.floor(parentItem.duration * parentItem.sampleRate);
+        const cropEnd = endFrame === -1 ? totalFrames : endFrame;
+        const cropDuration = (cropEnd - startFrame) / parentItem.sampleRate;
+
+        const virtualItem: LibraryItem = {
+          id: itemId,
+          libraryId: parentItem.libraryId,
+          fileName: name,
+          relativePath: `[virtual] ${parentItem.relativePath}`,
+          fileSize: 0, // Virtual items have no file size
+          lastModified: Date.now(),
+          format: parentItem.format,
+          duration: cropDuration,
+          sampleRate: parentItem.sampleRate,
+          channels: parentItem.channels,
+          bitDepth: parentItem.bitDepth,
+          tags: tags,
+          favorite: false,
+          rating: 0,
+          hasWaveform: false, // Generated on demand
+          addedAt: Date.now(),
+          status: 'available',
+
+          // Virtual-specific fields
+          isVirtual: true,
+          parentItemId: parentItemId,
+          cropStartFrame: startFrame,
+          cropEndFrame: endFrame,
+          originalDuration: parentItem.duration,
+        };
+
+        set(state => ({
+          items: { ...state.items, [itemId]: virtualItem },
+        }));
+
+        // Add new tags to allTags
+        if (tags.length > 0) {
+          set(state => {
+            const newTags = tags.filter(tag => !state.allTags.includes(tag));
+            if (newTags.length === 0) return state;
+            return {
+              allTags: [...state.allTags, ...newTags].sort(),
+            };
+          });
+        }
+
+        return itemId;
+      },
+
+      // ========================================
       // Trash Management
       // ========================================
 
@@ -1172,6 +1334,17 @@ export const useLibraryStore = create<LibraryStore>()(
       permanentlyDeleteItem: async (itemId: string) => {
         const item = get().items[itemId];
         if (!item) return;
+
+        // Check for dependent virtual items (can't delete parent with children)
+        if (!item.isVirtual) {
+          const dependentVirtuals = Object.values(get().items).filter(
+            i => i.isVirtual && i.parentItemId === itemId
+          );
+          if (dependentVirtuals.length > 0) {
+            console.warn(`[Library] Cannot delete item ${itemId}: has ${dependentVirtuals.length} virtual children`);
+            return;
+          }
+        }
 
         // Remove from IndexedDB (waveforms and handles)
         await Promise.all([

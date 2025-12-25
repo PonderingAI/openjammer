@@ -18,10 +18,24 @@ export interface RecordingWorkletOptions {
     channels?: 1 | 2;
 }
 
+/**
+ * Maximum buffer size in bytes before warning (100 MB)
+ * At 48kHz mono, this is about 17 minutes of audio
+ */
+const MAX_BUFFER_BYTES_WARNING = 100 * 1024 * 1024;
+
+/**
+ * Maximum buffer size in bytes before forced flush (200 MB)
+ * Prevents memory exhaustion that causes audio distortion
+ */
+const MAX_BUFFER_BYTES_LIMIT = 200 * 1024 * 1024;
+
 export class RecordingWorklet {
     private context: AudioContext;
     private workletNode: AudioWorkletNode | null = null;
     private buffers: Float32Array[] = [];
+    private totalBufferBytes: number = 0;
+    private hasWarnedMemory: boolean = false;
     private onComplete: ((buffer: AudioBuffer) => void) | null = null;
     private isInitialized = false;
     private isRecording = false;
@@ -99,11 +113,14 @@ export class RecordingWorklet {
         }
 
         if (this.isRecording) {
-            console.warn('[RecordingWorklet] Already recording');
+            console.warn('[RecordingWorklet] Already recording - skipping start');
             return;
         }
 
+        console.log('[RecordingWorklet] start() - setting up new recording cycle');
         this.buffers = [];
+        this.totalBufferBytes = 0;
+        this.hasWarnedMemory = false;
         this.onComplete = onComplete;
         this.channels = options?.channels || 1;
         this.isRecording = true;
@@ -119,9 +136,11 @@ export class RecordingWorklet {
      */
     stop(): void {
         if (!this.workletNode || !this.isRecording) {
+            console.log('[RecordingWorklet] stop() called but not recording or no worklet');
             return;
         }
 
+        console.log('[RecordingWorklet] stop() - sending stop command, buffers collected:', this.buffers.length);
         this.isRecording = false;
         this.workletNode.port.postMessage({ command: 'stop' });
     }
@@ -140,10 +159,30 @@ export class RecordingWorklet {
         const { type, data } = e.data;
 
         switch (type) {
-            case 'buffer':
+            case 'buffer': {
                 // Received a chunk of PCM data
-                this.buffers.push(data as Float32Array);
+                const buffer = data as Float32Array;
+                const bufferBytes = buffer.byteLength;
+
+                // MEMORY PROTECTION: Prevent unbounded buffer growth
+                // This prevents audio distortion from memory exhaustion in long sessions
+                if (this.totalBufferBytes + bufferBytes > MAX_BUFFER_BYTES_LIMIT) {
+                    console.error('[RecordingWorklet] Buffer limit reached! Forcing flush to prevent audio distortion.');
+                    // Force stop and process what we have
+                    this.stop();
+                    return;
+                }
+
+                // Memory warning (once per recording session)
+                if (!this.hasWarnedMemory && this.totalBufferBytes > MAX_BUFFER_BYTES_WARNING) {
+                    console.warn('[RecordingWorklet] Recording buffer exceeds 100MB. Consider stopping to prevent audio issues.');
+                    this.hasWarnedMemory = true;
+                }
+
+                this.buffers.push(buffer);
+                this.totalBufferBytes += bufferBytes;
                 break;
+            }
 
             case 'complete':
                 // Recording finished, assemble the AudioBuffer
@@ -156,6 +195,8 @@ export class RecordingWorklet {
      * Assemble all received buffers into a single AudioBuffer
      */
     private assembleBuffer(): void {
+        console.log('[RecordingWorklet] assembleBuffer called, buffers:', this.buffers.length);
+
         if (this.buffers.length === 0) {
             console.warn('[RecordingWorklet] No audio data recorded');
             this.onComplete?.(this.context.createBuffer(1, 1, this.context.sampleRate));
@@ -164,6 +205,7 @@ export class RecordingWorklet {
 
         // Calculate total length
         const totalLength = this.buffers.reduce((sum, b) => sum + b.length, 0);
+        console.log('[RecordingWorklet] Total samples:', totalLength, 'duration:', (totalLength / this.context.sampleRate).toFixed(2) + 's');
 
         if (totalLength === 0) {
             console.warn('[RecordingWorklet] Empty recording');
@@ -189,10 +231,16 @@ export class RecordingWorklet {
 
         // Clear buffers to free memory
         this.buffers = [];
+        this.totalBufferBytes = 0;
 
         // Invoke callback
-        this.onComplete?.(audioBuffer);
-        this.onComplete = null;
+        if (this.onComplete) {
+            console.log('[RecordingWorklet] Invoking onComplete callback');
+            this.onComplete(audioBuffer);
+            this.onComplete = null;
+        } else {
+            console.error('[RecordingWorklet] ERROR: onComplete is null! Buffer will be lost.');
+        }
     }
 
     /**
@@ -205,7 +253,16 @@ export class RecordingWorklet {
             this.workletNode = null;
         }
         this.buffers = [];
+        this.totalBufferBytes = 0;
         this.onComplete = null;
         this.isRecording = false;
+    }
+
+    /**
+     * Get current buffer memory usage in bytes
+     * Useful for monitoring memory in long sessions
+     */
+    getBufferMemoryUsage(): number {
+        return this.totalBufferBytes;
     }
 }

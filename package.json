@@ -32,7 +32,6 @@
     "validate-nodes": "bun scripts/validate-nodes.ts"
   },
   "dependencies": {
-    "@tonejs/piano": "^0.2.1",
     "idb-keyval": "^6.2.2",
     "lru-cache": "^11.2.4",
     "music-metadata": "^11.10.3",

@@ -144,24 +144,58 @@ export async function loadClipAudio(
         throw new Error(`Item not found: ${clip.sampleId}`);
     }
 
-    // Load full audio buffer
-    const file = await getSampleFile(clip.sampleId);
+    // Handle virtual items - resolve to parent file and apply crop
+    let fileItemId = clip.sampleId;
+    let cropStart = clip.startFrame;
+    let cropEnd = clip.endFrame;
+
+    if (item.isVirtual && item.parentItemId) {
+        const parentItem = store.items[item.parentItemId];
+        if (!parentItem) {
+            throw new Error(`Parent item not found: ${item.parentItemId}`);
+        }
+        fileItemId = item.parentItemId;
+
+        // Get the virtual item's crop region
+        const virtualStart = item.cropStartFrame ?? 0;
+        const virtualEnd = item.cropEndFrame ?? -1;
+
+        // Combine clip crop with virtual item crop
+        // Clip's crop is relative to the virtual item, not the parent
+        cropStart = virtualStart + clip.startFrame;
+        if (clip.endFrame === -1) {
+            cropEnd = virtualEnd;
+        } else {
+            cropEnd = virtualStart + clip.endFrame;
+            // Clamp to virtual item's end if defined
+            if (virtualEnd !== -1 && cropEnd > virtualEnd) {
+                cropEnd = virtualEnd;
+            }
+        }
+    }
+
+    // Load full audio buffer from actual file
+    const file = await getSampleFile(fileItemId);
     if (!file) {
-        throw new Error(`Could not load sample file: ${clip.sampleId}`);
+        throw new Error(`Could not load sample file: ${fileItemId}`);
     }
 
     const arrayBuffer = await file.arrayBuffer();
     const fullBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
     // If no cropping, return full buffer
-    if (clip.startFrame === 0 && clip.endFrame === -1) {
+    if (cropStart === 0 && cropEnd === -1) {
         return fullBuffer;
     }
 
     // Apply crop region
-    const startSample = clip.startFrame;
-    const endSample = clip.endFrame === -1 ? fullBuffer.length : clip.endFrame;
-    const length = endSample - startSample;
+    const startSample = cropStart;
+    const endSample = cropEnd === -1 ? fullBuffer.length : cropEnd;
+    const length = Math.max(0, endSample - startSample);
+
+    if (length === 0) {
+        throw new Error('Crop region results in zero-length audio');
+    }
 
     // Create new buffer with cropped audio
     const croppedBuffer = audioContext.createBuffer(

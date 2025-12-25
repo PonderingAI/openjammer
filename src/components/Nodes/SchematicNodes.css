@@ -1435,6 +1435,22 @@
     border-color: var(--accent-danger);
 }
 
+.looper-loop-btn.export:hover {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+.looper-loop-btn.export.exported {
+    color: var(--accent-success);
+}
+
+.looper-loop-btn.export.exported:hover {
+    background: var(--accent-success);
+    color: white;
+    border-color: var(--accent-success);
+}
+
 /* Record button container - no border */
 .looper-record-container {
     display: flex;
@@ -3667,6 +3683,25 @@
 .library-file-row.trashed .file-trash-btn {
     opacity: 1;
     color: var(--accent-success);
+}
+
+/* Virtual sample indicator */
+.library-file-row.virtual {
+    border-left: 2px solid var(--accent-primary);
+    padding-left: calc(var(--space-sm) - 2px);
+}
+
+.virtual-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-primary);
+    opacity: 0.8;
+    flex-shrink: 0;
+}
+
+.library-file-row.selected .virtual-indicator {
+    color: rgba(255, 255, 255, 0.9);
 }
 
 /* Permanent delete button for trashed items */

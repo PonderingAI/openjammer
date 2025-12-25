@@ -1051,28 +1051,33 @@ class AudioGraphManager {
         const audioConnections = Array.from(graphConnections.values())
             .filter(conn => conn.type === 'audio');
 
-        // Build set of current connection keys
+        // Build set of current connection keys (include port IDs for multi-input nodes like Add)
         const currentConnectionKeys = new Set<string>();
         audioConnections.forEach(connection => {
-            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            const key = `${connection.sourceNodeId}:${connection.sourcePortId}->${connection.targetNodeId}:${connection.targetPortId}`;
             currentConnectionKeys.add(key);
         });
 
         // Find and disconnect removed connections
         this.activeAudioConnections.forEach(key => {
             if (!currentConnectionKeys.has(key)) {
-                const [sourceNodeId, targetNodeId] = key.split('->');
-                this.disconnectAudioNodes(sourceNodeId, targetNodeId);
+                // Parse the key format: sourceNodeId:sourcePortId->targetNodeId:targetPortId
+                const [sourcePart, targetPart] = key.split('->');
+                const [sourceNodeId, sourcePortId] = sourcePart.split(':');
+                const [targetNodeId, targetPortId] = targetPart.split(':');
+                this.disconnectAudioNodes(sourceNodeId, sourcePortId, targetNodeId, targetPortId);
             }
         });
 
         // Connect new audio connections
         audioConnections.forEach(connection => {
-            const key = `${connection.sourceNodeId}->${connection.targetNodeId}`;
+            const key = `${connection.sourceNodeId}:${connection.sourcePortId}->${connection.targetNodeId}:${connection.targetPortId}`;
             if (!this.activeAudioConnections.has(key)) {
                 this.connectAudioNodes(
                     connection.sourceNodeId,
-                    connection.targetNodeId
+                    connection.sourcePortId,
+                    connection.targetNodeId,
+                    connection.targetPortId
                 );
             }
         });
@@ -1290,13 +1295,35 @@ class AudioGraphManager {
     }
 
     /**
+     * Get the appropriate input node for a target node based on port ID
+     * This handles multi-input nodes like Add and Subtract
+     */
+    private getInputNodeForPort(targetAudioNode: AudioNodeInstance, targetPortId?: string): AudioNode | null {
+        const instance = targetAudioNode.instance;
+
+        // Check if this is an Add or Subtract node with multiple inputs
+        if (instance && typeof instance === 'object' && 'input1' in instance && 'input2' in instance) {
+            const multiInputNode = instance as AddNodeInstance | SubtractNodeInstance;
+            if (targetPortId === 'in-2') {
+                return multiInputNode.input2;
+            }
+            // Default to input1 for 'in-1' or any other port
+            return multiInputNode.input1;
+        }
+
+        // For all other nodes, use the standard inputNode
+        return targetAudioNode.inputNode;
+    }
+
+    /**
      * Connect two audio nodes
      */
-    private connectAudioNodes(sourceNodeId: string, targetNodeId: string): void {
+    private connectAudioNodes(sourceNodeId: string, sourcePortId: string, targetNodeId: string, targetPortId: string): void {
         const ctx = getAudioContext();
         if (!ctx) return;
 
-        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+        // Include port IDs in connection key for proper tracking
+        const connectionKey = `${sourceNodeId}:${sourcePortId}->${targetNodeId}:${targetPortId}`;
 
         // Prevent duplicate connections
         if (this.activeAudioConnections.has(connectionKey)) {
@@ -1318,7 +1345,13 @@ class AudioGraphManager {
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
-        if (!sourceAudioNode?.outputNode || !targetAudioNode?.inputNode) {
+        if (!sourceAudioNode?.outputNode || !targetAudioNode) {
+            return;
+        }
+
+        // Get the correct input node based on target port ID
+        const targetInputNode = this.getInputNodeForPort(targetAudioNode, targetPortId);
+        if (!targetInputNode) {
             return;
         }
 
@@ -1332,7 +1365,7 @@ class AudioGraphManager {
             }
 
             // Connect output to input
-            sourceAudioNode.outputNode.connect(targetAudioNode.inputNode);
+            sourceAudioNode.outputNode.connect(targetInputNode);
 
             // Create analyser for signal visualization (connects in parallel)
             this.createConnectionAnalyser(connectionKey, sourceAudioNode.outputNode);
@@ -1345,15 +1378,22 @@ class AudioGraphManager {
     /**
      * Disconnect two audio nodes
      */
-    disconnectAudioNodes(sourceNodeId: string, targetNodeId: string): void {
+    disconnectAudioNodes(sourceNodeId: string, sourcePortId: string, targetNodeId: string, targetPortId: string): void {
         const ctx = getAudioContext();
         if (!ctx) return;
 
-        const connectionKey = `${sourceNodeId}->${targetNodeId}`;
+        // Include port IDs in connection key to match the connect format
+        const connectionKey = `${sourceNodeId}:${sourcePortId}->${targetNodeId}:${targetPortId}`;
         const sourceAudioNode = this.audioNodes.get(sourceNodeId);
         const targetAudioNode = this.audioNodes.get(targetNodeId);
 
-        if (!sourceAudioNode?.outputNode || !targetAudioNode?.inputNode) {
+        if (!sourceAudioNode?.outputNode || !targetAudioNode) {
+            return;
+        }
+
+        // Get the correct input node based on target port ID
+        const targetInputNode = this.getInputNodeForPort(targetAudioNode, targetPortId);
+        if (!targetInputNode) {
             return;
         }
 
@@ -1383,9 +1423,9 @@ class AudioGraphManager {
                 // Verify key still exists - callback may fire after reconnection canceled it
                 if (this.pendingDisconnects.has(connectionKey)) {
                     this.pendingDisconnects.delete(connectionKey);
-                    if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
+                    if (sourceAudioNode.outputNode && targetInputNode) {
                         try {
-                            sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
+                            sourceAudioNode.outputNode.disconnect(targetInputNode);
                         } catch {
                             // May not be connected
                         }
@@ -1399,9 +1439,9 @@ class AudioGraphManager {
 
             this.pendingDisconnects.set(connectionKey, timeoutId);
         } else {
-            if (sourceAudioNode.outputNode && targetAudioNode.inputNode) {
+            if (sourceAudioNode.outputNode && targetInputNode) {
                 try {
-                    sourceAudioNode.outputNode.disconnect(targetAudioNode.inputNode);
+                    sourceAudioNode.outputNode.disconnect(targetInputNode);
                 } catch {
                     // May not be connected
                 }
@@ -1667,6 +1707,10 @@ class AudioGraphManager {
 
     /**
      * Update speaker output device
+     *
+     * Note: When switching from default device (direct connection) to a specific device,
+     * or vice versa, the speaker node needs to be recreated to change routing mode.
+     * This is handled by destroying and recreating the node in syncNodes.
      */
     updateSpeakerDevice(nodeId: string, deviceId: string): void {
         const audioNode = this.audioNodes.get(nodeId);
@@ -1675,6 +1719,22 @@ class AudioGraphManager {
         }
 
         const instance = audioNode.instance as SpeakerNodeInstance;
+
+        // If using direct connection (no audioElement), switching to a specific device
+        // requires recreating the node. This happens automatically via syncNodes when
+        // the node data changes. Just return here to avoid null reference.
+        if (!instance.audioElement) {
+            // Force node recreation by triggering a sync
+            if (this.getConnectionsRef && this.getNodesRef) {
+                // Destroy current node so it gets recreated with new device
+                this.destroyAudioNode(audioNode);
+                this.audioNodes.delete(nodeId);
+                // Trigger resync
+                this.syncNodes(this.getNodesRef());
+                this.syncConnections(this.getConnectionsRef(), this.getNodesRef());
+            }
+            return;
+        }
 
         if (this.supportsSetSinkId()) {
             (instance.audioElement as any).setSinkId(deviceId)

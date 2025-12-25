@@ -1,30 +1,45 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useGraphStore } from '../graphStore';
+
+// The localStorage key used by the store
+const STORAGE_KEY = 'openjammer-graph-v2';
 
 describe('graphStore', () => {
     beforeEach(() => {
-        // Reset store to initial state
+        // Clear localStorage FIRST to prevent persist middleware from rehydrating old state
+        localStorage.removeItem(STORAGE_KEY);
+
+        // Reset store to initial state with ALL required fields
         useGraphStore.setState({
             nodes: new Map(),
             connections: new Map(),
+            connectionsByNode: new Map(),
+            rootNodeIds: [],
             selectedNodeIds: new Set(),
             selectedConnectionIds: new Set(),
+            clipboard: null,
             history: [],
             historyIndex: -1,
+            version: 0,
         });
         vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        // Clean up localStorage after each test
+        localStorage.removeItem(STORAGE_KEY);
     });
 
     describe('localStorage persistence', () => {
         it('should handle corrupted JSON in localStorage gracefully', () => {
             // Simulate corrupted data
-            localStorage.setItem('openjammer-graph', 'not valid json');
+            localStorage.setItem(STORAGE_KEY, 'not valid json');
 
             // The store should handle this gracefully and return null (reset state)
             const storage = (useGraphStore as unknown as { persist: { getOptions: () => { storage: { getItem: (name: string) => unknown } } } }).persist?.getOptions?.()?.storage;
 
             if (storage) {
-                const result = storage.getItem('openjammer-graph');
+                const result = storage.getItem(STORAGE_KEY);
                 // Should return null on parse error
                 expect(result).toBeNull();
             }
@@ -32,12 +47,12 @@ describe('graphStore', () => {
 
         it('should handle missing state property gracefully', () => {
             // Set data without state property
-            localStorage.setItem('openjammer-graph', JSON.stringify({ version: 1 }));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1 }));
 
             const storage = (useGraphStore as unknown as { persist: { getOptions: () => { storage: { getItem: (name: string) => unknown } } } }).persist?.getOptions?.()?.storage;
 
             if (storage) {
-                const result = storage.getItem('openjammer-graph');
+                const result = storage.getItem(STORAGE_KEY);
                 // Should return null when state is missing
                 expect(result).toBeNull();
             }
@@ -45,7 +60,7 @@ describe('graphStore', () => {
 
         it('should handle invalid arrays in state gracefully', () => {
             // Set data with non-array nodes
-            localStorage.setItem('openjammer-graph', JSON.stringify({
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
                 state: {
                     nodes: 'not an array',
                     connections: null,
@@ -57,7 +72,7 @@ describe('graphStore', () => {
             const storage = (useGraphStore as unknown as { persist: { getOptions: () => { storage: { getItem: (name: string) => unknown } } } }).persist?.getOptions?.()?.storage;
 
             if (storage) {
-                const result = storage.getItem('openjammer-graph') as { state: { nodes: Map<string, unknown> } } | null;
+                const result = storage.getItem(STORAGE_KEY) as { state: { nodes: Map<string, unknown> } } | null;
                 // Should handle gracefully - convert to empty Maps/Sets
                 if (result) {
                     expect(result.state.nodes).toBeInstanceOf(Map);
@@ -74,7 +89,11 @@ describe('graphStore', () => {
             addNode('piano', { x: 100, y: 100 });
 
             expect(nodes.size).toBe(0); // State is stale, need to get fresh
-            expect(useGraphStore.getState().nodes.size).toBe(1);
+            // Piano node has internal children (instrument-visual, input-panel, output-panel)
+            // so total nodes is greater than 1. Check root nodes instead.
+            const rootNodes = useGraphStore.getState().getRootNodes();
+            expect(rootNodes.length).toBe(1);
+            expect(rootNodes[0].type).toBe('piano');
         });
 
         it('should generate unique node IDs', () => {
@@ -161,6 +180,9 @@ describe('graphStore', () => {
             addNode('keyboard', { x: 0, y: 0 });
             addNode('piano', { x: 200, y: 0 });
 
+            // Get internal connections count before adding external connection
+            const initialConnections = useGraphStore.getState().connections.size;
+
             const nodes = Array.from(useGraphStore.getState().nodes.values());
             const keyboardNode = nodes.find(n => n.type === 'keyboard');
             const pianoNode = nodes.find(n => n.type === 'piano');
@@ -177,7 +199,12 @@ describe('graphStore', () => {
                         inputPort.id
                     );
 
-                    expect(useGraphStore.getState().connections.size).toBe(1);
+                    // Should have at least one more connection than before
+                    expect(useGraphStore.getState().connections.size).toBeGreaterThan(initialConnections);
+
+                    // Verify connection exists between the root nodes
+                    const rootConnections = useGraphStore.getState().getConnectionsAtLevel(null);
+                    expect(rootConnections.length).toBeGreaterThanOrEqual(1);
                 }
             }
         });
@@ -208,8 +235,12 @@ describe('graphStore', () => {
                     useGraphStore.getState().selectNode(keyboardNode.id, false);
                     useGraphStore.getState().deleteSelected();
 
-                    // Connection should also be deleted
-                    expect(useGraphStore.getState().connections.size).toBe(0);
+                    // Root-level connections should be gone (keyboard deleted)
+                    const rootConnections = useGraphStore.getState().getConnectionsAtLevel(null);
+                    const connectionsInvolvingKeyboard = rootConnections.filter(
+                        c => c.sourceNodeId === keyboardNode.id || c.targetNodeId === keyboardNode.id
+                    );
+                    expect(connectionsInvolvingKeyboard.length).toBe(0);
                 }
             }
         });
@@ -220,10 +251,11 @@ describe('graphStore', () => {
             const { addNode } = useGraphStore.getState();
 
             addNode('piano', { x: 0, y: 0 });
-            expect(useGraphStore.getState().nodes.size).toBe(1);
+            // Piano node has internal children, check root nodes instead
+            expect(useGraphStore.getState().getRootNodes().length).toBe(1);
 
             useGraphStore.getState().undo();
-            expect(useGraphStore.getState().nodes.size).toBe(0);
+            expect(useGraphStore.getState().getRootNodes().length).toBe(0);
         });
 
         it('should redo undone action', () => {
@@ -231,10 +263,10 @@ describe('graphStore', () => {
 
             addNode('piano', { x: 0, y: 0 });
             useGraphStore.getState().undo();
-            expect(useGraphStore.getState().nodes.size).toBe(0);
+            expect(useGraphStore.getState().getRootNodes().length).toBe(0);
 
             useGraphStore.getState().redo();
-            expect(useGraphStore.getState().nodes.size).toBe(1);
+            expect(useGraphStore.getState().getRootNodes().length).toBe(1);
         });
 
         it('should not undo when at beginning of history', () => {
